@@ -18,17 +18,43 @@ record and the milestone plan.
 
 ## Status
 
-M0: the kernel (terms, NbE evaluation, conversion, bidirectional checker,
-quantity checking) with its test suite. There is no parser yet.
+M1: the kernel (terms, NbE evaluation, conversion, bidirectional checker,
+quantity checking) plus surface syntax, an elaborator, type-directed
+erasure, a call-by-value interpreter, and the `tot` CLI. Scripts on the
+ML fragment run end to end.
 
-## Build
+## Build and run
 
 ```
 dune build
 dune exec test/main.exe
+dune exec test/surface.exe
 ```
 
-or `dev/gates.sh` for the gate markers.
+or `dev/gates.sh` for the gate markers (BUILD-OK, TEST-OK).
+
+The CLI takes a script and either typechecks it or runs it:
+
+```
+dune exec bin/tot.exe -- check examples/church.tot
+dune exec bin/tot.exe -- run examples/church.tot
+```
+
+`examples/church.tot` defines Church numerals and evaluates `cadd two
+two`. Its `run` output ends with the readback of church four:
+
+```
+def cnat : Type 1
+def czero : cnat
+def csucc : (w _ : cnat) -> cnat
+def cadd : (w _ : cnat) -> (w _ : cnat) -> cnat
+def two : cnat
+fun f => fun z => (f (f (f (f z))))
+```
+
+`check` prints the same `def` lines but reports each `eval` item's type
+instead of executing it. Quantity-0 binders and arguments are erased
+before execution: a runtime type argument prints as `<erased>`.
 
 ## License
 

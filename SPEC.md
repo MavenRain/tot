@@ -35,6 +35,23 @@ verdict CLIs, small tools. The house rules are the semantics:
 - 2026-09-01: execution model = erase, then interpret in-process, with a
   content-addressed cache of elaborated modules. Native codegen is a
   later milestone.
+- 2026-09-01: surface pins (M1). `:=` introduces def and let bodies;
+  `--` starts a line comment; quantity markers are `0` and `w`, where
+  `(w x : A)` marks quantity only when another identifier follows the
+  `w` (so `(w : A)` is a binder actually NAMED `w`); `A -> B` is sugar
+  for `(w _ : A) -> B`; bare `Type` defaults to level 0; chained binder
+  groups before one arrow (`(a : A) (b : B) -> C`) are not supported in
+  v0, each group needs its own `->`.
+- 2026-09-01: erasure pin (M1). Type-directed single pass mirroring
+  `Check`'s bidirectional shape; no conversion checks, types are
+  consulted only for Pi quantities. Quantities are NOT stamped on core
+  terms yet; revisit at M2 when inductives force a `Term` revision.
+- 2026-09-01: runtime pin (M1). Call-by-value over erased terms. Every
+  global unfolds at runtime; reducibility is a conversion-time notion
+  only. Global values are cached closed at definition time.
+- 2026-09-01: items pin (M1). Scripts are sequences of `def` (optionally
+  `reducible`), `check`, and `eval` items. Check mode prints types; run
+  mode executes `eval` items and prints the readback.
 
 ## 3. Core calculus (M0)
 
@@ -71,13 +88,29 @@ from the erased fragment.
 - `Check`: bidirectional infer/check with quantity modes; `define` is
   the one public way to grow the global environment.
 - `Error`: one variant, no exception anywhere in the kernel.
-- `Pp`: printer for terms and errors.
+- `Pp`: printer for terms, erased terms, and errors.
+- `Eterm`: erased runtime syntax (untyped lambda calculus with an
+  `EErased` residue for type-level terms in runtime position).
+- `Erase`: type-directed erasure from kernel-checked terms to `Eterm`.
+- `Interp`: call-by-value interpreter over erased terms, with readback.
+
+Surface (library `tot_surface`, in `surface/`):
+
+- `Loc`, `Token`, `Serror`: positions, tokens, surface-pipeline errors.
+- `Lexer`, `Parser`: char-list lexer and backtracking-free-by-copy
+  recursive-descent parser over the token list.
+- `Syntax`: located surface terms and items (`def`/`check`/`eval`).
+- `Elab`: scope resolution and sugar only; all typechecking stays in
+  the kernel.
+- `Run`: the script driver threading `Global.t` and `Interp.globals`.
+
+The `tot` executable (`bin/`) wraps `Run` as `tot (check|run) FILE`.
 
 ## 5. Milestones
 
-- M0 (this commit): kernel + tests. No parser.
-- M1: surface syntax, bidirectional elaborator, erasure, interpreter.
-  ML-fragment scripts run end to end.
+- M0 (done): kernel + tests. No parser.
+- M1 (this commit): surface syntax, elaborator, erasure, interpreter,
+  and the `tot` CLI. ML-fragment scripts run end to end.
 - M2: inductive families, match elaboration, structural totality
   checker, core stdlib (Option, Result, List, String, Json).
 - M3: IO ladder (Tot < Div < IO), process/JSON/regex stdlib, shebang
@@ -95,3 +128,12 @@ from the erased fragment.
 - Apache license text not vendored yet (README notes dual intent).
 - Errors carry pre-rendered strings, not structured values. Fine at M0
   scale; revisit when the elaborator wants error recovery.
+- `Erase` mirrors `Check`'s bidirectional shape: structural duplication
+  between the two passes.
+- `eval` items are re-inferred during erasure (the checker's work is
+  partly repeated).
+- The CLI file-open can still raise on a permission race despite the
+  existence guard.
+- Parser and lexer error arms bind structural catch-alls over token and
+  char lists.
+- `fun` binders cannot carry annotations; use def types or `(e : T)`.

@@ -14,3 +14,14 @@ let rec term (names : string list) (tm : Term.t) : string =
         (term (x :: names) body)
   | Term.Ann (tm', ty) -> Printf.sprintf "(%s : %s)" (term names tm') (term names ty)
   | Term.Global n -> n
+
+let rec eterm (names : string list) (e : Eterm.t) : string =
+  match e with
+  | Eterm.EVar ix ->
+      List.nth_opt names ix |> Option.value ~default:(Printf.sprintf "#%d" ix)
+  | Eterm.ELam (x, body) -> Printf.sprintf "fun %s => %s" x (eterm (x :: names) body)
+  | Eterm.EApp (f, a) -> Printf.sprintf "(%s %s)" (eterm names f) (eterm names a)
+  | Eterm.ELet (x, def, body) ->
+      Printf.sprintf "let %s := %s in %s" x (eterm names def) (eterm (x :: names) body)
+  | Eterm.EGlobal n -> n
+  | Eterm.EErased -> "<erased>"

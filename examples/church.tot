@@ -1,0 +1,7 @@
+-- Church numerals: the M1 smoke test.
+reducible def cnat : Type 1 := (0 a : Type 0) -> (a -> a) -> a -> a
+reducible def czero : cnat := fun a f z => z
+reducible def csucc : cnat -> cnat := fun n a f z => f (n a f z)
+reducible def cadd : cnat -> cnat -> cnat := fun m n a f z => m a f (n a f z)
+def two : cnat := csucc (csucc czero)
+eval cadd two two

@@ -19,6 +19,13 @@ let keywords : (string * Token.kind) list =
     ("reducible", Token.KReducible);
     ("eval", Token.KEval);
     ("check", Token.KCheck);
+    ("data", Token.KData);
+    ("match", Token.KMatch);
+    ("with", Token.KWith);
+    ("as", Token.KAs);
+    ("return", Token.KReturn);
+    ("rec", Token.KRec);
+    ("end", Token.KEnd);
   ]
 
 let ident_kind (s : string) : Token.kind =
@@ -56,6 +63,7 @@ let rec go (loc : Loc.t) (cs : char list) (acc : Token.t list) :
   | ':' :: rest -> go (Loc.next_col loc) rest ({ Token.kind = Token.Colon; loc } :: acc)
   | '(' :: rest -> go (Loc.next_col loc) rest ({ Token.kind = Token.LParen; loc } :: acc)
   | ')' :: rest -> go (Loc.next_col loc) rest ({ Token.kind = Token.RParen; loc } :: acc)
+  | '|' :: rest -> go (Loc.next_col loc) rest ({ Token.kind = Token.Pipe; loc } :: acc)
   | c :: rest when is_digit c ->
       let taken, loc', rest' = span is_digit (Loc.next_col loc) rest in
       let digits = c :: taken in

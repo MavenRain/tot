@@ -13,6 +13,16 @@ type t =
     }
   | Erased_use of string
   | Cannot_infer of string
+  | Not_inductive of string  (** match scrutinee type; payload = printed type *)
+  | Bad_ctor of {
+      ctor : string;
+      reason : string;
+    }  (** result-head / positivity / universe violation in a data decl *)
+  | Branch_mismatch of {
+      expected : string;
+      found : string;
+    }  (** exhaustiveness + declaration order; "<none>" marks a missing side *)
+  | Termination of string  (** rec def failed the structural guard *)
 
 let to_string (e : t) : string =
   match e with
@@ -25,8 +35,14 @@ let to_string (e : t) : string =
   | Mismatch { expected; actual } ->
       Printf.sprintf "type mismatch: expected %s, found %s" expected actual
   | Erased_use x -> Printf.sprintf "erased variable %s used at runtime" x
-  | Cannot_infer x ->
-      Printf.sprintf "cannot infer a type for the bare lambda (binder %s)" x
+  | Cannot_infer x -> Printf.sprintf "cannot infer a type for %s" x
+  | Not_inductive s -> Printf.sprintf "match scrutinee is not an inductive: %s" s
+  | Bad_ctor { ctor; reason } -> Printf.sprintf "invalid constructor %s: %s" ctor reason
+  | Branch_mismatch { expected; found } ->
+      Printf.sprintf "match branches do not fit the declaration: expected %s, found %s"
+        expected found
+  | Termination n ->
+      Printf.sprintf "recursive definition %s failed the structural termination guard" n
 
 let tag (e : t) : string =
   match e with
@@ -39,3 +55,7 @@ let tag (e : t) : string =
   | Mismatch _ -> "Mismatch"
   | Erased_use _ -> "Erased_use"
   | Cannot_infer _ -> "Cannot_infer"
+  | Not_inductive _ -> "Not_inductive"
+  | Bad_ctor _ -> "Bad_ctor"
+  | Branch_mismatch _ -> "Branch_mismatch"
+  | Termination _ -> "Termination"

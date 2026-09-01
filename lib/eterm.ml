@@ -10,3 +10,6 @@ type t =
   | ELet of string * t * t  (** let x := def in body; the type is gone *)
   | EGlobal of string
   | EErased
+  | EMatch of t * (string * string list * t) list
+      (** scrutinee, then per branch: ctor name, KEPT arg binder names
+          (quantity-0 binders are gone), body *)

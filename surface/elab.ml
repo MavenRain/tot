@@ -37,11 +37,11 @@ let rec term (globals : Global.t) (scope : string list) (s : Syntax.t) :
       Ok (Term.Pi (q, x, dom_t, cod_t))
   | Syntax.SLam (_loc, x, body) ->
       let* body_t = term globals (x :: scope) body in
-      Ok (Term.Lam (x, body_t))
+      Ok (Term.Lam (Quantity.Many, x, body_t))
   | Syntax.SApp (_loc, f, a) ->
       let* f_t = term globals scope f in
       let* a_t = term globals scope a in
-      Ok (Term.App (f_t, a_t))
+      Ok (Term.App (Quantity.Many, f_t, a_t))
   | Syntax.SLet (_loc, x, ty, def, body) ->
       let* ty_t = term globals scope ty in
       let* def_t = term globals scope def in
@@ -51,3 +51,24 @@ let rec term (globals : Global.t) (scope : string list) (s : Syntax.t) :
       let* tm_t = term globals scope tm in
       let* ty_t = term globals scope ty in
       Ok (Term.Ann (tm_t, ty_t))
+  | Syntax.SMatch (_loc, scrut, motive, branches) ->
+      (* the ctor name in a pattern is NOT resolved here: the kernel
+         checks it against the inductive's declared constructors *)
+      let* scrut_t = term globals scope scrut in
+      let* motive_t =
+        motive
+        |> Option.fold ~none:(Ok None) ~some:(fun (x, mot) ->
+               term globals (x :: scope) mot |> Result.map (fun m -> Some (x, m)))
+      in
+      let* rev_branches =
+        List.fold_left
+          (fun acc (c, binders, body) ->
+            let* rev = acc in
+            let scope' = List.fold_left (fun s x -> x :: s) scope binders in
+            let* body_t = term globals scope' body in
+            Ok ((c, List.map (fun x -> (Quantity.Many, x)) binders, body_t) :: rev))
+          (Ok []) branches
+      in
+      Ok
+        (Term.Match
+           { scrut = scrut_t; motive = motive_t; branches = List.rev rev_branches })

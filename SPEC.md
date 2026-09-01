@@ -52,13 +52,64 @@ verdict CLIs, small tools. The house rules are the semantics:
 - 2026-09-01: items pin (M1). Scripts are sequences of `def` (optionally
   `reducible`), `check`, and `eval` items. Check mode prints types; run
   mode executes `eval` items and prints the readback.
+- 2026-09-01 (M2): stamped quantities. `Term.Lam`/`Term.App` carry a
+  `Quantity.t`. Elaboration and hand-built terms write `w` placeholders;
+  the checker OVERWRITES stamps from the Pi it checks against and
+  returns the stamped term — checker output is authoritative. `(t : T)`
+  annotations steer checking only: `Ann` is dropped from checker output.
+  Erasure is purely structural over stamped terms (no types, no globals
+  consulted); this supersedes the M1 erasure pin.
+- 2026-09-01 (M2): inductives. Parameterized only; indices deferred to
+  M4 (they arrive with `Eq`; the match motive already abstracts the
+  scrutinee, so indices are additive). Flat namespace: the inductive
+  name and every constructor name are globals in the one map (entry
+  kinds `Def`/`Ind`/`Ctor`). Parameters are ALWAYS quantity-0: param
+  arguments at constructor applications erase, so runtime constructor
+  values carry kept (`w`) args only. Strict positivity with uniform
+  parameters: a constructor argument type may mention the inductive `I`
+  only as `I p1..pn` (its own params, in order), either as the whole
+  argument type or as the codomain of a Pi telescope whose domains never
+  mention `I`; no nested, no mutual, no local fix in v0. Predicative
+  universe rule: each constructor argument type's level must satisfy
+  `Level.le` against the declared level of the inductive.
+- 2026-09-01 (M2): recursion. Top-level `def rec` only. The recursive
+  global is opaque while its own body is checked (recursive calls do not
+  unfold); a structural totality guard must accept the stamped body and
+  picks the principal argument first-fit. Evaluation unfolds a REDUCIBLE
+  rec global only when its principal argument is a canonical constructor
+  value (guarded unfolding), so conversion cannot diverge; opaque rec
+  globals never unfold in conversion. The runtime interpreter is
+  unaffected (call-by-value on erased terms; every global unfolds at
+  application time). No eta for inductives: a neutral never equals a
+  constructor value.
+- 2026-09-01 (M2): surface pins. `data NAME (0 p : T) .. : Type L := |
+  c1 : CT1 | c2 : CT2 ..` — every parameter group must carry the literal
+  `0` marker; `: Type L` is required (`L` defaults to 0); zero
+  constructors is legal (empty type). `match S with | c x y => B | ..
+  end` with optional `as x return P`; branch patterns are flat (a ctor
+  name plus distinct binder names); `end` is required; branches must
+  list the constructors exactly in declaration order. A match in infer
+  position needs the explicit motive; in check position a motive-free
+  match reuses the expected type as a constant motive. Recursive
+  definitions: `[reducible] def rec NAME : TY := BODY`. The checker
+  stamps branch binders with the constructor telescope's quantities, so
+  erasure stays structural.
+- 2026-09-01 (M2): deferred to M3: literals, `String`, `Json`, and
+  prelude auto-loading (`stdlib/prelude.tot` is a script you run, not an
+  implicit import).
 
-## 3. Core calculus (M0)
+## 3. Core calculus (M0 core, M2 inductives)
 
 Syntax (de Bruijn indices; binder names are display-only):
 
     t ::= x | Type l | (q x : t) -> t | fun x => t
         | t t | let x : t = t in t | (t : t) | g
+        | match t [as x return t] with {| c x .. => t} end
+
+Surface items: `[reducible] def [rec] NAME : t := t`, `check t`,
+`eval t`, and
+
+    data NAME (0 p : t) .. : Type l := | c1 : t | c2 : t ..
 
 Quantities: `0` (erased: types, proofs) and `w` (runtime). The checker
 carries a mode. Inside types the mode is `0` and every variable is
@@ -73,20 +124,31 @@ Definitional equality: beta, let, eta for functions, and unfolding of
 reducible globals during evaluation. Opaque globals are equal only to
 themselves. Conversion is checked by NbE: evaluate, then compare values.
 
-Totality: M0 has no recursion, so everything terminates trivially.
-Structural recursion arrives with inductives (M2); well-founded
-recursion with measures after that. `partial` will exist, quarantined
-from the erased fragment.
+Totality: a `def rec` body must pass the structural guard: one formal
+is the principal argument, and every recursive call passes a strictly
+smaller variable there (a binder bound by a match on the principal or
+on something already smaller). Well-founded recursion with measures
+comes after M2. `partial` will exist, quarantined from the erased
+fragment.
 
 ## 4. Kernel modules
 
 - `Level`, `Quantity`: newtyped universe levels and usage marks.
-- `Term`: core syntax.
-- `Value`: NbE semantic domain (closures, neutrals with spines).
-- `Eval`: eval / apply / quote / conv. All total, all `Result`.
-- `Global`: name -> {ty; def; reducible}. Extend only via `Check.define`.
-- `Check`: bidirectional infer/check with quantity modes; `define` is
-  the one public way to grow the global environment.
+- `Term`: core syntax; quantity-stamped `Lam`/`App`, `Match` with an
+  optional motive and quantity-stamped branch binders.
+- `Value`: NbE semantic domain. Closures; canonical inductive values
+  (`VInd`/`VCtor`); neutrals are a head plus a frame list (`FApp`
+  applications and `FMatch` stuck matches, newest first).
+- `Eval`: eval / apply / quote / conv, with guarded unfolding of
+  reducible rec globals. All total, all `Result`.
+- `Global`: name -> entry, with entry kinds `Def` (carrying `reducible`
+  and `rec_arg`), `Ind` (params telescope, level, ctor names), and
+  `Ctor` (owning inductive, args telescope). Extend only via `Check`.
+- `Check`: bidirectional infer/check with quantity modes; `define`
+  (with the rec path), `declare_ind`, and `define_ind` are the public
+  ways to grow the global environment.
+- `Totality`: the structural guard for `def rec`; picks the principal
+  argument first-fit.
 - `Error`: one variant, no exception anywhere in the kernel.
 - `Pp`: printer for terms, erased terms, and errors.
 - `Eterm`: erased runtime syntax (untyped lambda calculus with an
@@ -109,15 +171,21 @@ The `tot` executable (`bin/`) wraps `Run` as `tot (check|run) FILE`.
 ## 5. Milestones
 
 - M0 (done): kernel + tests. No parser.
-- M1 (this commit): surface syntax, elaborator, erasure, interpreter,
+- M1 (done): surface syntax, elaborator, erasure, interpreter,
   and the `tot` CLI. ML-fragment scripts run end to end.
-- M2: inductive families, match elaboration, structural totality
-  checker, core stdlib (Option, Result, List, String, Json).
-- M3: IO ladder (Tot < Div < IO), process/JSON/regex stdlib, shebang
-  runner, content-addressed elaboration cache. Port the first
-  PreToolUse guard and run it for real.
-- M4: propositional equality, rewriting, deterministic type classes,
-  proof ergonomics. Then measure and decide the next tradeoff.
+- M2 (done): quantity-stamped core terms with structural erasure;
+  parameterized inductives with strict positivity and the predicative
+  universe bound; dependent match; `def rec` with the structural
+  totality guard and guarded unfolding; `data`/`match`/`def rec`
+  surface syntax; core stdlib (`stdlib/prelude.tot`: Bool, Nat, Option,
+  Result, List, Pair). String and Json moved to M3.
+- M3: IO ladder (Tot < Div < IO), literals, String/process/JSON/regex
+  stdlib, prelude auto-loading, shebang runner, content-addressed
+  elaboration cache. Port the first PreToolUse guard and run it for
+  real.
+- M4: propositional equality, indexed inductives, rewriting,
+  deterministic type classes, proof ergonomics. Then measure and decide
+  the next tradeoff.
 
 ## 6. Known debts (deliberate)
 
@@ -126,14 +194,25 @@ The `tot` executable (`bin/`) wraps `Run` as `tot (check|run) FILE`.
 - No cumulativity: concrete types live one universe up from where
   church-encoded tests want them.
 - Apache license text not vendored yet (README notes dual intent).
-- Errors carry pre-rendered strings, not structured values. Fine at M0
-  scale; revisit when the elaborator wants error recovery.
-- `Erase` mirrors `Check`'s bidirectional shape: structural duplication
-  between the two passes.
-- `eval` items are re-inferred during erasure (the checker's work is
-  partly repeated).
+- Errors carry mostly pre-rendered strings, not structured values (the
+  M2 variants add small records). Fine at this scale; revisit when the
+  elaborator wants error recovery.
 - The CLI file-open can still raise on a permission race despite the
   existence guard.
 - Parser and lexer error arms bind structural catch-alls over token and
   char lists.
 - `fun` binders cannot carry annotations; use def types or `(e : T)`.
+- No indexed, nested, or mutual inductives, and no local fixpoints;
+  all deferred to M4 (indices arrive with `Eq`).
+- `rec_arg` auto-selection is first-fit: the guard takes the first
+  formal that works; there is no annotation to override it.
+- A match in infer position needs an explicit `as .. return` motive;
+  only check position gets the constant-motive shortcut.
+- The prelude is a file (`stdlib/prelude.tot`), not an auto-import;
+  every script that wants it must inline it until M3.
+- Guarded unfolding requires `reducible`: a plain `def rec` never
+  unfolds in conversion, even on canonical arguments.
+- Interp readback of a FUNCTION value whose body applies a recursive
+  global to a bound variable re-executes frozen match branches one
+  binder deeper per level (no guarded-neutral notion at runtime). No
+  M2 pipeline path reaches it; revisit if M3 adds function readback.

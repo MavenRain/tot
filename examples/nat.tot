@@ -1,0 +1,6 @@
+-- Peano naturals: the M2 smoke test (data, match, structural recursion).
+data Nat : Type 0 := | zero : Nat | succ : Nat -> Nat
+reducible def rec add : Nat -> Nat -> Nat := fun m n => match m with | zero => n | succ p => succ (add p n) end
+def two : Nat := succ (succ zero)
+def three : Nat := succ two
+eval add two three

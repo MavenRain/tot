@@ -16,6 +16,14 @@ type kind =
   | KReducible
   | KEval
   | KCheck
+  | KData
+  | KMatch
+  | KWith
+  | KAs
+  | KReturn
+  | KRec
+  | KEnd
+  | Pipe
   | Ident of string
   | Nat of int
   | Eof
@@ -41,6 +49,14 @@ let describe (k : kind) : string =
   | KReducible -> "'reducible'"
   | KEval -> "'eval'"
   | KCheck -> "'check'"
+  | KData -> "'data'"
+  | KMatch -> "'match'"
+  | KWith -> "'with'"
+  | KAs -> "'as'"
+  | KReturn -> "'return'"
+  | KRec -> "'rec'"
+  | KEnd -> "'end'"
+  | Pipe -> "'|'"
   | Ident s -> Printf.sprintf "identifier %s" s
   | Nat n -> Printf.sprintf "number %d" n
   | Eof -> "end of input"

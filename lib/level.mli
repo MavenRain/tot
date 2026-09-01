@@ -7,5 +7,6 @@ val one : t
 val succ : t -> t
 val max : t -> t -> t
 val equal : t -> t -> bool
+val le : t -> t -> bool
 val of_int : int -> t option
 val to_string : t -> string

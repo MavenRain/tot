@@ -18,10 +18,12 @@ record and the milestone plan.
 
 ## Status
 
-M1: the kernel (terms, NbE evaluation, conversion, bidirectional checker,
-quantity checking) plus surface syntax, an elaborator, type-directed
-erasure, a call-by-value interpreter, and the `tot` CLI. Scripts on the
-ML fragment run end to end.
+M2: the kernel (terms, NbE evaluation, conversion, bidirectional checker,
+quantity checking) plus surface syntax, an elaborator, structural
+erasure, a call-by-value interpreter, and the `tot` CLI — now with
+parameterized inductive types (`data`), dependent `match`, structurally
+recursive `def rec` (totality-checked, guarded unfolding), and a core
+prelude (`stdlib/prelude.tot`: Bool, Nat, Option, Result, List, Pair).
 
 ## Build and run
 
@@ -31,7 +33,9 @@ dune exec test/main.exe
 dune exec test/surface.exe
 ```
 
-or `dev/gates.sh` for the gate markers (BUILD-OK, TEST-OK).
+or `dev/gates.sh` for the gate markers (BUILD-OK, TEST-OK, PASS-* per
+script gate, SCRIPTS-OK). The script gates check AND run
+`stdlib/prelude.tot`, `examples/church.tot`, and `examples/nat.tot`.
 
 The CLI takes a script and either typechecks it or runs it:
 

@@ -35,6 +35,27 @@ let rec spine (t : Term.t) (args : Term.t list) : Term.t * Term.t list =
   | Term.Global _ | Term.Match _ ->
       (t, args)
 
+(** Does [name] occur anywhere in [t] as a [Term.Global]? Structural,
+    total, exhaustive over every [Term.t] arm; used to tell a genuinely
+    recursive [def rec] body from one that merely carries the [rec]
+    keyword (in which case the totality guard is skipped entirely rather
+    than vacuously satisfied at the first formal). *)
+let rec mentions (name : string) (t : Term.t) : bool =
+  match t with
+  | Term.Var _ -> false
+  | Term.Univ _ -> false
+  | Term.Global g -> String.equal g name
+  | Term.Pi (_q, _x, dom, cod) -> mentions name dom || mentions name cod
+  | Term.Lam (_q, _x, body) -> mentions name body
+  | Term.App (_q, f, a) -> mentions name f || mentions name a
+  | Term.Let (_x, ty, def, body) ->
+      mentions name ty || mentions name def || mentions name body
+  | Term.Ann (tm, ty) -> mentions name tm || mentions name ty
+  | Term.Match { scrut; motive; branches } ->
+      mentions name scrut
+      || (motive |> Option.fold ~none:false ~some:(fun (_x, mot) -> mentions name mot))
+      || List.exists (fun (_c, _binders, body) -> mentions name body) branches
+
 let status_at (st : status list) (ix : int) : status option = List.nth_opt st ix
 
 (** Does candidate position [k] guard every recursive occurrence? *)

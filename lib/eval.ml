@@ -18,10 +18,26 @@ let rec leading_fapp_args (frames : Value.frame list) : Value.t list =
   | Value.FApp v :: rest -> v :: leading_fapp_args rest
   | Value.FMatch _ :: _rest -> []
 
-(** Canonical means: headed by a data constructor. *)
-let is_canonical (v : Value.t) : bool =
+(** Canonical means: a data constructor FULLY applied. The kernel value
+    domain does not erase, so a [VCtor]'s args list carries every
+    argument the ctor was applied to, params first (see [run_match]'s
+    own [n_params] slice) then its own args telescope in order,
+    regardless of quantity; full arity is the sum of the two. A ctor
+    looked up but shy of that count is a partial application, not
+    canonical (unknown ctor names cannot occur on checked terms; total
+    via [Option.fold], no error path needed here). *)
+let is_canonical (globals : Global.t) (v : Value.t) : bool =
   match v with
-  | Value.VCtor (_, _) -> true
+  | Value.VCtor (c, args) ->
+      Global.find_ctor c globals
+      |> Option.fold ~none:false ~some:(fun (ctor : Global.ctor_entry) ->
+             let n_params =
+               Global.find_ind ctor.Global.ind globals
+               |> Option.fold ~none:0 ~some:(fun (ind : Global.ind_entry) ->
+                      List.length ind.Global.params)
+             in
+             let full_arity = n_params + List.length ctor.Global.args in
+             Int.equal (List.length args) full_arity)
   | Value.VUniv _ | Value.VPi (_, _, _, _) | Value.VLam (_, _) | Value.VInd (_, _)
   | Value.VNeutral (_, _) ->
       false
@@ -80,12 +96,21 @@ and run_match (globals : Global.t) (env : Value.t list) (scrut_v : Value.t)
       in
       let n_params = List.length ind.Global.params in
       (* a miss is unreachable on checked terms; total backstop *)
-      let* _c, _binders, body =
+      let* _c, binders, body =
         List.find_opt (fun (b, _bs, _body) -> String.equal b cname) branches
         |> Option.to_result
              ~none:(Error.Branch_mismatch { expected = cname; found = "<none>" })
       in
       let own = List.filteri (fun i _v -> i >= n_params) args in
+      (* arity backstop mirroring Interp.run_match: unreachable on
+         checked terms, but hand-built or bypassed-Check terms must not
+         silently misalign the branch env *)
+      let* () =
+        if Int.equal (List.length own) (List.length binders) then Ok ()
+        else
+          Error
+            (Error.Branch_mismatch { expected = cname; found = cname ^ " (wrong arity)" })
+      in
       eval globals (List.rev_append own env) body
   | Value.VNeutral (h, frames) ->
       Ok (Value.VNeutral (h, Value.FMatch { Value.motive; branches; menv = env } :: frames))
@@ -109,7 +134,7 @@ and apply (globals : Global.t) (f : Value.t) (a : Value.t) : (Value.t, Error.t) 
              let oldest = List.rev frames' in
              let guarded =
                List.nth_opt (leading_fapp_args oldest) k
-               |> Option.fold ~none:false ~some:is_canonical
+               |> Option.fold ~none:false ~some:(is_canonical globals)
              in
              if guarded then
                let* f0 = eval globals [] def in

@@ -1,0 +1,5 @@
+data Nat : Type 0 := | zero : Nat | succ : Nat -> Nat
+def dropErased : (0 j : Nat) -> Nat -> Nat := fun j n => n
+def rec ghost : (0 j : Nat) -> Nat -> Nat := fun j n => dropErased (match j with | zero => zero | succ jp => ghost jp n end) n
+eval ghost
+eval ghost zero (succ zero)

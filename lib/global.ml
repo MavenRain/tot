@@ -26,7 +26,10 @@ type ind_entry = {
   ind_ty : Term.t;  (** closed: params -> Type level *)
   params : telescope;
   level : Level.t;
-  ctor_names : string list;  (** declaration order *)
+  ctor_names : string list option;
+      (** [None]: declared but not yet defined (the provisional window
+          between [declare_ind] and [define_ind]); nothing may eliminate
+          it yet. [Some names]: complete, in declaration order. *)
 }
 
 (** A data constructor of one inductive. *)

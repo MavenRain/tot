@@ -97,6 +97,93 @@ verdict CLIs, small tools. The house rules are the semantics:
 - 2026-09-01 (M2): deferred to M3: literals, `String`, `Json`, and
   prelude auto-loading (`stdlib/prelude.tot` is a script you run, not an
   implicit import).
+- 2026-09-01 (M2 fixes, Stage A): inductive parameters may live at ANY
+  universe; the declared level bounds constructor ARGUMENTS only. This
+  follows the Coq/Lean precedent: parameters are not fields, so they
+  never enter the positivity/universe accounting that bounds a
+  constructor's own args.
+- 2026-09-01 (M2 fixes, Stage A): `Global.Ind.ctor_names` is
+  `string list option`: `None` while an inductive is declared but not
+  yet defined (between `declare_ind` and `define_ind`), `Some names`
+  once complete. A reader that needs to eliminate the inductive (a
+  match's scrutinee type) rejects a `None` window with `Ind_incomplete`;
+  a second `define_ind` call on an already-complete inductive rejects
+  with `Ind_redefined` instead of silently overwriting `ctor_names`.
+  Closes the window where a constructor argument's own type could
+  eliminate its still-declaring inductive with a vacuously exhaustive
+  empty match.
+- 2026-09-01 (M2 fixes, Stage A): a `def rec` body with NO occurrence of
+  its own name skips the structural totality guard entirely and stores
+  `rec_arg = None`, behaving exactly like a plain `def` (unfolds in
+  conversion when reducible, no guarded-unfolding gate). Previously
+  first-fit was vacuously satisfied at the first formal (k = 0) even
+  with zero recursive spine, which could pin `rec_arg` to a
+  non-canonical (non-ctor-typed) formal and block unfolding forever.
+  This also makes a zero-formal `def rec` with no self-occurrence check
+  as a plain def instead of failing `Termination`.
+- 2026-09-01 (M2 fixes, Stage A): guarded unfolding's canonical check
+  (`Eval.is_canonical`) now means a data constructor FULLY applied
+  (parameter arity plus its own args telescope arity, looked up from the
+  `Ctor`/`Ind` globals), not merely `VCtor _` regardless of how many
+  args it has received. A partially applied constructor in the
+  principal position no longer unlocks a rec global's unfolding.
+  `Eval.run_match` also gained an arity backstop (mirroring
+  `Interp.run_match`'s existing one): a branch whose binder count
+  disagrees with the scrutinee's kept args is `Branch_mismatch` rather
+  than a silently misaligned environment.
+- 2026-09-01 (M2 fixes, Stage A): check-position matches now
+  materialize an explicit constant motive in checker OUTPUT (quoted
+  from the expected type, weakened under the extra scrutinee binder by
+  NbE de-Bruijn-level quoting) instead of storing `motive = None`.
+  Infer position and explicit `as .. return` are unchanged. This makes
+  a motive-free match and an equivalent explicit-motive match produce
+  FMatch frames that compare equal in conversion; previously two
+  identically-reducing stuck matches could fail conversion purely by
+  spelling (`None` vs `Some` on the motive option).
+- 2026-09-01 (M2 fixes, Stage B): runtime guarded unfolding for rec
+  globals. `Interp`'s global table now carries each def's `rec_arg`
+  alongside its cached value, and its value domain gains a neutral
+  `EHGlobal` head mirroring the kernel's `Value.HGlobal`. Applying a rec
+  global freezes into (or extends) an `EHGlobal` neutral application
+  instead of entering its closure until the accumulated frames' leading
+  argument at position `rec_arg` is a canonical constructor value: fully
+  applied counting only KEPT (quantity-`w`) args, since an erased
+  program never carries params or quantity-0 args at runtime (the
+  runtime analogue of F4's kernel-level check, over `Eterm`'s already-
+  erased arity instead of the kernel's full unerased one). Once the
+  guard is met, the accumulated frames replay onto the def's cached
+  closure. Non-rec globals are unaffected: they still unfold
+  unconditionally at application time. This retires the interp-readback
+  debt below: `quote` no longer re-executes a rec global's frozen match
+  branches under every fresh binder it peels (which diverged, since
+  each peel re-applied the eager closure and froze one level deeper);
+  a rec function value now reads back as its frozen neutral
+  application, and closed (fully canonical) calls compute exactly as
+  before. (2026-09-01, M2 fixes Round 2, R0): since `rec_arg` counts the
+  kernel's UNERASED formal telescope while `Interp`'s spine is ERASED,
+  `surface/run.ml` remaps it before calling `Interp.define` by counting
+  the quantity-`w` formals strictly before `rec_arg` in the stamped
+  def's own `Lam` telescope. (2026-09-01, M2 fixes Round 4, revising
+  Round 3's S0): when the guarded formal is itself quantity-0, the
+  runtime spine never carries it, so there is no principal position left
+  to test; the def remaps to `None` (eager unfold, plain-def behavior at
+  runtime), never a freeze. This is SOUND: a quantity-0 formal can only
+  be eliminated (matched on) while checking at `Quantity.Zero` mode (the
+  same attenuation `Check.infer`'s `Var` rule enforces), so every branch
+  of a match on it, and every recursive call reachable through those
+  branches, is itself checked at mode `Zero`. `Erase.term`'s
+  `App (Quantity.Zero, f, _a) -> term ctx f` arm drops such a subterm
+  WHOLESALE at its use site without walking it, so the ERASED body of a
+  rec def guarded on an erased formal contains NO occurrence of the
+  def's own global name: eager unfolding cannot loop, and it computes
+  the definitionally correct value. Mechanically confirmed for the
+  `ghost` witness (`test/fixtures/s0-erased-guard.tot`) by a kernel-level
+  `Eterm.t` walk, `test/main.ml`'s "T0: rec def guarded on an erased
+  formal has no self-reference after erasure". Round 3's S0 text (freeze
+  on an out-of-range index) is superseded: that divergence claim had no
+  actual witness, and re-verification killed a fresh over-application
+  variant of the same claim. See `dev/M2-FIXES-LOG.md` "## Round 4" for
+  the full correction.
 
 ## 3. Core calculus (M0 core, M2 inductives)
 
@@ -205,14 +292,27 @@ The `tot` executable (`bin/`) wraps `Run` as `tot (check|run) FILE`.
 - No indexed, nested, or mutual inductives, and no local fixpoints;
   all deferred to M4 (indices arrive with `Eq`).
 - `rec_arg` auto-selection is first-fit: the guard takes the first
-  formal that works; there is no annotation to override it.
+  formal that works; there is no annotation to override it. A body with
+  NO occurrence of its own name skips the guard and stores
+  `rec_arg = None` (M2 fixes, Stage A), so this debt is scoped to
+  bodies that are genuinely recursive somewhere.
 - A match in infer position needs an explicit `as .. return` motive;
   only check position gets the constant-motive shortcut.
 - The prelude is a file (`stdlib/prelude.tot`), not an auto-import;
   every script that wants it must inline it until M3.
 - Guarded unfolding requires `reducible`: a plain `def rec` never
   unfolds in conversion, even on canonical arguments.
-- Interp readback of a FUNCTION value whose body applies a recursive
-  global to a bound variable re-executes frozen match branches one
-  binder deeper per level (no guarded-neutral notion at runtime). No
-  M2 pipeline path reaches it; revisit if M3 adds function readback.
+- Retired (M2 fixes, Stage B): Interp readback of a rec global no
+  longer diverges. The interpreter now threads guarded unfolding down
+  to the runtime, mirroring the kernel: a rec global stays neutral
+  (`EHGlobal`, mirroring `Value.HGlobal`) until applied to a canonical
+  constructor value in its principal position, and only then replays
+  onto its cached closure. See Section 2's dated entry for the exact
+  rule.
+- `Eval.is_canonical` (M2 fixes, Round 5 review, T2) does a second
+  `Global.find_ind` lookup (on top of the `Global.find_ctor` lookup) per
+  canonicity check, on the guarded-unfolding hot path (every application
+  of a rec global). Not restructured now: a suggested cleanup is a
+  ctor-entry arity cache (fold `n_params` into `Global.ctor_entry` at
+  `define_ind` time, so canonicity checks a single field instead of
+  chaining through `Global.Ind`), deferred to M3 or later.

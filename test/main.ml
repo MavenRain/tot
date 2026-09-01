@@ -356,6 +356,281 @@ let case_stuck_match_conv (globals : Global.t) () : (unit, string) result =
   expect_conv globals "stuck-match-diff" ~want:false (stuck_match_over nzero)
     (stuck_match_over (nsucc nzero)) ()
 
+(* --- M2 fix batch, Stage A --- *)
+
+(* F2: the provisional inductive window. A second constructor whose type
+   eliminates the FIRST constructor of its own still-declaring inductive
+   must be rejected with Ind_incomplete (checked entirely at
+   [define_ind] time, never reaching eval's exhaustiveness backstop). *)
+let case_ind_incomplete (globals : Global.t) () : (unit, string) result =
+  let attempt =
+    let* g = Check.declare_ind globals ~name:"Pin" ~params:[] ~level:Level.zero in
+    Check.define_ind g ~name:"Pin"
+      ~ctors:
+        [
+          ("pa", Term.Global "Pin");
+          ( "pb",
+            Term.Pi
+              ( qw,
+                "_",
+                Term.Match
+                  { scrut = Term.Global "pa"; motive = Some ("_", ty0); branches = [] },
+                Term.Global "Pin" ) );
+        ]
+  in
+  attempt
+  |> Result.fold
+       ~ok:(fun _g -> Error "ind-incomplete: mid-declaration elimination was accepted")
+       ~error:(fun e ->
+         Printf.printf "  expected error (Ind_incomplete): %s\n" (Error.to_string e);
+         if String.equal (Error.tag e) "Ind_incomplete" then Ok ()
+         else Error ("ind-incomplete: wrong error: " ^ Error.to_string e))
+
+(* F2: a second [define_ind] call on an already-complete inductive is
+   rejected with Ind_redefined instead of silently overwriting
+   ctor_names. *)
+let case_ind_redefined (globals : Global.t) () : (unit, string) result =
+  let attempt =
+    let* g = Check.declare_ind globals ~name:"Bit" ~params:[] ~level:Level.zero in
+    let* g = Check.define_ind g ~name:"Bit" ~ctors:[ ("bzero", Term.Global "Bit") ] in
+    Check.define_ind g ~name:"Bit" ~ctors:[ ("bone", Term.Global "Bit") ]
+  in
+  attempt
+  |> Result.fold
+       ~ok:(fun _g -> Error "ind-redefined: second define_ind was accepted")
+       ~error:(fun e ->
+         Printf.printf "  expected error (Ind_redefined): %s\n" (Error.to_string e);
+         if String.equal (Error.tag e) "Ind_redefined" then Ok ()
+         else Error ("ind-redefined: wrong error: " ^ Error.to_string e))
+
+(* --- M2 fix batch (Round 3), S3 --- *)
+
+(* S3: match_scrut error precedence. A scrutinee whose param count
+   disagrees with its inductive's declared telescope must be diagnosed
+   as Not_inductive, even when the same inductive is ALSO still
+   mid-declaration (would otherwise qualify for Ind_incomplete): the
+   arity defect is checked FIRST. [bad_scrut] is a [Global.add]-built
+   opaque global (bypassing [Check.define] on purpose, mirroring the F5
+   backstop style): its declared type is the bare, unapplied inductive
+   name [Pin3], and evaluating a bare [Term.Global] whose entry is
+   [Global.Ind] always yields [Value.VInd (name, [])] regardless of how
+   many params that inductive actually declares (see [Eval.eval]'s
+   [Global.Ind] arm) - so a 1-param Pin3 gives a scrutinee whose p_vals
+   length (0) disagrees with [ind.Global.params]'s length (1), while
+   Pin3 itself is left declared-but-undefined (ctor_names = None). *)
+let case_match_scrut_precedence (globals : Global.t) () : (unit, string) result =
+  let attempt =
+    let* g =
+      Check.declare_ind globals ~name:"Pin3" ~params:[ (q0, "A", ty0) ] ~level:Level.zero
+    in
+    let g' =
+      Global.add "bad_scrut"
+        (Global.Def
+           {
+             Global.ty = Term.Global "Pin3";
+             def = Term.Univ Level.zero;
+             reducible = false;
+             rec_arg = None;
+           })
+        g
+    in
+    Check.infer g' Check.empty_ctx Quantity.Many
+      (Term.Match
+         { scrut = Term.Global "bad_scrut"; motive = Some ("_", ty0); branches = [] })
+  in
+  attempt
+  |> Result.fold
+       ~ok:(fun (_tm, _ty) ->
+         Error
+           "match-scrut-precedence: wrong-arity scrutinee on an incomplete inductive was \
+            accepted")
+       ~error:(fun e ->
+         Printf.printf "  expected error (Not_inductive, not Ind_incomplete): %s\n"
+           (Error.to_string e);
+         if String.equal (Error.tag e) "Not_inductive" then Ok ()
+         else Error ("match-scrut-precedence: wrong error: " ^ Error.to_string e))
+
+(* F4: guarded unfolding's canonical check must mean FULLY applied. A
+   partially applied [succ] (0 of its 1 kept args) in the principal
+   position must NOT unlock unfolding; a fully applied one still does. *)
+let partial_succ_add : Term.t =
+  Term.App (qw, Term.App (qw, Term.Global "add", Term.Global "succ"), nzero)
+
+let full_succ_add : Term.t =
+  Term.App (qw, Term.App (qw, Term.Global "add", nsucc nzero), nzero)
+
+let case_partial_ctor_not_canonical (globals : Global.t) () : (unit, string) result =
+  Eval.eval globals [] partial_succ_add
+  |> Result.fold
+       ~ok:(fun v ->
+         match v with
+         | Value.VNeutral (_, _) -> Ok ()
+         | Value.VUniv _ | Value.VPi (_, _, _, _) | Value.VLam (_, _) | Value.VInd (_, _)
+         | Value.VCtor (_, _) ->
+             Error "partial-ctor: add wrongly unfolded on a partially applied succ")
+       ~error:(fun e -> Error ("partial-ctor: " ^ Error.to_string e))
+
+let case_full_ctor_unfolds (globals : Global.t) () : (unit, string) result =
+  expect_conv globals "full-ctor" ~want:true full_succ_add (nsucc nzero) ()
+
+(* F5: run_match's arity backstop. Hand-built term, bypassing Check on
+   purpose: a branch whose binder count disagrees with the scrutinee's
+   kept ctor args must not silently misalign the branch env. *)
+let arity_mismatch_match : Term.t =
+  Term.Match
+    {
+      scrut = nsucc nzero;
+      motive = Some ("_m", nat);
+      branches = [ ("zero", [], nzero); ("succ", [ (qw, "n"); (qw, "extra") ], Term.Var 0) ];
+    }
+
+let case_run_match_arity_backstop (globals : Global.t) () : (unit, string) result =
+  Eval.eval globals [] arity_mismatch_match
+  |> Result.fold
+       ~ok:(fun _v -> Error "arity-backstop: mismatched branch arity was accepted")
+       ~error:(fun e ->
+         Printf.printf "  expected error (arity backstop): %s\n" (Error.to_string e);
+         if String.equal (Error.tag e) "Branch_mismatch" then Ok ()
+         else Error ("arity-backstop: wrong error: " ^ Error.to_string e))
+
+(* F6: uniform motive representation. The same Bool-negation match
+   checked once motive-free (check position) and once with an explicit
+   constant motive must produce checker output whose stuck applications
+   (over a shared OPAQUE neutral) compare EQUAL, not merely
+   equal-by-accident of spelling. *)
+let bool_ty : Term.t = Term.Global "Bool"
+
+let not_body_no_motive : Term.t =
+  Term.Match
+    {
+      scrut = Term.Var 0;
+      motive = None;
+      branches = [ ("true", [], Term.Global "false"); ("false", [], Term.Global "true") ];
+    }
+
+let not_body_explicit_motive : Term.t =
+  Term.Match
+    {
+      scrut = Term.Var 0;
+      motive = Some ("x", bool_ty);
+      branches = [ ("true", [], Term.Global "false"); ("false", [], Term.Global "true") ];
+    }
+
+let not_ty : Term.t = Term.Pi (qw, "b", bool_ty, bool_ty)
+
+let case_uniform_motive (globals : Global.t) () : (unit, string) result =
+  let attempt =
+    let* g = Check.declare_ind globals ~name:"Bool" ~params:[] ~level:Level.zero in
+    let* g =
+      Check.define_ind g ~name:"Bool" ~ctors:[ ("true", bool_ty); ("false", bool_ty) ]
+    in
+    let* g =
+      Check.define g ~name:"not_a" ~reducible:true ~ty:not_ty
+        ~def:(Term.Lam (qw, "b", not_body_no_motive))
+    in
+    let* g =
+      Check.define g ~name:"not_b" ~reducible:true ~ty:not_ty
+        ~def:(Term.Lam (qw, "b", not_body_explicit_motive))
+    in
+    let* g =
+      Check.define g ~name:"bo" ~reducible:false ~ty:bool_ty ~def:(Term.Global "true")
+    in
+    let* v1 = Eval.eval g [] (Term.App (qw, Term.Global "not_a", Term.Global "bo")) in
+    let* v2 = Eval.eval g [] (Term.App (qw, Term.Global "not_b", Term.Global "bo")) in
+    Eval.conv g 0 v1 v2
+  in
+  attempt
+  |> Result.fold
+       ~ok:(fun ok ->
+         if ok then Ok ()
+         else Error "uniform-motive: motive-free and explicit-motive stuck matches differ")
+       ~error:(fun e -> Error ("uniform-motive: " ^ Error.to_string e))
+
+(* --- M2 fix batch (Round 5 review), T0 --- *)
+
+(* T0: the mechanical check the eager-unfold reversion of
+   [Surface.Run.remap_rec_arg]'s erased-formal arm rests on. Mirrors
+   test/fixtures/s0-erased-guard.tot's [dropErased]/[ghost] pair as
+   hand-built [Term.t] (same shape [Elab.term] would produce: [App]/[Lam]
+   quantity placeholders are [qw], [Check] restamps them). [ghost]'s
+   guarded formal is [j] (quantity 0): the recursive call [ghost jp n]
+   sits inside a match on [j], which only checks at [Quantity.Zero] mode
+   (matching an erased scrutinee is illegal at mode [Many], per
+   [Check.infer]'s [Var] arm), and the whole match is itself passed as
+   [dropErased]'s own quantity-0 first argument. *)
+let drop_erased_ty : Term.t = Term.Pi (q0, "j", nat, Term.Pi (qw, "n", nat, nat))
+let drop_erased_def : Term.t = Term.Lam (qw, "j", Term.Lam (qw, "n", Term.Var 0))
+
+(* fun j n => dropErased (match j with | zero => zero | succ jp => ghost jp n end) n *)
+let ghost_ty : Term.t = Term.Pi (q0, "j", nat, Term.Pi (qw, "n", nat, nat))
+
+let ghost_def : Term.t =
+  Term.Lam
+    ( qw,
+      "j",
+      Term.Lam
+        ( qw,
+          "n",
+          Term.App
+            ( qw,
+              Term.App
+                ( qw,
+                  Term.Global "dropErased",
+                  Term.Match
+                    {
+                      scrut = Term.Var 1;
+                      motive = None;
+                      branches =
+                        [
+                          ("zero", [], nzero);
+                          ( "succ",
+                            [ (qw, "jp") ],
+                            Term.App
+                              (qw, Term.App (qw, Term.Global "ghost", Term.Var 0), Term.Var 1) );
+                        ];
+                    } ),
+              Term.Var 0 ) ) )
+
+(* Total, exhaustive walk over every [Eterm.t] arm: does [name] occur
+   anywhere in [e]? *)
+let rec eterm_mentions (name : string) (e : Eterm.t) : bool =
+  match e with
+  | Eterm.EVar _ -> false
+  | Eterm.ELam (_x, body) -> eterm_mentions name body
+  | Eterm.EApp (f, a) -> eterm_mentions name f || eterm_mentions name a
+  | Eterm.ELet (_x, def, body) -> eterm_mentions name def || eterm_mentions name body
+  | Eterm.EGlobal g -> String.equal g name
+  | Eterm.EErased -> false
+  | Eterm.EMatch (scrut, branches) ->
+      eterm_mentions name scrut
+      || List.exists (fun (_c, _binders, body) -> eterm_mentions name body) branches
+
+let case_erased_guard_no_self_ref (globals : Global.t) () : (unit, string) result =
+  let attempt =
+    let* g =
+      Check.define globals ~name:"dropErased" ~reducible:false ~ty:drop_erased_ty
+        ~def:drop_erased_def
+    in
+    let* g =
+      Check.define ~rec_:true g ~name:"ghost" ~reducible:false ~ty:ghost_ty ~def:ghost_def
+    in
+    let* dentry =
+      Global.find_def "ghost" g |> Option.to_result ~none:(Error.Unbound_global "ghost")
+    in
+    Erase.closed dentry.Global.def
+  in
+  attempt
+  |> Result.fold
+       ~ok:(fun erased ->
+         if eterm_mentions "ghost" erased then
+           Error
+             (Printf.sprintf "erased-guard-no-self-ref: self-reference survived erasure: %s"
+                (Pp.eterm [] erased))
+         else (
+           Printf.printf "  erased ghost body: %s\n" (Pp.eterm [] erased);
+           Ok ()))
+       ~error:(fun e -> Error ("erased-guard-no-self-ref: " ^ Error.to_string e))
+
 let erased_use_bad : Term.t =
   Term.Ann
     ( Term.Lam (qw, "a", Term.Lam (qw, "x", Term.Var 1)),
@@ -442,6 +717,15 @@ let cases (globals : Global.t) : (string * (unit -> (unit, string) result)) list
     ("guarded rec stays stuck", case_guarded_stuck globals);
     ("termination guard rejects loop", case_termination globals);
     ("stuck match conversion", case_stuck_match_conv globals);
+    ("F2: mid-declaration elimination is Ind_incomplete", case_ind_incomplete globals);
+    ("F2: second define_ind is Ind_redefined", case_ind_redefined globals);
+    ("S3: params-length mismatch outranks Ind_incomplete", case_match_scrut_precedence globals);
+    ("F4: partially applied ctor is not canonical", case_partial_ctor_not_canonical globals);
+    ("F4: fully applied ctor still unfolds", case_full_ctor_unfolds globals);
+    ("F5: run_match arity backstop", case_run_match_arity_backstop globals);
+    ("F6: motive-free and explicit-motive matches convert equal", case_uniform_motive globals);
+    ( "T0: rec def guarded on an erased formal has no self-reference after erasure",
+      case_erased_guard_no_self_ref globals );
   ]
 
 let () =

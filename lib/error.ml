@@ -23,6 +23,12 @@ type t =
       found : string;
     }  (** exhaustiveness + declaration order; "<none>" marks a missing side *)
   | Termination of string  (** rec def failed the structural guard *)
+  | Ind_redefined of string
+      (** a second [define_ind] call on an inductive that already has its
+          constructors *)
+  | Ind_incomplete of string
+      (** a match (or other reader of ctor_names) reached an inductive
+          whose constructors are declared but not yet defined *)
 
 let to_string (e : t) : string =
   match e with
@@ -43,6 +49,10 @@ let to_string (e : t) : string =
         expected found
   | Termination n ->
       Printf.sprintf "recursive definition %s failed the structural termination guard" n
+  | Ind_redefined n -> Printf.sprintf "inductive %s already has its constructors defined" n
+  | Ind_incomplete n ->
+      Printf.sprintf
+        "cannot eliminate %s: its constructors are declared but not yet defined" n
 
 let tag (e : t) : string =
   match e with
@@ -59,3 +69,5 @@ let tag (e : t) : string =
   | Bad_ctor _ -> "Bad_ctor"
   | Branch_mismatch _ -> "Branch_mismatch"
   | Termination _ -> "Termination"
+  | Ind_redefined _ -> "Ind_redefined"
+  | Ind_incomplete _ -> "Ind_incomplete"

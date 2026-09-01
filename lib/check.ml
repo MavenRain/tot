@@ -150,7 +150,17 @@ and check (globals : Global.t) (ctx : ctx) (mode : Quantity.t) (tm : Term.t)
           let* branches' =
             check_branches globals ctx mode ~p_vals ~expected_of ctor_names branches
           in
-          Ok (Term.Match { scrut = scrut'; motive = None; branches = branches' }))
+          (* materialize the constant motive in checker OUTPUT: quoting
+             the already-computed [expected_v] one binder further out
+             than it was built (NbE weakening by de Bruijn LEVEL) gives a
+             term that is well-scoped under the extra scrutinee binder
+             and ignores it, exactly like an explicit constant `as _
+             return <expected>` would. This makes a motive-free match and
+             an equivalent explicit-motive match compare equal in
+             conversion instead of differing purely by spelling. *)
+          let* motive_t = Eval.quote globals (ctx.size + 1) expected_v in
+          Ok (Term.Match { scrut = scrut'; motive = Some ("_", motive_t); branches = branches' })
+      )
   | ( (Term.Var _ | Term.Univ _ | Term.Pi (_, _, _, _) | Term.App (_, _, _)
       | Term.Ann (_, _) | Term.Global _),
       expected_v ) ->
@@ -181,9 +191,22 @@ and match_scrut (globals : Global.t) (ctx : ctx) (mode : Quantity.t) (scrut : Te
         Global.find_ind iname globals
         |> Option.to_result ~none:(Error.Not_inductive (pp_value globals ctx.size s_ty))
       in
-      if Int.equal (List.length p_vals) (List.length ind.Global.params) then
-        Ok (scrut', iname, p_vals, ind.Global.ctor_names)
-      else Error (Error.Not_inductive (pp_value globals ctx.size s_ty))
+      (* params-length mismatch is checked FIRST (S3 fix, M2-fixes Round
+         3): a scrutinee whose param count disagrees with the inductive's
+         own declared telescope is not even a well-formed value of that
+         type, regardless of whether the inductive happens to still be
+         mid-declaration; that defect must be diagnosed as Not_inductive.
+         Only once params line up does "constructors not yet defined"
+         become the more specific Ind_incomplete diagnosis (the
+         provisional window: an inductive declared but not yet defined
+         has no constructors to eliminate against). *)
+      if not (Int.equal (List.length p_vals) (List.length ind.Global.params)) then
+        Error (Error.Not_inductive (pp_value globals ctx.size s_ty))
+      else
+        let* ctor_names =
+          ind.Global.ctor_names |> Option.to_result ~none:(Error.Ind_incomplete iname)
+        in
+        Ok (scrut', iname, p_vals, ctor_names)
   | Value.VUniv _
   | Value.VPi (_, _, _, _)
   | Value.VLam (_, _)
@@ -263,10 +286,18 @@ let define ?(rec_ = false) (globals : Global.t) ~(name : string) ~(reducible : b
             globals
         in
         let* def' = check provisional empty_ctx Quantity.Many def ty_v in
-        let* k = Totality.guard ~recname:name def' in
+        (* a body with NO occurrence of its own name is not recursive at
+           all: skip the structural guard entirely (it would otherwise
+           be vacuously satisfied at the first formal, k = 0) and behave
+           exactly like a plain def *)
+        let* rec_arg =
+          if Totality.mentions name def' then
+            Result.map Option.some (Totality.guard ~recname:name def')
+          else Ok None
+        in
         Ok
           (Global.add name
-             (Global.Def { Global.ty = ty'; def = def'; reducible; rec_arg = Some k })
+             (Global.Def { Global.ty = ty'; def = def'; reducible; rec_arg })
              globals)
       else
         let* def' = check globals empty_ctx Quantity.Many def ty_v in
@@ -301,7 +332,7 @@ let declare_ind (globals : Global.t) ~(name : string) ~(params : Global.telescop
       in
       Ok
         (Global.add name
-           (Global.Ind { Global.ind_ty = closed; params = stamped; level; ctor_names = [] })
+           (Global.Ind { Global.ind_ty = closed; params = stamped; level; ctor_names = None })
            globals)
 
 (** Check and install the constructors of an already-declared inductive.
@@ -312,6 +343,10 @@ let define_ind (globals : Global.t) ~(name : string) ~(ctors : (string * Term.t)
     (Global.t, Error.t) result =
   let* ind =
     Global.find_ind name globals |> Option.to_result ~none:(Error.Unbound_global name)
+  in
+  let* () =
+    ind.Global.ctor_names
+    |> Option.fold ~none:(Ok ()) ~some:(fun _names -> Error (Error.Ind_redefined name))
   in
   let n_params = List.length ind.Global.params in
   (* the params ctx every ctor type was elaborated in *)
@@ -458,4 +493,4 @@ let define_ind (globals : Global.t) ~(name : string) ~(ctors : (string * Term.t)
       (Ok globals) ctors
   in
   let ctor_names = List.map (fun (c, _cty) -> c) ctors in
-  Ok (Global.add name (Global.Ind { ind with Global.ctor_names }) globals')
+  Ok (Global.add name (Global.Ind { ind with Global.ctor_names = Some ctor_names }) globals')

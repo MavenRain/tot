@@ -1,0 +1,7 @@
+def symNat : (0 m : Nat) -> (0 n : Nat) -> (0 h : Eq Nat m n) -> Eq Nat n m :=
+  fun m n h => subst0 Nat m n (fun z => Eq Nat z m) h (refl Nat m)
+check symNat
+def castNat : (0 P : Nat -> Type 0) -> (0 a : Nat) -> (0 b : Nat) ->
+    (0 h : Eq Nat a b) -> P a -> P b :=
+  fun P a b h px => subst0 Nat a b P h px
+check castNat

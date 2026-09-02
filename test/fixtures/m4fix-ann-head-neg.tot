@@ -1,0 +1,7 @@
+-- M4 fixes round 2 (opus R3), the NEGATIVE half: stripping the
+-- annotation off the spine head must not start accepting a codomain
+-- whose head is the WRONG family.  `(Nat : Type 0) zero` strips to
+-- Global "Nat", which is not BVec, so this stays a Bad_ctor naming
+-- BVec's own result shape.
+data BVec : Nat -> Type 0 := | bvnil : (Nat : Type 0) zero
+check BVec

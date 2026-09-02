@@ -1,0 +1,10 @@
+-- M4 fixes round 4 (ctxcat r4 id 0), the NEGATIVE half: the SWAPPED
+-- reading of the motive's index binders.  TwQ takes Bool then Nat, so
+-- "return (TwQ i c)" only elaborates if i were the Bool index and c the
+-- Nat one.  It is not, so this is a type mismatch naming Bool and Nat,
+-- and a regression that reversed m_idx anywhere in the checker, the
+-- printer or quote would make this file CHECK.
+data Tw : Nat -> Bool -> Type 0 := | tw : Tw zero true
+reducible def TwQ : Bool -> Nat -> Type 0 := fun b n => Nat
+def twSwapped : (0 n : Nat) -> (0 b : Bool) -> (0 t : Tw n b) -> Nat :=
+  fun n b t => match t as x in Tw i c return (TwQ i c) with | tw => zero end

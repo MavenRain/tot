@@ -1,0 +1,16 @@
+-- M4 fixes round 4 (ctxcat r4 id 3), the POSITIVE half: narrowing the
+-- Zero fallback to Erased_use must not cost the legitimate absurd
+-- elimination, which is the shape the fallback exists for.  All three
+-- defs below fail inference at the ambient (Many) mode with Erased_use
+-- on an ERASED hypothesis, take the fallback, find a subsingleton
+-- family and ship with scrut_q = Zero:
+--   absurdNat  zero-constructor family (Empty), zero branches
+--   substNat   one all-erased non-self-recursive constructor (Eq/refl)
+--   unitPeek   one all-erased non-self-recursive constructor (Unit)
+-- The prelude's own exfalso, subst0 and J0 are this shape too, so a
+-- regression here would break every bootstrap, not just this file.
+def absurdNat : (0 e : Empty) -> Nat := fun e => match e with end
+def substNat : (0 a : Nat) -> (0 b : Nat) -> (0 h : Eq Nat a b) -> Nat -> Nat :=
+  fun a b h x => match h as y in Eq z return Nat with | refl => x end
+def unitPeek : (0 u : Unit) -> Nat := fun u => match u with | unit => zero end
+check absurdNat

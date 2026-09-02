@@ -1,0 +1,6 @@
+-- M4 Stage A, gate PASS-M4A-ESE-NEG.  A two-constructor family (Bool)
+-- matched from an erased hypothesis stays Kernel.Erased_use: the
+-- subsingleton criterion's first clause (at most one constructor) is
+-- the fence here.  This is the "leave the last two failing" half of
+-- Gate A (iv), paired with m4a-box.tot's and m4a-sx.tot's own fences.
+def eseNeg : (0 b : Bool) -> Nat := fun b => match b with | true => zero | false => zero end

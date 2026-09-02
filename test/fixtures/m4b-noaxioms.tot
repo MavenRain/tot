@@ -1,0 +1,2 @@
+axiom bogus : Eq Nat zero (succ zero)
+check bogus

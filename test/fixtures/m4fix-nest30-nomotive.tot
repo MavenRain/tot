@@ -1,0 +1,11 @@
+-- M4 fixes round 2 (opus R1, the motive-less variant): 30 matches
+-- nested in SCRUTINEE position with no `as .. return` anywhere.
+-- infer's Match arm calls match_scrut BEFORE it demands a motive, so
+-- every enclosing level still inferred the whole subterm;  the
+-- missing motive fails at the ambient mode AND at Zero, so round 1
+-- took the doubling path here too (measured on the round-1 binary:
+-- 0.41s at depth 22, 5.79s at 26, so about 80s at 30, far past this
+-- gate's own 10s watchdog).  Depth 30, not 26, so the pre-fix cost
+-- clears the budget by 8x rather than by a hair.
+def illnest : Bool := match (match (match (match (match (match (match (match (match (match (match (match (match (match (match (match (match (match (match (match (match (match (match (match (match (match (match (match (match (match ((true)) with | true => false | false => true end) with | true => false | false => true end) with | true => false | false => true end) with | true => false | false => true end) with | true => false | false => true end) with | true => false | false => true end) with | true => false | false => true end) with | true => false | false => true end) with | true => false | false => true end) with | true => false | false => true end) with | true => false | false => true end) with | true => false | false => true end) with | true => false | false => true end) with | true => false | false => true end) with | true => false | false => true end) with | true => false | false => true end) with | true => false | false => true end) with | true => false | false => true end) with | true => false | false => true end) with | true => false | false => true end) with | true => false | false => true end) with | true => false | false => true end) with | true => false | false => true end) with | true => false | false => true end) with | true => false | false => true end) with | true => false | false => true end) with | true => false | false => true end) with | true => false | false => true end) with | true => false | false => true end) with | true => false | false => true end
+check illnest

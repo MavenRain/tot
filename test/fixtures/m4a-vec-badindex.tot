@@ -1,0 +1,7 @@
+-- M4 Stage A, gate PASS-M4A-VEC-BADIX.  A constructor result type that
+-- omits the family's index (VecB A instead of VecB A <index>) is
+-- Kernel.Bad_ctor, naming the expected index count.  A regression that
+-- silently accepted this, or that reported the wrong reason string,
+-- shows up here.
+data VecB (0 A : Type 0) : Nat -> Type 0 :=
+  | vbnil : VecB A

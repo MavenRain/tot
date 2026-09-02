@@ -47,3 +47,130 @@ def jsonGetStringOr : Json -> String -> String -> String := fun j k d => match j
 -- walks the jarrCons spine; rec_arg = 0 (the tail binder t, bound by
 -- matching j, is structurally smaller)
 def rec jsonToList : Json -> List Json := fun j => match j with | jnull => nil Json | jbool b => nil Json | jnum n => nil Json | jstr s => nil Json | jarrNil => nil Json | jarrCons h t => cons Json h (jsonToList t) | jobjNil => nil Json | jobjCons k v t => nil Json end
+-- M4 Stage B: propositional equality.  Homogeneous Paulin-Mohring:
+-- parameters are the type and the LEFT endpoint, the right endpoint is
+-- the single index, and refl is the sole constructor.  Type 0 only;  a
+-- Type 1 need duplicates the def.  There is no K and no UIP.
+data Empty : Type 0 :=
+data Eq (0 A : Type 0) (0 a : A) : (0 b : A) -> Type 0 := | refl : Eq A a a
+data Dec (0 P : Type 0) : Type 0 :=
+  | yes : (0 p : P) -> Dec P
+  | no : (0 np : P -> Empty) -> Dec P
+
+def exfalso : (0 A : Type 0) -> (0 e : Empty) -> A :=
+  fun A e => match e with end
+
+reducible def subst0 : (0 A : Type 0) -> (0 a : A) -> (0 b : A) ->
+    (0 P : A -> Type 0) -> (0 h : Eq A a b) -> P a -> P b :=
+  fun A a b P h px => match h as x in Eq y return P y with | refl => px end
+
+reducible def J0 : (0 A : Type 0) -> (0 a : A) ->
+    (0 P : (y : A) -> Eq A a y -> Type 0) ->
+    P a (refl A a) -> (0 b : A) -> (0 h : Eq A a b) -> P b h :=
+  fun A a P pr b h => match h as x in Eq y return P y x with | refl => pr end
+
+reducible def sym0 : (0 A : Type 0) -> (0 a : A) -> (0 b : A) ->
+    (0 h : Eq A a b) -> Eq A b a :=
+  fun A a b h => subst0 A a b (fun z => Eq A z a) h (refl A a)
+
+-- TRAP, do NOT "simplify" this to subst0 A b c (fun z => Eq A a z) h2 h1.
+-- A def body checks at quantity mode w, and subst0's last argument sits
+-- at a w position, so forwarding the 0-bound proof h1 there is
+-- Erased_use.  The nested double match eliminates h1 INSIDE h2's refl
+-- branch and returns a freshly built refl instead of forwarding a
+-- binder.
+reducible def trans0 : (0 A : Type 0) -> (0 a : A) -> (0 b : A) -> (0 c : A) ->
+    (0 h1 : Eq A a b) -> (0 h2 : Eq A b c) -> Eq A a c :=
+  fun A a b c h1 h2 =>
+    match h2 as x2 in Eq y2 return Eq A a y2 with
+    | refl =>
+        match h1 as x1 in Eq y1 return Eq A a y1 with
+        | refl => refl A a
+        end
+    end
+
+reducible def cong0 : (0 A : Type 0) -> (0 B : Type 0) -> (0 a : A) -> (0 b : A) ->
+    (0 f : A -> B) -> (0 h : Eq A a b) -> Eq B (f a) (f b) :=
+  fun A B a b f h => subst0 A a b (fun z => Eq B (f a) (f z)) h (refl B (f a))
+
+reducible def pred : Nat -> Nat :=
+  fun n => match n with | zero => zero | succ p => p end
+reducible def natFamZero : Nat -> Type 0 :=
+  fun n => match n with | zero => Unit | succ p => Empty end
+def zeroNotSucc : (0 n : Nat) -> (0 h : Eq Nat zero (succ n)) -> Empty :=
+  fun n h => subst0 Nat zero (succ n) natFamZero h unit
+def succInj : (0 m : Nat) -> (0 n : Nat) ->
+    (0 h : Eq Nat (succ m) (succ n)) -> Eq Nat m n :=
+  fun m n h => cong0 Nat Nat (succ m) (succ n) pred h
+
+def rec natDecEq : (m : Nat) -> (n : Nat) -> Dec (Eq Nat m n) :=
+  fun m n =>
+    match m as mm return Dec (Eq Nat mm n) with
+    | zero =>
+        match n as nn return Dec (Eq Nat zero nn) with
+        | zero => yes (Eq Nat zero zero) (refl Nat zero)
+        | succ p => no (Eq Nat zero (succ p)) (fun h => zeroNotSucc p h)
+        end
+    | succ q =>
+        match n as nn return Dec (Eq Nat (succ q) nn) with
+        | zero => no (Eq Nat (succ q) zero)
+            (fun h => zeroNotSucc q (sym0 Nat (succ q) zero h))
+        | succ r =>
+            match natDecEq q r as d return Dec (Eq Nat (succ q) (succ r)) with
+            | yes p => yes (Eq Nat (succ q) (succ r)) (cong0 Nat Nat q r succ p)
+            | no np => no (Eq Nat (succ q) (succ r)) (fun h => np (succInj q r h))
+            end
+        end
+    end
+-- M4 Stage B: the monad laws are invisible to conversion by design
+-- (liftIO (pureDiv x) and pureIO x are different neutrals), so they are
+-- POSTULATED.  Consistency argument: IO and Div are declared-only,
+-- zero-constructor type formers, so no internal predicate can
+-- eliminate an IO or Div value and therefore none can distinguish the
+-- action trees these axioms equate.  Every use sits under an erased
+-- application and is dropped wholesale by erasure.
+axiom ioBindPure : (0 A : Type 0) -> (0 B : Type 0) -> (0 a : A) ->
+  (0 f : A -> IO B) -> Eq (IO B) (bindIO A B (pureIO A a) f) (f a)
+axiom ioBindRet : (0 A : Type 0) -> (0 m : IO A) ->
+  Eq (IO A) (bindIO A A m (fun a => pureIO A a)) m
+axiom ioBindAssoc : (0 A : Type 0) -> (0 B : Type 0) -> (0 C : Type 0) ->
+  (0 m : IO A) -> (0 f : A -> IO B) -> (0 g : B -> IO C) ->
+  Eq (IO C) (bindIO B C (bindIO A B m f) g)
+            (bindIO A C m (fun a => bindIO B C (f a) g))
+-- M4 Stage D: deterministic single-parameter type classes.  A class is
+-- a single-constructor dictionary data type plus projection defs;  an
+-- instance is an ordinary global under a mangled name, and coherence is
+-- Duplicate_global on that name.  Daily call sites write "auto".
+def rec anyList : (0 A : Type 0) -> (A -> Bool) -> List A -> Bool :=
+  fun A p xs => match xs with | nil => false | cons h t => orb (p h) (anyList A p t) end
+reducible def boolEq : Bool -> Bool -> Bool :=
+  fun a b =>
+    match a as x return Bool with
+    | true => match b as y return Bool with | true => true | false => false end
+    | false => match b as y return Bool with | true => false | false => true end
+    end
+def rec listEqBy : (0 A : Type 0) -> (A -> A -> Bool) -> List A -> List A -> Bool :=
+  fun A f xs ys =>
+    match xs as xx return Bool with
+    | nil => match ys as yy return Bool with | nil => true | cons h2 t2 => false end
+    | cons h1 t1 =>
+        match ys as yy return Bool with
+        | nil => false
+        | cons h2 t2 => andb (f h1 h2) (listEqBy A f t1 t2)
+        end
+    end
+
+class EqD (0 A : Type 0) := { eqf : A -> A -> Bool }
+class OrdD (0 A : Type 0) := { cmpf : A -> A -> Ordering }
+class ShowD (0 A : Type 0) := { showf : A -> String }
+
+instance : EqD Int := mkEqD Int intEq
+instance : EqD String := mkEqD String stringEq
+instance : EqD Bool := mkEqD Bool boolEq
+instance : OrdD Int := mkOrdD Int intCompare
+instance : ShowD Int := mkShowD Int intToString
+instance : (0 A : Type 0) -> EqD A -> EqD (List A) :=
+  fun A d => mkEqD (List A) (listEqBy A (eqf A d))
+
+def member : (0 A : Type 0) -> EqD A -> A -> List A -> Bool :=
+  fun A d x xs => anyList A (eqf A d x) xs

@@ -1,0 +1,11 @@
+-- M4 fixes round 2 (opus R3): a constructor codomain, and a
+-- constructor PARAMETER argument, whose annotation sits on the spine's
+-- own HEAD.  Totality.spine unwinds App without stripping, so the
+-- round-1 outer strip_ann never reached the head and head_ok was
+-- false: a Bad_ctor on a term the elaborator accepts everywhere else
+-- (`def probe : Type 0 := (AVec : (0 n : Nat) -> Type 0) zero` checks).
+-- Exact output pinned, so a silent re-rejection cannot hide here.
+data AVec : Nat -> Type 0 := | avnil : (AVec : (0 n : Nat) -> Type 0) zero
+data ABox (0 A : Type 0) : Type 0 :=
+  | abx : (w _ : A) -> (ABox : (0 A : Type 0) -> Type 0) A
+check AVec

@@ -1,0 +1,9 @@
+-- M4 fixes round 4 (ctxcat r4 id 4), the NEGATIVE half: peeling the
+-- whole-type annotation must not start accepting a codomain that is
+-- not the family applied to its parameters and indices.  ZBad's
+-- constructor ends in Nat under exactly the annotation shape the
+-- positive file uses, so the raw result-head walk must still reject it
+-- with Bad_ctor naming ZBad's own result shape.
+data ZBad (0 A : Type 0) : Nat -> Type 0 :=
+  | zbad : (((0 x : Nat) -> Nat) : Type 0)
+check ZBad

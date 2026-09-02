@@ -5,7 +5,7 @@
     Inductives: type and data constructors evaluate to canonical [VInd] /
     [VCtor] values that swallow applications. A rec global ([rec_arg =
     Some k]) ALWAYS starts neutral and unfolds only at application time,
-    when argument [k] is a canonical constructor value — so conversion
+    when argument [k] is a canonical constructor value, so conversion
     cannot diverge on open recursive calls. *)
 
 let ( let* ) = Result.bind
@@ -31,13 +31,10 @@ let is_canonical (globals : Global.t) (v : Value.t) : bool =
   | Value.VCtor (c, args) ->
       Global.find_ctor c globals
       |> Option.fold ~none:false ~some:(fun (ctor : Global.ctor_entry) ->
-             let n_params =
-               Global.find_ind ctor.Global.ind globals
-               |> Option.fold ~none:0 ~some:(fun (ind : Global.ind_entry) ->
-                      List.length ind.Global.params)
-             in
-             let full_arity = n_params + List.length ctor.Global.args in
-             Int.equal (List.length args) full_arity)
+             (* M4 Stage A: the chained [find_ind] lookup is DELETED; the
+                ctor entry now carries its own [full_arity] (A4/A5's
+                ctor-arity-cache debt, discharged in Stage A). *)
+             Int.equal (List.length args) ctor.Global.full_arity)
   | Value.VUniv _ | Value.VPi (_, _, _, _) | Value.VLam (_, _) | Value.VInd (_, _)
   | Value.VNeutral (_, _)
   (* a VLit is NOT canonical for guarded unfolding: structural recursion
@@ -64,7 +61,13 @@ let rec eval (globals : Global.t) (env : Value.t list) (tm : Term.t) :
       let* def_v = eval globals env def in
       eval globals (def_v :: env) body
   | Term.Ann (tm', _ty) -> eval globals env tm'
-  | Term.Match { scrut; motive; branches } ->
+  | Term.Auto ->
+      (* M4 Stage A: unreachable on checker output; [Auto] never survives
+         [Check]. Total backstop. *)
+      Error (Error.Cannot_infer "auto")
+  | Term.Match { scrut; scrut_q = _; motive; branches } ->
+      (* M4 Stage A: [scrut_q] is an erasure-time stamp only; kernel
+         evaluation keeps full semantics, which subject reduction needs. *)
       let* scrut_v = eval globals env scrut in
       run_match globals env scrut_v motive branches
   | Term.Global name ->
@@ -78,6 +81,10 @@ let rec eval (globals : Global.t) (env : Value.t list) (tm : Term.t) :
          to set: this arm IS the entire kernel-level argument that
          checking can never perform an effect (M3 Stage A). *)
       | Global.Prim _ -> Ok (Value.VNeutral (Value.HGlobal name, []))
+      (* M4 Stage B: an [Axiom] has no [def] either, the same opaque
+         shape as a [Prim]; [Check] is what forbids it at runtime, not
+         [Eval] (this arm is reached only at mode 0). *)
+      | Global.Axiom _ -> Ok (Value.VNeutral (Value.HGlobal name, []))
       | Global.Def d ->
           (match () with
           | () when Option.is_some d.Global.rec_arg ->
@@ -90,7 +97,7 @@ let rec eval (globals : Global.t) (env : Value.t list) (tm : Term.t) :
 (** Reduce a match whose scrutinee value is known. A neutral scrutinee
     freezes the whole match as an [FMatch] frame closing over [env]. *)
 and run_match (globals : Global.t) (env : Value.t list) (scrut_v : Value.t)
-    (motive : (string * Term.t) option)
+    (motive : Term.motive option)
     (branches : (string * (Quantity.t * string) list * Term.t) list) :
     (Value.t, Error.t) result =
   match scrut_v with
@@ -211,12 +218,35 @@ and quote (globals : Global.t) (size : int) (v : Value.t) : (Term.t, Error.t) re
               let* arg_t = quote globals size arg in
               Ok (Term.App (Quantity.Many, f, arg_t))
           | Value.FMatch sm ->
+              (* M4 Stage A: a motive now closes over [m + 1] binders;
+                 [m = 0] degenerates exactly to the M2/M3 single-binder
+                 shape.  M4 fixes round 4 (ctxcat r4 id 0): "index"
+                 below means DE BRUIJN index, not a position in
+                 [m_idx].  [m_idx] itself is in DECLARATION order
+                 (outermost first, see [Term.motive]); inside [m_body]
+                 de Bruijn 0 is the scrutinee and de Bruijn [1..m] are
+                 the index binders in the REVERSE of [m_idx], which is
+                 what [idx_env] builds: its k-th element (de Bruijn
+                 [k + 1]) is the level [size + m - 1 - k], so the FIRST
+                 element of [m_idx] gets the LOWEST level [size] and
+                 the last gets [size + m - 1].  This is the same
+                 reversal [Pp.term] performs with [List.rev m_idx]. *)
               let* motive_t =
                 sm.Value.motive
-                |> Option.fold ~none:(Ok None) ~some:(fun (x, mot) ->
-                       let* mot_v = eval globals (Value.var size :: sm.Value.menv) mot in
-                       let* mot_t = quote globals (size + 1) mot_v in
-                       Ok (Some (x, mot_t)))
+                |> Option.fold ~none:(Ok None) ~some:(fun (mo : Term.motive) ->
+                       let m = List.length mo.Term.m_idx in
+                       let idx_env = List.init m (fun i -> Value.var (size + m - 1 - i)) in
+                       let menv' = Value.var (size + m) :: (idx_env @ sm.Value.menv) in
+                       let* mot_v = eval globals menv' mo.Term.m_body in
+                       let* mot_t = quote globals (size + m + 1) mot_v in
+                       Ok
+                         (Some
+                            {
+                              Term.m_ind = mo.Term.m_ind;
+                              m_idx = mo.Term.m_idx;
+                              m_self = mo.Term.m_self;
+                              m_body = mot_t;
+                            }))
               in
               let* branches_t =
                 List.fold_left
@@ -232,7 +262,12 @@ and quote (globals : Global.t) (size : int) (v : Value.t) : (Term.t, Error.t) re
                   (Ok []) sm.Value.branches
                 |> Result.map List.rev
               in
-              Ok (Term.Match { scrut = f; motive = motive_t; branches = branches_t }))
+              (* quoted terms feed display and conversion only, never
+                 erasure, so a [Many] placeholder [scrut_q] is fine here
+                 (same convention as [Term.Lam]'s quoted stamp above). *)
+              Ok
+                (Term.Match
+                   { scrut = f; scrut_q = Quantity.Many; motive = motive_t; branches = branches_t }))
         (Ok head_t) (List.rev frames)
 
 and conv (globals : Global.t) (size : int) (a : Value.t) (b : Value.t) :
@@ -351,17 +386,31 @@ and conv_frames (globals : Global.t) (size : int) (fs1 : Value.frame list)
 
 and conv_stuck_match (globals : Global.t) (size : int) (m1 : Value.stuck_match)
     (m2 : Value.stuck_match) : (bool, Error.t) result =
+  (* M4 Stage A: motives compare under the same [m + 1] fresh variables;
+     differing [m_idx] LENGTHS are [Ok false]; [m_ind] is IGNORED (a
+     materialized constant motive writes [None] while an explicit one
+     writes [Some "Vec"], and those two must still compare equal). *)
   let* mot_eq =
     m1.Value.motive
     |> Option.fold
          ~none:(Ok (Option.is_none m2.Value.motive))
-         ~some:(fun (_x1, mot1) ->
+         ~some:(fun (mo1 : Term.motive) ->
            m2.Value.motive
-           |> Option.fold ~none:(Ok false) ~some:(fun (_x2, mot2) ->
-                  let fresh = Value.var size in
-                  let* v1 = eval globals (fresh :: m1.Value.menv) mot1 in
-                  let* v2 = eval globals (fresh :: m2.Value.menv) mot2 in
-                  conv globals (size + 1) v1 v2))
+           |> Option.fold ~none:(Ok false) ~some:(fun (mo2 : Term.motive) ->
+                  let m1_idx = List.length mo1.Term.m_idx in
+                  let m2_idx = List.length mo2.Term.m_idx in
+                  match () with
+                  | () when not (Int.equal m1_idx m2_idx) -> Ok false
+                  | () ->
+                      let idx_env =
+                        List.init m1_idx (fun i -> Value.var (size + m1_idx - 1 - i))
+                      in
+                      let self_v = Value.var (size + m1_idx) in
+                      let env1 = self_v :: (idx_env @ m1.Value.menv) in
+                      let env2 = self_v :: (idx_env @ m2.Value.menv) in
+                      let* v1 = eval globals env1 mo1.Term.m_body in
+                      let* v2 = eval globals env2 mo2.Term.m_body in
+                      conv globals (size + m1_idx + 1) v1 v2))
   in
   if mot_eq then
     conv_match_branches globals size m1.Value.menv m2.Value.menv m1.Value.branches

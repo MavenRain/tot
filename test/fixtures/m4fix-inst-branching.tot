@@ -1,0 +1,29 @@
+-- M4 fixes round 2 (ctxcat id 5): an instance with TWO dictionary
+-- binders on the SAME type variable.  validate_instance_shape accepts
+-- it, so resolving DC (DBox^n Bool) branches twice per level: 2^n
+-- identical sub-resolutions.  Round 1's fuel bounded the depth of one
+-- PATH, never the total, so the belt could not fire and this file
+-- took 32.82s at n = 20 (7.43s at 18, 0.41s at 14: 2^n).  With fuel
+-- threaded as a BUDGET the whole walk is bounded by inst_fuel, so it
+-- resolves or reports Inst_depth at once;  it must never hang.
+--
+-- M4 fixes round 4 (opus R4-1), an AUTHORIZED oracle re-scope: the
+-- nesting drops from 20 to 16.  Round 3's memo made the RESOLUTION
+-- linear, but the emitted dictionary is still a binary tree of 2^n
+-- nodes that the mandatory candidate re-check walks as a tree, so the
+-- leg cost 20.5s idle and 58 to 90s under load against a 60s watchdog:
+-- two of three gate-shaped runs timed out at exit 124, and this leg
+-- sits AHEAD of six later markers in a fail-fast script.  The
+-- regression boundary this file pins is nesting 4 to 6 (round 2 first
+-- rejected the shape there), so 16 still over-pins it by an order of
+-- magnitude while the term, and with it the wall clock, shrinks 16x.
+-- The depth-20 measurement is kept here on purpose: it is the M5
+-- hash-consing motivation, since a Term.t with sharing would make the
+-- re-check linear in the DAG instead of the tree.
+class DC (0 A : Type 0) := { dc : Bool }
+data DBox (0 A : Type 0) : Type 0 := | dbox : A -> DBox A
+instance : DC Bool := mkDC Bool true
+instance : (0 A : Type 0) -> DC A -> DC A -> DC (DBox A) :=
+  fun A d1 d2 => mkDC (DBox A) true
+def deepBranching : Bool := dc (DBox (DBox (DBox (DBox (DBox (DBox (DBox (DBox (DBox (DBox (DBox (DBox (DBox (DBox (DBox (DBox Bool)))))))))))))))) auto
+eval deepBranching

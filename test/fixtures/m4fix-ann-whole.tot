@@ -1,0 +1,19 @@
+-- M4 fixes round 4 (ctxcat r4 id 4): an annotation wrapping the ENTIRE
+-- constructor type, telescope included, not just its codomain head.
+-- The finding predicted a false Bad_ctor here, on the reading that
+-- strip_pis stops at an Ann node the way it stops at Global or Match.
+-- It does not: round 1's ctxcat id 8 fix made strip_pis call strip_ann
+-- at EVERY level, including the first, so Ann (Pi ...) peels to its
+-- binders and the raw result-head walk sees WFoo A x with one index.
+-- Executed on the round-3 binary, both spellings already checked, so
+-- the finding is REFUTED on behaviour.  This file is the regression
+-- pin that was missing: the two spellings, plus an Ann nested INSIDE
+-- the telescope on the codomain, all keep checking.  Exact output
+-- pinned so a silent re-rejection cannot hide here.
+data WFoo (0 A : Type 0) : Nat -> Type 0 :=
+  | wmk : ((0 x : Nat) -> WFoo A x : Type 0)
+data XFoo (0 A : Type 0) : Nat -> Type 0 :=
+  | xmk : (((0 x : Nat) -> XFoo A x) : Type 0)
+data YFoo (0 A : Type 0) : Nat -> Type 0 :=
+  | ymk : ((0 x : Nat) -> ((YFoo A x) : Type 0) : Type 0)
+check WFoo

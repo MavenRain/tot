@@ -1,0 +1,6 @@
+-- M4 fixes round 1 (ctxcat id 8): a constructor whose codomain carries a
+-- type annotation, and one whose PARAMETER argument does.  Elaboration
+-- deletes Term.Ann, so both shapes checked before Stage A moved the
+-- result-head test onto the RAW type; both must keep checking.
+data AnnFoo : Type 0 := | annMk : (AnnFoo : Type 0)
+data AnnBox (0 A : Type 0) : Type 0 := | annBox : A -> AnnBox (A : Type 0)

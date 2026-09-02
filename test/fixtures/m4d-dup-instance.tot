@@ -1,0 +1,2 @@
+instance : OrdD Bool := mkOrdD Bool (fun a b => eq)
+instance : OrdD Bool := mkOrdD Bool (fun a b => eq)

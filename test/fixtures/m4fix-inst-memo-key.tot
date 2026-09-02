@@ -1,0 +1,20 @@
+-- M4 fixes round 3 (opus R3-1), the memo's SOUNDNESS pin.  The memo is
+-- keyed on the (class, key) pair with the key spelled in FULL, the
+-- class argument's own quoted term, not just its head symbol.  A
+-- head-only key is unsound: an instance with two type binders puts two
+-- sibling dictionary sub-goals in one telescope, and those can share a
+-- head while differing in its arguments.  Here PC (PBox Bool) and
+-- PC (PBox Nat) both have head PBox, and the second binder is the one
+-- the method reads, so a head-only memo hands back the FIRST
+-- dictionary and this file computes 0 (or fails the candidate
+-- re-check) instead of 1.
+class PC (0 A : Type 0) := { pc : Nat }
+data PBox (0 A : Type 0) : Type 0 := | pbox : A -> PBox A
+data PPair (0 A : Type 0) (0 B : Type 0) : Type 0 := | ppair : A -> B -> PPair A B
+instance : PC Bool := mkPC Bool zero
+instance : PC Nat := mkPC Nat (succ zero)
+instance : (0 A : Type 0) -> PC A -> PC (PBox A) := fun A d => mkPC (PBox A) (pc A d)
+instance : (0 A : Type 0) -> (0 B : Type 0) -> PC A -> PC B -> PC (PPair A B) :=
+  fun A B da db => mkPC (PPair A B) (pc B db)
+def mixedKeys : Nat := pc (PPair (PBox Bool) (PBox Nat)) auto
+eval mixedKeys

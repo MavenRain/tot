@@ -1,0 +1,13 @@
+-- M4 fixes round 4 (ctxcat r4 id 0): the motive's index-binder order,
+-- pinned on a family with TWO indices, because Vec has one and one
+-- index cannot tell the two candidate conventions apart.
+-- Tw's indices are declared Nat then Bool, so "in Tw i c" must bind i
+-- to the Nat index and c to the Bool one (declaration order, outermost
+-- first).  TwP takes Nat then Bool, so the motive body TwP i c only
+-- elaborates under that reading;  m4fix-motive-order-neg.tot is the
+-- other reading and must fail.  Exact output pinned.
+data Tw : Nat -> Bool -> Type 0 := | tw : Tw zero true
+reducible def TwP : Nat -> Bool -> Type 0 := fun n b => Nat
+def twOrder : (0 n : Nat) -> (0 b : Bool) -> (0 t : Tw n b) -> TwP n b :=
+  fun n b t => match t as x in Tw i c return (TwP i c) with | tw => zero end
+check twOrder

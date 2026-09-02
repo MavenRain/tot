@@ -1,0 +1,12 @@
+-- M4 Stage A, gate PASS-M4A-SX.  A one-constructor family whose sole
+-- argument is erased (quantity 0) but SELF-RECURSIVE (wrap : (0 s : SX)
+-- -> SX) stays Kernel.Erased_use: the subsingleton criterion's third
+-- clause (not self-recursive) is the fence here, not a quantity.  Note
+-- that "data SX" itself is ACCEPTED (M2 positivity has no complaint);
+-- only the eliminating def sxLoop is rejected, at the STAMP (zero_
+-- eliminable fails on self_rec), not by any runtime mechanism.  A
+-- regression that flips this to check would let the M2 fixes Round 4
+-- erased-guard soundness argument's relaxation (see A6.6 in
+-- lib/check.ml) go unchecked.
+data SX : Type 0 := | wrap : (0 s : SX) -> SX
+def rec sxLoop : (0 s : SX) -> Nat := fun s => match s with | wrap s2 => sxLoop s2 end

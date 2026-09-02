@@ -1,0 +1,7 @@
+-- M4 fixes round 4 (ctxcat r4 id 3), the CONTROL: an ambient scrutinee
+-- error that is NEITHER Erased_use NOR Axiom_runtime_use must reach the
+-- user unchanged, before and after the fallback narrowing.  `zero zero`
+-- applies a Nat, so infer reports Not_a_function "Nat" at the ambient
+-- mode; the guard sends it straight out instead of re-inferring at
+-- Zero, and the message is byte-identical to the round-3 one.
+def notFun : Nat := match (zero zero) with | zero => zero | succ p => zero end

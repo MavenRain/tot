@@ -1,6 +1,16 @@
-(** Surface syntax: names, locations, and sugar; no indices yet. *)
+(** Surface syntax: names, locations, and sugar. *)
 
-type t =
+(** M4 Stage A: a match's motive, "as x [in I y1 .. ym] return P".
+    [sm_ind]/[sm_idx] are [None]/[[]] for an M2/M3 motive with no "in"
+    clause. *)
+type smotive = {
+  sm_self : string;
+  sm_ind : string option;
+  sm_idx : string list;
+  sm_body : t;
+}
+
+and t =
   | SVar of Loc.t * string
   | SType of Loc.t * int
   | SPi of Loc.t * Tot_kernel.Quantity.t * string * t * t
@@ -8,9 +18,9 @@ type t =
   | SApp of Loc.t * t * t
   | SLet of Loc.t * string * t * t * t  (** let x : ty := def in body *)
   | SAnn of Loc.t * t * t  (** (term : type) *)
-  | SMatch of Loc.t * t * (string * t) option * (string * string list * t) list
-      (** scrutinee, optional "as x return P" motive, flat branches
-          (ctor name, binder names, body) *)
+  | SMatch of Loc.t * t * smotive option * (string * string list * t) list
+      (** scrutinee, optional "as x [in I y1 .. ym] return P" motive,
+          flat branches (ctor name, binder names, body) *)
   | SStr of Loc.t * string  (** M3 Stage A *)
   | SInt of Loc.t * int  (** M3 Stage A *)
   | SLetStar of Loc.t * bool * t * t * string * t * t
@@ -23,24 +33,31 @@ type t =
           body)] application needs (no [SHole], no bounded hole pass;
           see dev/M3-BUILD-LOG.md "Stage C" for the argument), then the
           binder name, the right-hand-side term, and the body. *)
+  | SAuto of Loc.t
+      (** M4 Stage D: "auto", an instance-request atom.  Elaborates to
+          [Term.Auto]. *)
+  | SInst of Loc.t * t * t
+      (** M4 Stage D: "inst C T", pure sugar for
+          [Term.Ann (Term.Auto, Term.App (Quantity.Many, C, T))]. *)
+
+(** M4 Stage D (D5.4): [Syntax.IDef]'s [(rec_, partial)] bool pair,
+    collapsed into one sum type so the illegal [partial = true,
+    rec_ = false] state is unrepresentable (was a SPEC section 6 debt).
+    [parse_def] produces this directly;  [Check.define]'s own two
+    booleans are UNCHANGED (its kernel shape is marshaled, and this
+    stage must not touch the cache shape twice), so every consumer maps
+    this back to [~rec_]/[~partial] with an exhaustive match. *)
+type defkind =
+  | DNonRec
+  | DRec
+  | DRecPartial
 
 type item =
   | IDef of {
       loc : Loc.t;
       name : string;
       reducible : bool;
-      rec_ : bool;  (** [def rec]: route through the guarded define path *)
-      partial : bool;
-          (** M3 Stage C: [def rec partial]; always [false] unless
-              [rec_] is also [true].  This invariant is NOT
-              type-enforced (M3 fixes, C4'/C12): the record admits any
-              [(rec_, partial)] pair, and only the PARSER maintains it
-              ([partial] only ever follows [rec]), so every OTHER
-              producer of [IDef] must maintain it by hand.  Collapsing
-              the two flags into one sum type (NonRec | Rec |
-              RecPartial) would make the illegal state
-              unrepresentable; recorded as a SPEC section 6 debt, M4
-              work. *)
+      kind : defkind;
       ty : t;
       def : t;
     }
@@ -48,9 +65,32 @@ type item =
       loc : Loc.t;
       name : string;
       params : (string * t) list;  (** always quantity-0 (parser-enforced) *)
+      indices : (Tot_kernel.Quantity.t * string * t) list;
+          (** M4 Stage A: the index telescope, outermost first, scoped
+              under [params]; always quantity-0 (parser-enforced) *)
       level : int;
       ctors : (string * t) list;  (** ctor types, scoped under the params *)
     }
+  | IAxiom of {
+      loc : Loc.t;
+      name : string;
+      ty : t;
+    }  (** M4 Stage B: a postulated statement, usable only at quantity 0 *)
+  | IClass of {
+      loc : Loc.t;
+      name : string;
+      param : string * t;  (** the class's own type parameter, "Type L" *)
+      methods : (string * t) list;  (** method name, method type; scoped under [param] *)
+    }  (** M4 Stage D: "class NAME (0 A : Type L) := { m1 : T1 ; .. }",
+           desugared by [Run.item] into an [IData] dictionary plus one
+           projection [IDef] per method. *)
+  | IInstance of {
+      loc : Loc.t;
+      ty : t;
+      def : t;
+    }  (** M4 Stage D: "instance : TY := TERM", registered by [Run.item]
+           under the mangled name ["inst$" ^ C ^ "$" ^ K] read off [ty]'s
+           own codomain spine. *)
   | ICheck of Loc.t * t
   | IEval of Loc.t * t
 
@@ -67,3 +107,5 @@ let loc_of (s : t) : Loc.t =
   | SStr (loc, _) -> loc
   | SInt (loc, _) -> loc
   | SLetStar (loc, _, _, _, _, _, _) -> loc
+  | SAuto loc -> loc
+  | SInst (loc, _, _) -> loc

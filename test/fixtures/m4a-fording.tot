@@ -1,0 +1,13 @@
+-- M4 Stage A, gate PASS-M4A-FORDING.  Fording (encoding an index as a
+-- uniform parameter plus equations) stays blocked: the length here is
+-- declared as a second PARAMETER, and its own constructor is rejected
+-- BEFORE define_ind's ctor fold ever reaches vpcons, since vpnil is
+-- checked first and already fails the result-head rule (0 zero is not
+-- the parameter n itself).  This is why user decision 3 admits general
+-- recursive indexed families now instead of fencing them: Fording had
+-- no escape route to fall back to.  See kernel test A5 for the isolated
+-- vpcons-alone positivity failure this same shape triggers when vpnil
+-- is not in the way.
+data VecP (0 A : Type 0) (0 n : Nat) : Type 0 :=
+  | vpnil : VecP A zero
+  | vpcons : (0 m : Nat) -> A -> VecP A m -> VecP A (succ m)

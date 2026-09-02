@@ -32,7 +32,7 @@ and frame =
   | FMatch of stuck_match
 
 and stuck_match = {
-  motive : (string * Term.t) option;
+  motive : Term.motive option;  (** M4 Stage A: CHANGED payload, same option *)
   branches : (string * (Quantity.t * string) list * Term.t) list;
   menv : t list;  (** env for motive and branch bodies alike *)
 }

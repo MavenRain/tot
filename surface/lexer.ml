@@ -29,6 +29,11 @@ let keywords : (string * Token.kind) list =
     ("rec", Token.KRec);
     ("end", Token.KEnd);
     ("partial", Token.KPartial);  (** M3 Stage C *)
+    ("axiom", Token.KAxiom);  (** M4 Stage B *)
+    ("class", Token.KClass);  (** M4 Stage D *)
+    ("instance", Token.KInstance);  (** M4 Stage D *)
+    ("auto", Token.KAuto);  (** M4 Stage D *)
+    ("inst", Token.KInst);  (** M4 Stage D *)
   ]
 
 let ident_kind (s : string) : Token.kind =
@@ -95,6 +100,9 @@ let rec go (loc : Loc.t) (cs : char list) (acc : Token.t list) :
   | ':' :: rest -> go (Loc.next_col loc) rest ({ Token.kind = Token.Colon; loc } :: acc)
   | '(' :: rest -> go (Loc.next_col loc) rest ({ Token.kind = Token.LParen; loc } :: acc)
   | ')' :: rest -> go (Loc.next_col loc) rest ({ Token.kind = Token.RParen; loc } :: acc)
+  | '{' :: rest -> go (Loc.next_col loc) rest ({ Token.kind = Token.LBrace; loc } :: acc)
+  | '}' :: rest -> go (Loc.next_col loc) rest ({ Token.kind = Token.RBrace; loc } :: acc)
+  | ';' :: rest -> go (Loc.next_col loc) rest ({ Token.kind = Token.Semi; loc } :: acc)
   | '|' :: rest -> go (Loc.next_col loc) rest ({ Token.kind = Token.Pipe; loc } :: acc)
   | '"' :: rest ->
       let* s, loc', rest' = scan_string (Loc.next_col loc) rest [] in

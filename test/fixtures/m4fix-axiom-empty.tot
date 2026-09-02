@@ -1,0 +1,16 @@
+-- M4 fixes round 4 (ctxcat r4 id 3), the NEGATIVE: an axiom must not
+-- reach a runtime definition through a zero-constructor family.
+-- [Empty] is [Global.Complete []], which [zero_eliminable] accepts, so
+-- rounds 1 to 3 stamped [scrut_q = Zero] on this match.  They reached
+-- that stamp on the FALLBACK path, i.e. exactly when inference at the
+-- ambient mode had already failed, and here it failed with
+-- Axiom_runtime_use: the rule that confines an axiom to quantity 0.
+-- The fallback forgave it, the match was accepted at quantity Many,
+-- and `boom` became a runtime Nat whose erased body is the erasure
+-- residue (measured on the round-3 binary: `eval boom` printed
+-- <erased>, and `eval (add boom (succ zero))` printed
+-- ((add <erased>) (succ zero)), an erasure marker inside a Many
+-- computation).  The fallback is now guarded on Erased_use, the ONE
+-- class it exists for, so this reports Axiom_runtime_use again.
+axiom ff : Empty
+def boom : Nat := match ff with end

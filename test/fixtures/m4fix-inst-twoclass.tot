@@ -1,0 +1,17 @@
+-- M4 fixes round 3 (opus R3-1): TWO DIFFERENT classes on the same type
+-- variable, the ordinary way to write "showing a boxed A needs Eq on A
+-- too".  Resolving TC (TBox^n Bool) needs one TC step plus a whole TD
+-- chain per level, so the total work is QUADRATIC in n while round 2's
+-- fuel grew only linearly in it: this file failed Inst_depth from
+-- nesting 6 up, and the round-1 binary answered nesting 30 in 0.034s.
+-- With the (class, key) memo each distinct sub-goal is resolved once,
+-- so the walk is linear and this resolves.  Nesting 30.
+class TC (0 A : Type 0) := { tc : Bool }
+class TD (0 A : Type 0) := { td : Bool }
+data TBox (0 A : Type 0) : Type 0 := | tbox : A -> TBox A
+instance : TC Bool := mkTC Bool true
+instance : TD Bool := mkTD Bool true
+instance : (0 A : Type 0) -> TD A -> TD (TBox A) := fun A d => mkTD (TBox A) true
+instance : (0 A : Type 0) -> TC A -> TD A -> TC (TBox A) := fun A d1 d2 => mkTC (TBox A) true
+def deepTwoClass : Bool := tc (TBox (TBox (TBox (TBox (TBox (TBox (TBox (TBox (TBox (TBox (TBox (TBox (TBox (TBox (TBox (TBox (TBox (TBox (TBox (TBox (TBox (TBox (TBox (TBox (TBox (TBox (TBox (TBox (TBox (TBox Bool)))))))))))))))))))))))))))))) auto
+eval deepTwoClass

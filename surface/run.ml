@@ -15,6 +15,23 @@ type state = {
 
 let initial : state = { globals = Global.empty; eglobals = Interp.empty_globals; lines = [] }
 
+(** M4 Stage B: installation policy, distinct from anything the kernel
+    knows about (a driver flag has no business in the trusted base).
+    [no_axioms] rejects an [axiom] item in the USER file; it is never
+    applied to the prelude ([Bootstrap.fold_prelude_items] always folds with
+    [default_policy]), so a hook installation that runs with
+    [--no-axioms] still gets the monad-law axioms the prelude itself
+    postulates. [require_main] (M4 Stage D, D5.2) rejects a script with
+    no "main" def; the misspelled-main residual (SPEC section 6) stays
+    the documented default, an opt-in strictness for an installation's
+    shebang wrapper. *)
+type policy = {
+  no_axioms : bool;
+  require_main : bool;
+}
+
+let default_policy : policy = { no_axioms = false; require_main = false }
+
 let kernel (loc : Loc.t) (r : ('a, Error.t) result) : ('a, Serror.t) result =
   Result.map_error (fun err -> Serror.Kernel { loc; err }) r
 
@@ -25,7 +42,7 @@ let kernel (loc : Loc.t) (r : ('a, Error.t) result) : ('a, Serror.t) result =
 let rec lam_quantities (t : Term.t) : Quantity.t list =
   match t with
   | Term.Lam (q, _x, b) -> q :: lam_quantities b
-  | Term.Var _ | Term.Univ _
+  | Term.Var _ | Term.Univ _ | Term.Auto
   | Term.Pi (_, _, _, _)
   | Term.App (_, _, _)
   | Term.Let (_, _, _, _)
@@ -33,54 +50,148 @@ let rec lam_quantities (t : Term.t) : Quantity.t list =
   | Term.Global _ | Term.Match _ | Term.Lit _ ->
       []
 
-(** Remap a kernel [rec_arg] (an index into the UNERASED formal telescope,
-    outermost first, per [Totality.peel]/[Totality.guard]) to an index
-    into the runtime's ERASED application spine that [Interp.apply]'s
-    guard actually walks ([Erase.term] drops every [Quantity.Zero] [Lam]
-    binder and [Quantity.Zero] [App] argument, so the two spines diverge
-    whenever an erased formal precedes the principal one). [Some k'] where
-    [k'] counts the [Quantity.Many] formals strictly before position [k].
+(** Turn the kernel's [rec_arg] (an index into the UNERASED formal
+    telescope, outermost first, per [Totality.peel]/[Totality.guard])
+    into the runtime guard (an index into the ERASED spine
+    [Interp.apply]'s guard actually walks: [Erase.term] drops every
+    [Quantity.Zero] [Lam] binder and [Quantity.Zero] [App] argument, so
+    the two spines diverge whenever an erased formal precedes the
+    principal one). [GuardedAt k'] where [k'] counts the [Quantity.Many]
+    formals strictly before position [k] is the [Many] case, M2 fixes
+    Round 2's remap, verbatim.
 
-    If formal [k] is itself [Quantity.Zero] (erased), remap to [None]:
-    eager unfolding, the def is treated as non-recursive at runtime (M2
-    fixes, round 4 review; see dev/M2-FIXES-LOG.md "## Round 4" for the
-    full correction). This is SOUND, not merely permissive: a quantity-0
-    formal can only be eliminated (matched on) while checking at
-    [Quantity.Zero] mode, the same attenuation [Check.infer]'s [Var] arm
-    enforces (using a 0-bound variable at mode [Many] is [Erased_use]),
-    so every branch of a match on it, and every recursive call reachable
-    through those branches, is itself checked at mode [Zero].
-    [Erase.term]'s [App (Quantity.Zero, f, _a) -> term ctx f] arm drops
-    such a subterm WHOLESALE at its use site without walking it, so the
-    ERASED body of a rec def guarded on an erased formal contains NO
-    occurrence of the def's own global name: eager unfolding cannot loop
-    and computes the definitionally correct value. Mechanically confirmed
+    The [Zero] case is M2 fixes Round 4's rule made EXECUTABLE: when the
+    guarded formal is erased the runtime spine never carries it, so
+    there is no principal position left to test. Round 4 argued that
+    such a def's erased body cannot mention its own name, and therefore
+    unfolds eagerly without looping: a quantity-0 formal can only be
+    eliminated (matched on) while checking at [Quantity.Zero] mode, the
+    same attenuation [Check.infer]'s [Var] arm enforces (using a
+    0-bound variable at mode [Many] is [Erased_use]), so every branch of
+    a match on it, and every recursive call reachable through those
+    branches, is itself checked at mode [Zero]; [Erase.term]'s
+    [App (Quantity.Zero, f, _a) -> term ctx f] arm drops such a subterm
+    WHOLESALE at its use site without walking it. Mechanically confirmed
     for the [ghost] fixture (test/fixtures/s0-erased-guard.tot) by a
     kernel-level [Eterm.t] walk: test/main.ml's "T0: rec def guarded on
-    an erased formal has no self-reference after erasure". (An earlier
-    revision of this arm froze here instead, on a divergence claim that
-    had no actual witness; reverted, see the log.)
+    an erased formal has no self-reference after erasure".
+
+    M4 Stage A relaxed the invariant that argument rested on (subsingleton
+    elimination lets a match run at mode [w] on an erased scrutinee of a
+    family with no runtime bits, which was not true when Round 4 argued
+    this), so we no longer assume it: we RUN [Eterm.mentions] on the
+    erased body. No mention gives [Unguarded], the Round 4 behavior and
+    the only live case. A mention gives [Frozen], a permanent neutral,
+    dead code by the emptiness argument in SPEC's Stage A entry. (An
+    earlier revision of this arm froze unconditionally instead, on a
+    divergence claim that had no actual witness; reverted, see the log.)
 
     Total: an out-of-range [k] (should not arise, [Totality.guard] only
-    returns in-range positions) also falls back to [None] (no guard at
-    all, i.e. today's plain-def behavior), since [List.nth_opt qs k]
+    returns in-range positions) also falls back to [Unguarded] (no guard
+    at all, i.e. today's plain-def behavior), since [List.nth_opt qs k]
     itself misses first. *)
-let remap_rec_arg (def : Term.t) (rec_arg : int option) : int option =
+let compute_guard ~(name : string) (def : Term.t) (rec_arg : int option)
+    (def_e : Eterm.t) : Interp.guard =
   let qs = lam_quantities def in
-  Option.bind rec_arg (fun k ->
-      Option.bind (List.nth_opt qs k) (fun q ->
-          match q with
-          | Quantity.Zero -> None
-          | Quantity.Many ->
-              Some
-                (List.length
-                   (List.filteri
-                      (fun ix q' -> ix < k && Quantity.equal q' Quantity.Many)
-                      qs))))
+  rec_arg
+  |> Option.fold ~none:Interp.Unguarded ~some:(fun k ->
+         List.nth_opt qs k
+         |> Option.fold ~none:Interp.Unguarded ~some:(fun q ->
+                match q with
+                | Quantity.Many ->
+                    Interp.GuardedAt
+                      (List.length
+                         (List.filteri
+                            (fun ix q' -> ix < k && Quantity.equal q' Quantity.Many)
+                            qs))
+                | Quantity.Zero ->
+                    (match () with
+                    | () when Eterm.mentions name def_e -> Interp.Frozen
+                    | () -> Interp.Unguarded)))
 
-let item ~(exec : bool) (st : state) (it : Syntax.item) : (state, Serror.t) result =
+(** M4 Stage D (D5.4): [Syntax.defkind] back to the kernel's own
+    [~rec_]/[~partial] pair. [Check.define]'s signature is unchanged
+    (its shape is marshaled and this stage must not touch the cache
+    shape twice), so every consumer maps the sum back with this one
+    exhaustive match. *)
+let defkind_bools (k : Syntax.defkind) : bool * bool =
+  match k with
+  | Syntax.DNonRec -> (false, false)
+  | Syntax.DRec -> (true, false)
+  | Syntax.DRecPartial -> (true, true)
+
+(** M4 Stage D (D3): peel [t]'s leading [Syntax.SPi] binders (a
+    parametric instance's own type/dictionary telescope), unelaborated. *)
+let rec peel_syntax_codomain (t : Syntax.t) : Syntax.t =
+  match t with
+  | Syntax.SPi (_loc, _q, _x, _dom, cod) -> peel_syntax_codomain cod
+  | Syntax.SVar _ | Syntax.SType _ | Syntax.SLam _ | Syntax.SApp _ | Syntax.SLet _
+  | Syntax.SAnn _ | Syntax.SMatch _ | Syntax.SStr _ | Syntax.SInt _ | Syntax.SLetStar _
+  | Syntax.SAuto _ | Syntax.SInst _ ->
+      t
+
+(** Application spine over unelaborated [Syntax.t], head plus args
+    oldest first; mirrors [Totality.spine]'s shape one level up. *)
+let rec syntax_spine (t : Syntax.t) (args : Syntax.t list) : Syntax.t * Syntax.t list =
+  match t with
+  | Syntax.SApp (_loc, f, a) -> syntax_spine f (a :: args)
+  | Syntax.SVar _ | Syntax.SType _ | Syntax.SPi _ | Syntax.SLam _ | Syntax.SLet _
+  | Syntax.SAnn _ | Syntax.SMatch _ | Syntax.SStr _ | Syntax.SInt _ | Syntax.SLetStar _
+  | Syntax.SAuto _ | Syntax.SInst _ ->
+      (t, args)
+
+(** M4 Stage D (D3): [(C, K)] from an instance's UNELABORATED type's
+    codomain spine "C (K ..)" or "C K";  [None] when the codomain is not
+    of that shape (an identifier applied to exactly one identifier-headed
+    spine).  Exposed for [Bootstrap.item_name] too, which needs the same
+    walk to name an [IInstance] item without elaborating it. *)
+let instance_key (ty : Syntax.t) : (string * string) option =
+  match syntax_spine (peel_syntax_codomain ty) [] with
+  | Syntax.SVar (_, c_name), [ karg ] -> (
+      match syntax_spine karg [] with
+      | Syntax.SVar (_, k_name), _kargs -> Some (c_name, k_name)
+      | ( Syntax.SType _ | Syntax.SPi _ | Syntax.SLam _ | Syntax.SApp _ | Syntax.SLet _
+        | Syntax.SAnn _ | Syntax.SMatch _ | Syntax.SStr _ | Syntax.SInt _ | Syntax.SLetStar _
+        | Syntax.SAuto _ | Syntax.SInst _ ),
+        _ ->
+          None)
+  | ( ( Syntax.SVar _ | Syntax.SType _ | Syntax.SPi _ | Syntax.SLam _ | Syntax.SApp _
+      | Syntax.SLet _ | Syntax.SAnn _ | Syntax.SMatch _ | Syntax.SStr _ | Syntax.SInt _
+      | Syntax.SLetStar _ | Syntax.SAuto _ | Syntax.SInst _ ),
+      (_ : Syntax.t list) ) ->
+      None
+
+(** M4 fixes round 1 (ctxcat id 3): the tail every def-shaped item
+    shares, once.  [Check.define]/[Check.define_instance] has already
+    produced [globals];  fetch the entry back (its def carries the
+    checker's quantity stamps, which structural erasure relies on),
+    record the runtime thunk in RUN mode only, and format the summary
+    line.  [IDef] and [IInstance] differ solely in the name they register
+    under, so they now differ solely in what they pass here, and a future
+    change to the erase/guard/exec branching has ONE site. *)
+let install_def ~(loc : Loc.t) ~(exec : bool) ~(name : string) ~(ty_t : Term.t) (st : state)
+    (globals : Global.t) : (state, Serror.t) result =
+  let* dentry =
+    kernel loc
+      (Global.find_def name globals |> Option.to_result ~none:(Error.Unbound_global name))
+  in
+  let* eglobals =
+    if not exec then Ok st.eglobals
+    else
+      let* def_e = kernel loc (Erase.closed dentry.Global.def) in
+      Ok
+        (Interp.define st.eglobals ~name
+           ~guard:(compute_guard ~name dentry.Global.def dentry.Global.rec_arg def_e)
+           def_e)
+  in
+  let line = Printf.sprintf "def %s : %s" name (Pp.term [] ty_t) in
+  Ok { globals; eglobals; lines = line :: st.lines }
+
+let rec item ~(exec : bool) ~(policy : policy) (st : state) (it : Syntax.item) :
+    (state, Serror.t) result =
   match it with
-  | Syntax.IDef { loc; name; reducible; rec_; partial; ty; def } ->
+  | Syntax.IDef { loc; name; reducible; kind; ty; def } ->
+      let rec_, partial = defkind_bools kind in
       let* ty_t = Elab.term st.globals [] ty in
       (* a rec body mentions its own name: elaborate it against a
          provisional self-entry (the kernel re-adds its own opaque one
@@ -104,13 +215,6 @@ let item ~(exec : bool) (st : state) (it : Syntax.item) : (state, Serror.t) resu
       let* globals =
         kernel loc
           (Check.define ~rec_ ~partial st.globals ~name ~reducible ~ty:ty_t ~def:def_t)
-      in
-      (* fetch the entry back: its def carries the checker's quantity
-         stamps, which structural erasure relies on *)
-      let* dentry =
-        kernel loc
-          (Global.find_def name globals
-          |> Option.to_result ~none:(Error.Unbound_global name))
       in
       (* M3 fixes, A1 (O1 + C14, 2026-09-01): in CHECK mode
          [Interp.define] is never called for USER DEFS, so no def body
@@ -137,18 +241,8 @@ let item ~(exec : bool) (st : state) (it : Syntax.item) : (state, Serror.t) resu
          hang a guard; the flip side, recorded in SPEC.md, is that a
          LIVE def's definition-time abort surfaces only at force
          time. *)
-      let* eglobals =
-        if not exec then Ok st.eglobals
-        else
-          let* def_e = kernel loc (Erase.closed dentry.Global.def) in
-          Ok
-            (Interp.define st.eglobals ~name
-               ~rec_arg:(remap_rec_arg dentry.Global.def dentry.Global.rec_arg)
-               def_e)
-      in
-      let line = Printf.sprintf "def %s : %s" name (Pp.term [] ty_t) in
-      Ok { globals; eglobals; lines = line :: st.lines }
-  | Syntax.IData { loc; name; params; level; ctors } ->
+      install_def ~loc ~exec ~name ~ty_t st globals
+  | Syntax.IData { loc; name; params; indices; level; ctors } ->
       (* params telescope, left to right: each type is elaborated in the
          scope of the names before it; the parser forced quantity 0 *)
       let* pscope, rev_params =
@@ -160,6 +254,20 @@ let item ~(exec : bool) (st : state) (it : Syntax.item) : (state, Serror.t) resu
           (Ok ([], []))
           params
       in
+      (* M4 Stage A: the index telescope, scoped under params PLUS
+         earlier index binders (an index type may depend on an earlier
+         index, exactly like the params telescope); ctor types below stay
+         scoped under [pscope] alone, never under the indices, since no
+         constructor telescope ever binds the family's own index name. *)
+      let* _iscope, rev_indices =
+        List.fold_left
+          (fun acc (q, x, ty) ->
+            let* scope, rev_tele = acc in
+            let* ty_t = Elab.term st.globals scope ty in
+            Ok (x :: scope, (q, x, ty_t) :: rev_tele))
+          (Ok (pscope, []))
+          indices
+      in
       let* level_l =
         Level.of_int level |> Option.to_result ~none:(Serror.Bad_level { loc; level })
       in
@@ -167,7 +275,7 @@ let item ~(exec : bool) (st : state) (it : Syntax.item) : (state, Serror.t) resu
       let* provisional =
         kernel loc
           (Check.declare_ind st.globals ~name ~params:(List.rev rev_params)
-             ~level:level_l)
+             ~indices:(List.rev rev_indices) ~level:level_l)
       in
       let* rev_ctors =
         List.fold_left
@@ -225,6 +333,109 @@ let item ~(exec : bool) (st : state) (it : Syntax.item) : (state, Serror.t) resu
           (Ok []) ctors
       in
       Ok { globals; eglobals; lines = rev_ctor_lines @ data_line :: st.lines }
+  | Syntax.IClass { loc; name; param = a, aty; methods } ->
+      (* D3: a class is a convention, not a kernel notion.  Expand into an
+         [IData] dictionary (one constructor, "mk" ^ name, uniformly)
+         plus one projection [IDef] per method, and fold each through
+         [item] itself.  The class parameter's type must literally be
+         "Type L": that is the whole grammar ("class NAME (0 A :
+         Type L) := .."), so anything else is a parse-shaped error here
+         rather than a kernel one. *)
+      let* level =
+        match aty with
+        | Syntax.SType (_, l) -> Ok l
+        | Syntax.SVar _ | Syntax.SPi _ | Syntax.SLam _ | Syntax.SApp _ | Syntax.SLet _
+        | Syntax.SAnn _ | Syntax.SMatch _ | Syntax.SStr _ | Syntax.SInt _ | Syntax.SLetStar _
+        | Syntax.SAuto _ | Syntax.SInst _ ->
+            Error (Serror.Parse { loc; msg = "class parameter must have type 'Type L'" })
+      in
+      let mk_ctor = "mk" ^ name in
+      let binder_names = List.mapi (fun j (_m, _t) -> "x" ^ string_of_int (j + 1)) methods in
+      let ctor_ty =
+        List.fold_right
+          (fun (_mname, mty) acc -> Syntax.SPi (loc, Quantity.Many, "_", mty, acc))
+          methods
+          (Syntax.SApp (loc, Syntax.SVar (loc, name), Syntax.SVar (loc, a)))
+      in
+      let data_item =
+        Syntax.IData
+          { loc; name; params = [ (a, aty) ]; indices = []; level; ctors = [ (mk_ctor, ctor_ty) ] }
+      in
+      let def_items =
+        List.mapi
+          (fun i (mname, mty) ->
+            let xi = "x" ^ string_of_int (i + 1) in
+            Syntax.IDef
+              {
+                loc;
+                name = mname;
+                reducible = false;
+                kind = Syntax.DNonRec;
+                ty =
+                  Syntax.SPi
+                    ( loc,
+                      Quantity.Zero,
+                      a,
+                      aty,
+                      Syntax.SPi
+                        ( loc,
+                          Quantity.Many,
+                          "d",
+                          Syntax.SApp (loc, Syntax.SVar (loc, name), Syntax.SVar (loc, a)),
+                          mty ) );
+                def =
+                  Syntax.SLam
+                    ( loc,
+                      a,
+                      Syntax.SLam
+                        ( loc,
+                          "d",
+                          Syntax.SMatch
+                            ( loc,
+                              Syntax.SVar (loc, "d"),
+                              None,
+                              [ (mk_ctor, binder_names, Syntax.SVar (loc, xi)) ] ) ) );
+              })
+          methods
+      in
+      List.fold_left
+        (fun acc sub_item ->
+          let* st' = acc in
+          item ~exec ~policy st' sub_item)
+        (item ~exec ~policy st data_item)
+        def_items
+  | Syntax.IInstance { loc; ty; def } ->
+      (* D3: register under the mangled "inst$C$K" name read off [ty]'s
+         own codomain spine.  The instance body is an ORDINARY term, then
+         an ordinary [Def] entry (reducible, D2), exactly like a plain
+         [IDef]'s own eglobals bookkeeping below. *)
+      let* c_name, k_name =
+        instance_key ty
+        |> Option.to_result
+             ~none:(Serror.Parse { loc; msg = "instance type must end in CLASS (KEY ..)" })
+      in
+      let mangled = "inst$" ^ c_name ^ "$" ^ k_name in
+      let* ty_t = Elab.term st.globals [] ty in
+      let* def_t = Elab.term st.globals [] def in
+      let* globals =
+        kernel loc (Check.define_instance st.globals ~name:mangled ~ty:ty_t ~def:def_t)
+      in
+      install_def ~loc ~exec ~name:mangled ~ty_t st globals
+  | Syntax.IAxiom { loc; name; ty } ->
+      let* ty_t = Elab.term st.globals [] ty in
+      (* M4 Stage B: [policy.no_axioms] applies to the USER file only;
+         [Bootstrap.fold_prelude_items] always folds the prelude with
+         [default_policy], so this guard never sees the prelude's own
+         monad-law axioms. *)
+      (match () with
+      | () when policy.no_axioms -> Error (Serror.Axioms_disabled { loc; name })
+      | () ->
+          let* globals = kernel loc (Check.define_axiom st.globals ~name ~ty:ty_t) in
+          (* an axiom has NO runtime entry at all: [Interp.define] is
+             never called. If one ever reached [Interp.exec], the
+             existing [Unbound_global] backstop fires (test B9). *)
+          let line = Printf.sprintf "axiom %s : %s" name (Pp.term [] ty_t) in
+          Ok { st with globals; lines = line :: st.lines })
   | Syntax.ICheck (loc, s) ->
       let* tm = Elab.term st.globals [] s in
       let* tm', ty_v =
@@ -332,11 +543,28 @@ let run_unit_main (final : state) : (int option, Serror.t) result =
     [(replacement_lines option, exit_code option)]: [Some lines]
     REPLACES [script]'s own accumulated output; [None] leaves it
     unchanged. In CHECK mode a well-typed [main] stays [None, None]:
-    nothing runs. *)
-let main_epilogue (final : state) ~(exec : bool) :
+    nothing runs.
+
+    M4 fixes round 3 (ctxcat r3 id 3): [policy.require_main] fires
+    UNIFORMLY, in check mode and in run mode alike, and that is the
+    intended scope, not an oversight of the [exec] flag. The flag's own
+    doc comment (see [policy]) frames it by its motivating consumer, an
+    installation's shebang wrapper, which reads as execution-only; the
+    RULE it implements is "this file must define a driver main", a
+    statement about the file's CONTENT, and a content verdict must not
+    depend on which verb asked for it. A hook that pre-flights a guard
+    script with `tot check --require-main` would otherwise accept a
+    mainless script that `tot run --require-main` then rejects. Pinned
+    in both modes by PASS-M4D-REQUIRE-MAIN. *)
+let main_epilogue (final : state) ~(exec : bool) ~(policy : policy) :
     (string list option * int option, Serror.t) result =
   Global.find_def "main" final.globals
-  |> Option.fold ~none:(Ok (None, None)) ~some:(fun dentry ->
+  |> Option.fold
+       ~none:
+         (match () with
+         | () when policy.require_main -> Error Serror.Missing_main
+         | () -> Ok (None, None))
+       ~some:(fun dentry ->
          let* main_ty_v = kernel Loc.start (Eval.eval final.globals [] dentry.Global.ty) in
          let* is_verdict = converts_to final.globals main_ty_v ~io_arg:"Verdict" in
          let* is_unit =
@@ -344,7 +572,13 @@ let main_epilogue (final : state) ~(exec : bool) :
          in
          match () with
          | () when (not is_verdict) && not is_unit ->
-             Error (Serror.Main_bad_type { ty = Check.pp_value final.globals 0 main_ty_v })
+             (* M4 fixes round 5 (opus R5-5): this is the one DRIVER
+                error whose payload is a printed type, and it lands on
+                the same one-line stderr channel the kernel diagnostics
+                do, so it takes the same [Check.pp_goal] clamp.  Below
+                [Check.goal_print_cap] the rendering is identical, so
+                every message the suites pin is untouched. *)
+             Error (Serror.Main_bad_type { ty = Check.pp_goal final.globals 0 main_ty_v })
          | () when not exec -> Ok (None, None)
          | () when is_verdict ->
              let* lines, code = run_verdict_main final in
@@ -362,18 +596,18 @@ let main_epilogue (final : state) ~(exec : bool) :
     [Some replacement_lines] (the [IO Verdict] driver path took over
     rendering), that list REPLACES the ordinary accumulated output
     instead of appending to it. *)
-let script ?(st : state = initial) ~(exec : bool) (src : string) :
-    (string list * int option, Serror.t) result =
+let script ?(st : state = initial) ?(policy : policy = default_policy) ~(exec : bool)
+    (src : string) : (string list * int option, Serror.t) result =
   let* tokens = Lexer.lex src in
   let* items = Parser.parse tokens in
   let* final =
     List.fold_left
       (fun acc it ->
         let* st = acc in
-        item ~exec st it)
+        item ~exec ~policy st it)
       (Ok st) items
   in
-  let* replacement_lines, exit_code = main_epilogue final ~exec in
+  let* replacement_lines, exit_code = main_epilogue final ~exec ~policy in
   let base_lines = List.rev final.lines in
   let out_lines = replacement_lines |> Option.fold ~none:base_lines ~some:Fun.id in
   Ok (out_lines, exit_code)

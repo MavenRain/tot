@@ -1,0 +1,1 @@
+def mian : IO Verdict := pureIO Verdict allow

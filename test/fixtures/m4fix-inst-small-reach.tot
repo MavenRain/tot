@@ -1,0 +1,23 @@
+-- M4 fixes round 3 (opus R3-5): the SMALL-depth positive the round-2
+-- gate set could not see.  PASS-M4FIX-INST-BRANCHING accepted "resolve
+-- OR report Inst_depth", so nothing in the battery would have failed if
+-- instance resolution had started rejecting two-dictionary telescopes
+-- at depth 1.  Both two-dictionary shapes are pinned here at a depth
+-- whose emitted term is small: two DIFFERENT classes at nesting 6 (the
+-- exact shape round 2 first rejected) and the SAME class twice at
+-- nesting 3.  Both must RESOLVE.
+class UC (0 A : Type 0) := { uc : Bool }
+class UD (0 A : Type 0) := { ud : Bool }
+data UBox (0 A : Type 0) : Type 0 := | ubox : A -> UBox A
+instance : UC Bool := mkUC Bool true
+instance : UD Bool := mkUD Bool true
+instance : (0 A : Type 0) -> UD A -> UD (UBox A) := fun A d => mkUD (UBox A) true
+instance : (0 A : Type 0) -> UC A -> UD A -> UC (UBox A) := fun A d1 d2 => mkUC (UBox A) true
+class VC (0 A : Type 0) := { vc : Bool }
+data VBox (0 A : Type 0) : Type 0 := | vbox : A -> VBox A
+instance : VC Bool := mkVC Bool true
+instance : (0 A : Type 0) -> VC A -> VC A -> VC (VBox A) := fun A d1 d2 => mkVC (VBox A) true
+def twoClassSmall : Bool := uc (UBox (UBox (UBox (UBox (UBox (UBox Bool)))))) auto
+def sameClassSmall : Bool := vc (VBox (VBox (VBox Bool))) auto
+eval twoClassSmall
+eval sameClassSmall

@@ -1,0 +1,14 @@
+-- M4 fixes round 3 (opus R3-1): the SPEC's own branching shape, two
+-- dictionary binders on the SAME type variable, at nesting 16.  Without
+-- the memo this runs 2^16 identical sub-resolutions (1.673s on the
+-- round-1 binary, Inst_depth on the round-2 one from nesting 4 up).
+-- The memo answers every repeat from the first derivation, so the
+-- RESOLUTION is linear in the nesting; the emitted dictionary is still
+-- a binary tree, so the cost that remains is the size of that term
+-- (SPEC section 6 records it).
+class SC (0 A : Type 0) := { sc : Bool }
+data SBox (0 A : Type 0) : Type 0 := | sbox : A -> SBox A
+instance : SC Bool := mkSC Bool true
+instance : (0 A : Type 0) -> SC A -> SC A -> SC (SBox A) := fun A d1 d2 => mkSC (SBox A) true
+def deepSpecShape : Bool := sc (SBox (SBox (SBox (SBox (SBox (SBox (SBox (SBox (SBox (SBox (SBox (SBox (SBox (SBox (SBox (SBox Bool)))))))))))))))) auto
+eval deepSpecShape

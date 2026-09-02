@@ -25,7 +25,15 @@ if [ -z "$watchdog" ]; then
 fi
 # dunecho test reports "0 run" on these custom runners (vacuous-pass trap):
 # run the test executables directly and require BOTH to exit 0.
-main_out=$("$watchdog" 120 dune exec --root "$ROOT" test/main.exe); t1=$?
+# M4 fixes round 5 (ctxcat r5 id 16): the kernel suite's watchdog is 300,
+# not 120. D9 resolves a 256-leaf query against an 8-binder instance and
+# Eval.eval re-walks each resolved dictionary once per occurrence, so the
+# case costs 14 to 24s on its own and the whole suite runs 15 to 25s
+# against the 1s it took before. 300 keeps this a HANG detector (about
+# 12x the observed runtime) instead of a performance gate that flakes on
+# ambient load, which is the exact failure PASS-M4FIX-INST-BRANCHING hit
+# in round 4.
+main_out=$("$watchdog" 300 dune exec --root "$ROOT" test/main.exe); t1=$?
 printf '%s\n' "$main_out"
 surface_out=$("$watchdog" 120 dune exec --root "$ROOT" test/surface.exe); t2=$?
 printf '%s\n' "$surface_out"
@@ -573,6 +581,13 @@ rm -rf "$nohome_scratch"
 # raise Sys_error, and the round-2 R1 branch disables the cache for
 # the run: exit 0, exactly ONE stderr line, NO blob written. First
 # process-level coverage of the exe_digest_hex = None branch.
+#
+# M4 Stage D (D5.3) REROUTED this gate to assert the OPPOSITE (a blob
+# written, no stderr), because the stat-identity fast path needs no READ
+# permission on its target. M4 fixes round 1 (audit F1) restores both
+# the property and this assertion: the identity is a CONTENT digest
+# again, so an unreadable image fails CLOSED exactly as it did at
+# b01b3eb, and the marker means what its name says.
 noexe_scratch=$(mktemp -d "${TMPDIR:-/tmp}/tot-gate-noexe.XXXXXX")
 cp "$ROOT"/_build/default/bin/tot.exe "$noexe_scratch/tot-noread"
 chmod 111 "$noexe_scratch/tot-noread"
@@ -597,6 +612,1032 @@ nx_blobs=${nx_blobs:-0}
   }
 rm -rf "$noexe_scratch"
 
+# M4 fixes round 1 (audit F1): the cache's exe identity is the running
+# binary's CONTENT, not its filesystem metadata. This replays the
+# audit's own executed repro and requires the fixed outcome. Two
+# genuinely different binaries of EQUAL size (v2 has one byte patched
+# inside the "no such file" literal) are installed at the SAME inode in
+# turn, with v1's mtime restored onto v2 -- what a reproducible-build
+# stamp or a `touch -r` install step does -- so every field D5.3 hashed
+# AS the identity agrees. The blob count must reach 2: under D5.3 it
+# stayed at 1 and the second binary read the first one's blob, which
+# Marshal's deserializes straight into the trusted checker state.
+#
+# md5 tool and code signer are probed, never assumed: macOS ships `md5`
+# and kills a modified signed binary unless it is re-signed ad hoc;
+# Linux ships `md5sum` and needs no signer. A missing md5 tool is a
+# LOUD failure, never a skipped (vacuously green) marker.
+md5hex() {
+  if command -v md5 > /dev/null 2>&1; then md5 -q "$1"
+  elif command -v md5sum > /dev/null 2>&1; then md5sum "$1" | cut -d' ' -f1
+  else printf ''; fi
+}
+sign_exe() {
+  if command -v codesign > /dev/null 2>&1; then codesign -f -s - "$1" 2> /dev/null; fi
+  return 0
+}
+exeid_scratch=$(mktemp -d "${TMPDIR:-/tmp}/tot-gate-exeid.XXXXXX")
+mkdir -p "$exeid_scratch/cache"
+cp "$ROOT"/_build/default/bin/tot.exe "$exeid_scratch/v1"
+chmod u+w "$exeid_scratch/v1"
+sign_exe "$exeid_scratch/v1"
+cp "$ROOT"/_build/default/bin/tot.exe "$exeid_scratch/v2"
+chmod u+w "$exeid_scratch/v2"
+patch_off=$(rg -oba 'no such file' "$exeid_scratch/v2" | head -n1 | cut -d: -f1)
+[ -n "$patch_off" ] \
+  || { echo "FAIL-CACHE-EXEID-CONTENT (no 'no such file' literal to patch)"; rm -rf "$exeid_scratch"; exit 1; }
+printf 'a' | dd of="$exeid_scratch/v2" bs=1 seek=$((patch_off + 11)) count=1 conv=notrunc 2> /dev/null \
+  || { echo "FAIL-CACHE-EXEID-CONTENT (dd patch failed)"; rm -rf "$exeid_scratch"; exit 1; }
+sign_exe "$exeid_scratch/v2"
+v1_size=$(wc -c < "$exeid_scratch/v1" | tr -d ' ')
+v2_size=$(wc -c < "$exeid_scratch/v2" | tr -d ' ')
+v1_md5=$(md5hex "$exeid_scratch/v1")
+v2_md5=$(md5hex "$exeid_scratch/v2")
+{ [ -n "$v1_md5" ] && [ -n "$v2_md5" ]; } \
+  || { echo "FAIL-CACHE-EXEID-CONTENT (no md5/md5sum on PATH)"; rm -rf "$exeid_scratch"; exit 1; }
+{ [ "$v1_size" -eq "$v2_size" ] && [ "$v1_md5" != "$v2_md5" ]; } \
+  || { echo "FAIL-CACHE-EXEID-CONTENT (setup: sizes $v1_size/$v2_size, md5 $v1_md5/$v2_md5)"; rm -rf "$exeid_scratch"; exit 1; }
+cat "$exeid_scratch/v1" > "$exeid_scratch/tot"
+chmod 555 "$exeid_scratch/tot"
+env TOT_CACHE_DIR="$exeid_scratch/cache" TOT_PRELUDE="$ROOT"/stdlib/prelude.tot \
+  "$watchdog" 15 "$exeid_scratch/tot" run "$ROOT"/test/fixtures/x2-prelude-run.tot \
+  > /dev/null 2> "$exeid_scratch/e1.txt"
+e1code=$?
+blobs1=$(command ls "$exeid_scratch/cache" 2> /dev/null | rg -c '^prelude-.*\.bin$')
+blobs1=${blobs1:-0}
+blob1=$(command ls "$exeid_scratch/cache"/prelude-*.bin 2> /dev/null | head -n1)
+# header layout: 8 magic + 8 version + 32 body digest + 32 exe digest
+hdr_exe=$(dd if="$blob1" bs=1 skip=48 count=32 2> /dev/null)
+memo_hex=$(command ls "$exeid_scratch/cache"/exeid-*.txt 2> /dev/null | head -n1 | xargs -I{} tail -n1 {})
+cp -p "$exeid_scratch/tot" "$exeid_scratch/tot.ref"
+chmod u+w "$exeid_scratch/tot"
+cat "$exeid_scratch/v2" > "$exeid_scratch/tot"
+touch -r "$exeid_scratch/tot.ref" "$exeid_scratch/tot"
+chmod 555 "$exeid_scratch/tot"
+# the four fields D5.3 called the identity now agree again: same inode
+# (overwritten in place), same size, same mtime (neither file is newer
+# than the other), same device.
+same_mtime=no
+{ [ ! "$exeid_scratch/tot" -nt "$exeid_scratch/tot.ref" ] \
+    && [ ! "$exeid_scratch/tot.ref" -nt "$exeid_scratch/tot" ]; } && same_mtime=yes
+tot_size=$(wc -c < "$exeid_scratch/tot" | tr -d ' ')
+# v2 really is a DIFFERENT program: its patched literal reads back.
+# M4 fixes round 4 (ctxcat r4 id 5): wrapped like its neighbours. Bare,
+# this ran the PATCHED binary against the developer's REAL default cache
+# dir and REAL default prelude path, so it could write prelude blobs
+# keyed on a deliberately corrupted binary's digest into a persistent
+# directory the gate never cleans (rm -rf "$exeid_scratch" does not
+# reach it), and it was the one unwatchdogged invocation here, so a
+# patched binary that blocked would hang the whole battery instead of
+# failing loudly. cache-probe is a SEPARATE dir from "$exeid_scratch/
+# cache", so the blobs1/blobs2 counts below are untouched.
+patched_out=$(env TOT_CACHE_DIR="$exeid_scratch/cache-probe" TOT_PRELUDE="$ROOT"/stdlib/prelude.tot \
+  "$watchdog" 15 "$exeid_scratch/tot" check "$exeid_scratch/absent.tot" 2>&1)
+env TOT_CACHE_DIR="$exeid_scratch/cache" TOT_PRELUDE="$ROOT"/stdlib/prelude.tot \
+  "$watchdog" 15 "$exeid_scratch/tot" run "$ROOT"/test/fixtures/x2-prelude-run.tot \
+  > /dev/null 2> "$exeid_scratch/e2.txt"
+e2code=$?
+blobs2=$(command ls "$exeid_scratch/cache" 2> /dev/null | rg -c '^prelude-.*\.bin$')
+blobs2=${blobs2:-0}
+{ [ "$e1code" -eq 0 ] && [ "$e2code" -eq 0 ] && [ "$blobs1" -eq 1 ] && [ "$blobs2" -eq 2 ] \
+    && [ "$hdr_exe" = "$v1_md5" ] && [ "$memo_hex" = "$v1_md5" ] \
+    && [ "$same_mtime" = "yes" ] && [ "$tot_size" -eq "$v1_size" ] \
+    && printf '%s\n' "$patched_out" | rg -q 'no such fila'; } \
+  && echo PASS-CACHE-EXEID-CONTENT \
+  || {
+    cat "$exeid_scratch/e1.txt" "$exeid_scratch/e2.txt" 2> /dev/null
+    printf '%s\n' "$patched_out"
+    echo "FAIL-CACHE-EXEID-CONTENT (exit=$e1code/$e2code blobs=$blobs1/$blobs2 hdr=$hdr_exe memo=$memo_hex v1=$v1_md5 mtime=$same_mtime size=$tot_size/$v1_size)"
+    rm -rf "$exeid_scratch"
+    exit 1
+  }
+
+# M4 fixes round 1 (audit F1), the other half: the stat signature
+# survives as a MEMO that skips the re-hash, and TOT_CACHE_VERIFY=1
+# announces which branch produced the identity. A cold run must hash
+# CONTENT; the next run of the same untouched binary must take the memo
+# fast path (and still verify the cold and cached bytes agree).
+#
+# M4 fixes round 3 (ctxcat r3 id 6): what this gate does NOT cover, and
+# why that is ACCEPTED as a residual rather than closed. The one path
+# where a wrong identity could be served is a memo HIT on a binary whose
+# BYTES changed while its (device:inode:mtime:size:ctime) signature did
+# not. This gate runs the same untouched binary twice, so it exercises
+# the hit only in the benign direction; PASS-CACHE-EXEID-CONTENT bumps
+# ctime deliberately, so it exercises the MISS. Neither forges the hit,
+# and the suggested third leg (hand-edit the memo's recorded digest, or
+# copy v1's memo onto v2's signature) would test a memo file an attacker
+# who can write it has already won against: the cache directory is
+# inside the accepted trust class, so a gate built that way asserts
+# nothing about the threat model F1 addresses.
+#
+# The honest construction -- change the bytes and RESTORE the observed
+# signature -- cannot be built unprivileged on this platform. Opus round
+# 2 proved it by execution: setattrlist with ATTR_CMN_CHGTIME returns
+# EPERM for a non-root caller, and ctime is not settable by utimes,
+# utimensat or any other unprivileged call, so a hit-on-changed-bytes
+# has no unprivileged construction. A privileged writer can forge it,
+# and a privileged writer is inside the accepted cache-dir trust class
+# by the same argument as above. That leaves exactly the exposure
+# SPEC.md section 6 records: a mount whose observed ctime does not move
+# on an in-place overwrite (attribute-cached network mounts,
+# ctime-less filesystems) weakens the memo to a metadata check. It is a
+# residual, deliberately, not an untested claim.
+mkdir -p "$exeid_scratch/cache2"
+memo1=$(env TOT_CACHE_DIR="$exeid_scratch/cache2" TOT_PRELUDE="$ROOT"/stdlib/prelude.tot \
+    TOT_CACHE_VERIFY=1 "$watchdog" 15 "$exeid_scratch/v1" run \
+    "$ROOT"/test/fixtures/x2-prelude-run.tot 2>&1 1> /dev/null)
+m1code=$?
+memo2=$(env TOT_CACHE_DIR="$exeid_scratch/cache2" TOT_PRELUDE="$ROOT"/stdlib/prelude.tot \
+    TOT_CACHE_VERIFY=1 "$watchdog" 15 "$exeid_scratch/v1" run \
+    "$ROOT"/test/fixtures/x2-prelude-run.tot 2>&1 1> /dev/null)
+m2code=$?
+{ [ "$m1code" -eq 0 ] && [ "$m2code" -eq 0 ] \
+    && printf '%s\n' "$memo1" | rg -qx 'TOT-CACHE-EXEID-CONTENT' \
+    && ! printf '%s\n' "$memo1" | rg -qx 'TOT-CACHE-EXEID-MEMO' \
+    && printf '%s\n' "$memo2" | rg -qx 'TOT-CACHE-EXEID-MEMO' \
+    && printf '%s\n' "$memo2" | rg -qx 'TOT-CACHE-VERIFY-OK'; } \
+  && echo PASS-CACHE-EXEID-MEMO \
+  || {
+    printf '%s\n%s\n' "$memo1" "$memo2"
+    echo "FAIL-CACHE-EXEID-MEMO (exit=$m1code/$m2code)"
+    rm -rf "$exeid_scratch"
+    exit 1
+  }
+rm -rf "$exeid_scratch"
+
 unset TOT_CACHE_DIR TOT_CACHE_VERIFY TOT_PRELUDE
+
+# M4 Stage A gate (ii): a recursive indexed family (Vec, with a sibling
+# Fin) declares, builds a value, and RUNS: the exact erased readback of
+# `vcons Nat (succ zero) zero (vcons Nat zero (succ zero) (vnil Nat))`
+# (params and the length index erase; only the two runtime-kept
+# arguments per vcons survive erasure).
+m4a_vec_err=$(mktemp "${TMPDIR:-/tmp}/tot-gate-m4a-vec-err.XXXXXX")
+out=$("$watchdog" 30 dune exec --root "$ROOT" test/surface.exe -- gate-run "$ROOT"/test/fixtures/m4a-vec.tot 2> "$m4a_vec_err")
+code=$?
+{ [ "$code" -eq 0 ] && printf '%s\n' "$out" | rg -qx '\(\(vcons zero\) \(\(vcons \(succ zero\)\) vnil\)\)'; } \
+  && { rm -f "$m4a_vec_err"; echo PASS-M4A-VEC; } \
+  || { printf '%s\n' "$out"; cat "$m4a_vec_err"; rm -f "$m4a_vec_err"; echo "FAIL-M4A-VEC (exit=$code)"; exit 1; }
+
+# M4 Stage A gate (iii): a wrong-index constructor (VecB A, omitting the
+# index) is Bad_ctor, naming the expected index count.
+out=$("$watchdog" 30 dune exec --root "$ROOT" test/surface.exe -- gate-check "$ROOT"/test/fixtures/m4a-vec-badindex.tot 2>&1)
+code=$?
+{ [ "$code" -ne 0 ] && printf '%s\n' "$out" | rg -q 'applied to its parameters and 1 index expression'; } \
+  && echo PASS-M4A-VEC-BADIX \
+  || { printf '%s\n' "$out"; echo "FAIL-M4A-VEC-BADIX (exit=$code)"; exit 1; }
+
+# M4 Stage A gate (iv), first fence: a w-carrying single constructor
+# (Box) stays Erased_use -- the subsingleton criterion's "every
+# constructor argument at quantity 0" clause.
+out=$("$watchdog" 30 dune exec --root "$ROOT" test/surface.exe -- gate-check "$ROOT"/test/fixtures/m4a-box.tot 2>&1)
+code=$?
+{ [ "$code" -ne 0 ] && printf '%s\n' "$out" | rg -q 'erased variable b used at runtime'; } \
+  && echo PASS-M4A-BOX \
+  || { printf '%s\n' "$out"; echo "FAIL-M4A-BOX (exit=$code)"; exit 1; }
+
+# M4 Stage A gate (iv), second fence: a self-recursive erased singleton
+# (SX) stays Erased_use -- the subsingleton criterion's "not self-
+# recursive" clause, not a quantity; SX itself is still ACCEPTED (only
+# the eliminating def sxLoop is rejected).
+out=$("$watchdog" 30 dune exec --root "$ROOT" test/surface.exe -- gate-check "$ROOT"/test/fixtures/m4a-sx.tot 2>&1)
+code=$?
+{ [ "$code" -ne 0 ] && printf '%s\n' "$out" | rg -q 'erased variable s used at runtime'; } \
+  && echo PASS-M4A-SX \
+  || { printf '%s\n' "$out"; echo "FAIL-M4A-SX (exit=$code)"; exit 1; }
+
+# M4 Stage A gate (iv), third fence: a two-constructor family (Bool)
+# stays Erased_use -- the subsingleton criterion's "at most one
+# constructor" clause; this is the "leave failing" half Gate A pairs
+# against m4a-box.tot's and m4a-sx.tot's own flips.
+out=$("$watchdog" 30 dune exec --root "$ROOT" test/surface.exe -- gate-check "$ROOT"/test/fixtures/m4a-ese-neg.tot 2>&1)
+code=$?
+{ [ "$code" -ne 0 ] && printf '%s\n' "$out" | rg -q 'erased variable b used at runtime'; } \
+  && echo PASS-M4A-ESE-NEG \
+  || { printf '%s\n' "$out"; echo "FAIL-M4A-ESE-NEG (exit=$code)"; exit 1; }
+
+# M4 Stage A gate (vi): Fording (encoding an index as a uniform
+# parameter) stays blocked; vpnil fails the result-head rule before
+# define_ind's ctor fold ever reaches vpcons.
+out=$("$watchdog" 30 dune exec --root "$ROOT" test/surface.exe -- gate-check "$ROOT"/test/fixtures/m4a-fording.tot 2>&1)
+code=$?
+{ [ "$code" -ne 0 ] && printf '%s\n' "$out" | rg -q 'applied to its parameters and 0 index expressions'; } \
+  && echo PASS-M4A-FORDING \
+  || { printf '%s\n' "$out"; echo "FAIL-M4A-FORDING (exit=$code)"; exit 1; }
+
+# M4 Stage B gate (ii): subst0/castNat check end to end under the
+# bootstrapped prelude, pinning the exact printed lines Stage C's own
+# erasure gate later relies on (subst0 erases to the identity).
+out=$("$watchdog" 30 dune exec --root "$ROOT" test/surface.exe -- gate-check "$ROOT"/test/fixtures/m4b-subst-erases.tot 2>&1)
+code=$?
+want=$'def symNat : (0 m : Nat) -> (0 n : Nat) -> (0 h : (((Eq Nat) m) n)) -> (((Eq Nat) n) m)\nsymNat : (0 m : Nat) -> (0 n : Nat) -> (0 h : (((Eq Nat) m) n)) -> (((Eq Nat) n) m)\ndef castNat : (0 P : (w _ : Nat) -> Type 0) -> (0 a : Nat) -> (0 b : Nat) -> (0 h : (((Eq Nat) a) b)) -> (w _ : (P a)) -> (P b)\ncastNat : (0 P : (w _ : Nat) -> Type 0) -> (0 a : Nat) -> (0 b : Nat) -> (0 h : (((Eq Nat) a) b)) -> (w _ : (P a)) -> (P b)'
+{ [ "$code" -eq 0 ] && [ "$out" = "$want" ]; } \
+  && echo PASS-M4B-SUBST \
+  || { printf '%s\n' "$out"; echo "FAIL-M4B-SUBST (exit=$code)"; exit 1; }
+
+# M4 Stage B gate (iii): natDecEq computes both a yes and a no; a Dec
+# scrutinee drives a Bool (sameArity), exact readback "true".
+out=$("$watchdog" 30 dune exec --root "$ROOT" test/surface.exe -- gate-run "$ROOT"/test/fixtures/m4b-deceq-runs.tot 2>&1)
+code=$?
+want=$'def sameArity : Bool\ntrue'
+{ [ "$code" -eq 0 ] && [ "$out" = "$want" ]; } \
+  && echo PASS-M4B-DECEQ \
+  || { printf '%s\n' "$out"; echo "FAIL-M4B-DECEQ (exit=$code)"; exit 1; }
+
+# M4 Stage B gate (iv): an axiom is accepted at quantity 0 (check) and
+# rejected at quantity w (eval), the plan's own two halves; two
+# fixtures (m4b-axiom.tot, m4b-axiom-runtime.tot) since ONE script
+# cannot exhibit both an ok fold and a later hard error's message in
+# its own stdout (a fold-error short-circuits before any of the
+# earlier lines print).
+out=$("$watchdog" 30 dune exec --root "$ROOT" test/surface.exe -- gate-check "$ROOT"/test/fixtures/m4b-axiom.tot 2>&1)
+code=$?
+want=$'axiom myAx : (((Eq Nat) zero) zero)\nmyAx : (((Eq Nat) zero) zero)'
+out2=$("$watchdog" 30 dune exec --root "$ROOT" test/surface.exe -- gate-check "$ROOT"/test/fixtures/m4b-axiom-runtime.tot 2>&1)
+code2=$?
+{ [ "$code" -eq 0 ] && [ "$out" = "$want" ] \
+  && [ "$code2" -ne 0 ] && printf '%s\n' "$out2" | rg -q 'axiom myAx used at runtime'; } \
+  && echo PASS-M4B-AXIOM \
+  || { printf '%s\n%s\n' "$out" "$out2"; echo "FAIL-M4B-AXIOM (exit=$code/$code2)"; exit 1; }
+
+# M4 Stage B gate (v): --no-axioms rejects a user axiom and exits 1;
+# without the flag the same file checks and exits 0. Both halves
+# asserted (B9's own instruction), since the flag's whole point is the
+# difference. Driven through the real bin/tot.exe CLI (the driver flag
+# lives there, not in test/surface.exe's gate-check/gate-run).
+out=$("$watchdog" 30 dune exec --root "$ROOT" bin/tot.exe -- check "$ROOT"/test/fixtures/m4b-noaxioms.tot 2>&1)
+code=$?
+want=$'axiom bogus : (((Eq Nat) zero) (succ zero))\nbogus : (((Eq Nat) zero) (succ zero))'
+out2=$("$watchdog" 30 dune exec --root "$ROOT" bin/tot.exe -- check --no-axioms "$ROOT"/test/fixtures/m4b-noaxioms.tot 2>&1)
+code2=$?
+{ [ "$code" -eq 0 ] && [ "$out" = "$want" ] \
+  && [ "$code2" -ne 0 ] && printf '%s\n' "$out2" | rg -q -- '--no-axioms'; } \
+  && echo PASS-M4B-NOAXIOMS \
+  || { printf '%s\n%s\n' "$out" "$out2"; echo "FAIL-M4B-NOAXIOMS (exit=$code/$code2)"; exit 1; }
+
+# M4 Stage C gate (v): m4c-frozen.tot exercises subst0's erasure path
+# end to end (parse, elaborate, check, erase, exec, quote, print) through
+# the real interpreter, under a 10s watchdog: a regression that
+# re-introduces a self-reference into subst0's erased body (or otherwise
+# breaks the runtime guard) shows up as exit 124, never a silent hang.
+out=$("$watchdog" 10 dune exec --root "$ROOT" test/surface.exe -- gate-run "$ROOT"/test/fixtures/m4c-frozen.tot 2>&1)
+code=$?
+want='(succ zero)'
+{ [ "$code" -eq 0 ] && [ "$out" = "$want" ]; } \
+  && echo PASS-M4C-FROZEN \
+  || { printf '%s\n' "$out"; echo "FAIL-M4C-FROZEN (exit=$code)"; exit 1; }
+
+# M4 Stage C gate (ii), derived: the in-process surface suite's own C4
+# case (test/surface.ml) already proved subst0 erases to "fun px => px"
+# and mentions nothing; this anchors that PASS line in $surface_out
+# (captured near the top of this script) the same way PASS-A-LITERALS
+# anchors A9/A10, so a future rename or deletion of the case shows up as
+# a gate FAIL instead of silently dropping the check.
+printf '%s\n' "$surface_out" | rg -q '^PASS C4: subst0 erases to the identity and mentions nothing$' \
+  && echo PASS-M4C-SUBST-IDENTITY \
+  || { printf '%s\n' "$surface_out"; echo "FAIL-M4C-SUBST-IDENTITY"; exit 1; }
+
+# M4 Stage D, Gate D (i): "member String auto cmd flagged" typechecks,
+# resolves and runs -- the flagged/isFlagged pair with auto, plus one
+# "inst EqD String" call site, through gate-run's real prelude bootstrap.
+out=$("$watchdog" 30 dune exec --root "$ROOT" test/surface.exe -- gate-run "$ROOT"/test/fixtures/m4d-classes.tot 2>&1)
+code=$?
+want=$'def flagged : (List String)\ndef isFlagged : (w _ : String) -> Bool\ntrue\nfalse'
+{ [ "$code" -eq 0 ] && [ "$out" = "$want" ]; } \
+  && echo PASS-M4D-AUTO \
+  || { printf '%s\n' "$out"; echo "FAIL-M4D-AUTO (exit=$code)"; exit 1; }
+
+# M4 Stage D, Gate D (ii): coherence. A duplicate instance key is
+# Duplicate_global at definition time, message containing "inst$".
+out=$("$watchdog" 30 dune exec --root "$ROOT" test/surface.exe -- gate-check "$ROOT"/test/fixtures/m4d-dup-instance.tot 2>&1)
+code=$?
+{ [ "$code" -ne 0 ] && printf '%s\n' "$out" | rg -q 'duplicate global inst\$'; } \
+  && echo PASS-M4D-COHERENCE \
+  || { printf '%s\n' "$out"; echo "FAIL-M4D-COHERENCE (exit=$code)"; exit 1; }
+
+# M4 Stage D, Gate D (iii): --serror-exit 3 changes the exit code on a
+# one-line type error, and the default stays 1. Driven through the real
+# bin/tot.exe CLI (the flag lives there), matching PASS-M4B-NOAXIOMS'
+# own precedent.
+# M4 fixes round 2 (ctxcat id 6): under "$watchdog" 30, like every other
+# CLI gate in this block. The checker can be driven to unbounded work,
+# so an unguarded invocation turns a hang into an indefinite stall with
+# no FAIL marker instead of a loud exit 124.
+out=$("$watchdog" 30 dune exec --root "$ROOT" bin/tot.exe -- check "$ROOT"/test/fixtures/m4d-serror-exit.tot 2>&1)
+code=$?
+out2=$("$watchdog" 30 dune exec --root "$ROOT" bin/tot.exe -- check --serror-exit 3 "$ROOT"/test/fixtures/m4d-serror-exit.tot 2>&1)
+code2=$?
+{ [ "$code" -eq 1 ] && [ "$code2" -eq 3 ] && [ "$out" = "$out2" ]; } \
+  && echo PASS-M4D-SERROR-EXIT \
+  || { printf '%s\n%s\n' "$out" "$out2"; echo "FAIL-M4D-SERROR-EXIT (exit=$code/$code2)"; exit 1; }
+
+# M4 Stage D, Gate D (iv): --require-main rejects a mainless script
+# (m4d-nomain.tot defines "mian", not "main") and the default behavior
+# is unchanged (SPEC's misspelled-main residual, PASS-D-MAIN-MISSPELLED,
+# stays a twin of this gate: unflagged, this exact fixture shape exits
+# 0). M4 fixes round 2 (ctxcat id 6): under "$watchdog" 30.
+# M4 fixes round 3 (ctxcat r3 id 3): the CHECK-mode leg is pinned too.
+# --require-main is a verdict about the file's CONTENT, so it fires
+# uniformly in both verbs by design (surface/run.ml's main_epilogue
+# doc comment says so now); the finding read the flag's motivating
+# consumer, a shebang wrapper, as its scope. Without this leg nothing
+# stopped a later "gate it on exec" change from passing the battery.
+out=$("$watchdog" 30 dune exec --root "$ROOT" bin/tot.exe -- run "$ROOT"/test/fixtures/m4d-nomain.tot 2>&1)
+code=$?
+out2=$("$watchdog" 30 dune exec --root "$ROOT" bin/tot.exe -- run --require-main "$ROOT"/test/fixtures/m4d-nomain.tot 2>&1)
+code2=$?
+out3=$("$watchdog" 30 dune exec --root "$ROOT" bin/tot.exe -- check --require-main "$ROOT"/test/fixtures/m4d-nomain.tot 2>&1)
+code3=$?
+{ [ "$code" -eq 0 ] && [ "$code2" -ne 0 ] && [ "$code3" -ne 0 ] \
+    && printf '%s\n' "$out2" | rg -q 'this file must define a driver main' \
+    && printf '%s\n' "$out3" | rg -q 'this file must define a driver main'; } \
+  && echo PASS-M4D-REQUIRE-MAIN \
+  || {
+    printf '%s\n%s\n%s\n' "$out" "$out2" "$out3"
+    echo "FAIL-M4D-REQUIRE-MAIN (exit=$code/$code2/$code3)"
+    exit 1
+  }
+
+# M4 Stage D, Gate D (vii): examples/guard-classes.tot checks and runs
+# end to end -- the class layer (EqD/member/auto) plus two Eq proofs
+# (agreeOnTrue by computation, denyStable by pure congruence).
+# M4 fixes round 2 (ctxcat id 6): under "$watchdog" 30.
+out=$("$watchdog" 30 dune exec --root "$ROOT" bin/tot.exe -- check "$ROOT"/examples/guard-classes.tot 2>&1)
+code=$?
+out2=$("$watchdog" 30 dune exec --root "$ROOT" bin/tot.exe -- run "$ROOT"/examples/guard-classes.tot 2>&1)
+code2=$?
+want=$'def verdictOfDanger : (w _ : Bool) -> Verdict\ndef verdictOfDanger2 : (w _ : Bool) -> Verdict\ndef agreeOnTrue : (((Eq Verdict) (verdictOfDanger true)) (verdictOfDanger2 true))\nagreeOnTrue : (((Eq Verdict) (deny "use rg / sd")) (deny "use rg / sd"))\ndef denyStable : (w cmd : String) -> (0 h : (((Eq String) cmd) "grep")) -> (0 flag : (w _ : String) -> Bool) -> (((Eq Verdict) (verdictOfDanger (flag cmd))) (verdictOfDanger (flag "grep")))\ndenyStable : (w cmd : String) -> (0 h : (((Eq String) cmd) "grep")) -> (0 flag : (w _ : String) -> Bool) -> (((Eq Verdict) match (flag cmd) as _ return Verdict with | true => (deny "use rg / sd") | false => allow end) match (flag "grep") as _ return Verdict with | true => (deny "use rg / sd") | false => allow end)\ndef flagged : (List String)\ndef isFlagged : (w _ : String) -> Bool\ntrue\nfalse'
+{ [ "$code" -eq 0 ] && [ "$code2" -eq 0 ] && [ "$out2" = "$want" ]; } \
+  && echo PASS-M4D-GUARD-CLASSES \
+  || { printf '%s\n%s\n' "$out" "$out2"; echo "FAIL-M4D-GUARD-CLASSES (exit=$code/$code2)"; exit 1; }
+
+# ---------------------------------------------------------------------
+# M4 fixes round 1
+# ---------------------------------------------------------------------
+
+# ctxcat id 8: a constructor whose CODOMAIN carries a type annotation,
+# and one whose PARAMETER argument does, both still check. Stage A moved
+# the result-head test onto the RAW type, and elaboration is what deletes
+# Term.Ann, so before the fix each of these died with a Bad_ctor whose
+# stated reason (arity) had nothing to do with the real cause. Exact
+# output pinned, so a silent re-rejection cannot hide here.
+out=$("$watchdog" 30 dune exec --root "$ROOT" bin/tot.exe -- check "$ROOT"/test/fixtures/m4fix-ann-ctor.tot 2>&1)
+code=$?
+want=$'data AnnFoo : Type 0\nctor annMk : AnnFoo\ndata AnnBox : (0 A : Type 0) -> Type 0\nctor annBox : (0 A : Type 0) -> (w _ : A) -> (AnnBox A)'
+{ [ "$code" -eq 0 ] && [ "$out" = "$want" ]; } \
+  && echo PASS-M4FIX-ANN-CTOR \
+  || { printf '%s\n' "$out"; echo "FAIL-M4FIX-ANN-CTOR (exit=$code)"; exit 1; }
+
+# audit F3: `auto` in a result-index position hits the index-cleanliness
+# ban ITSELF (Bad_ctor, naming the index expressions), instead of
+# slipping past the raw check into elaboration, where the error used to
+# arrive as an unrelated "no instance found for Nat".
+out=$("$watchdog" 30 dune exec --root "$ROOT" bin/tot.exe -- check "$ROOT"/test/fixtures/m4fix-auto-index.tot 2>&1)
+code=$?
+{ [ "$code" -ne 0 ] && printf '%s\n' "$out" | rg -q 'invalid constructor autoIdx' \
+    && printf '%s\n' "$out" | rg -q 'index expression' \
+    && ! printf '%s\n' "$out" | rg -q 'no instance found'; } \
+  && echo PASS-M4FIX-AUTO-INDEX \
+  || { printf '%s\n' "$out"; echo "FAIL-M4FIX-AUTO-INDEX (exit=$code)"; exit 1; }
+
+# ctxcat ids 1+6: an instance with FOUR dictionary binders resolves and
+# computes. validate_instance_shape accepts this shape, so a fuel bound
+# that cannot afford it is a reachable false negative, not a backstop:
+# before the fix this exact file died with "instance resolution for
+# (FC4 Bool) exceeded its fuel".
+out=$("$watchdog" 30 dune exec --root "$ROOT" bin/tot.exe -- run "$ROOT"/test/fixtures/m4fix-inst-binders.tot 2>&1)
+code=$?
+{ [ "$code" -eq 0 ] && printf '%s\n' "$out" | rg -qx 'true' \
+    && ! printf '%s\n' "$out" | rg -q 'fuel'; } \
+  && echo PASS-M4FIX-INST-BINDERS \
+  || { printf '%s\n' "$out"; echo "FAIL-M4FIX-INST-BINDERS (exit=$code)"; exit 1; }
+
+# ctxcat id 7: 26 matches nested in SCRUTINEE position check in well
+# under the watchdog. The staged match_scrut inferred every scrutinee
+# twice, so this file cost 2^26 inferences (measured on that binary:
+# 0.01s at depth 12, 1.08s at depth 20, 4x per two levels, about 70s
+# here); a 15s watchdog turns the regression into exit 124, never a
+# silent slow gate.
+# M4 fixes round 2 (ctxcat id 7): this is a TIMING assertion, so it runs
+# the ALREADY-BUILT binary rather than `dune exec`, which acquires the
+# workspace build lock and may rebuild -- either would be charged to the
+# 15s budget and could hit 124 with no regression present (a parallel
+# build or an editor's dune RPC holding the lock is enough). The F2
+# gates below run "$ROOT"/_build/default/bin/tot.exe for the same
+# reason; every gate above has already forced that binary to be built.
+out=$("$watchdog" 15 "$ROOT"/_build/default/bin/tot.exe check "$ROOT"/test/fixtures/m4fix-nest26.tot 2>&1)
+code=$?
+want=$'def nest26 : Bool\nnest26 : Bool'
+{ [ "$code" -eq 0 ] && [ "$out" = "$want" ]; } \
+  && echo PASS-M4FIX-NEST-DEPTH \
+  || { printf '%s\n' "$out"; echo "FAIL-M4FIX-NEST-DEPTH (exit=$code)"; exit 1; }
+
+# ---------------------------------------------------------------------
+# M4 fixes round 2
+# ---------------------------------------------------------------------
+
+# ctxcat id 4 + opus R1: the ILL-TYPED twin of the gate above. 26
+# matches nested in SCRUTINEE position with the innermost one missing
+# its `false` branch. Round 1 removed the unconditional second pass but
+# left the Zero fallback unguarded, so an error that also fails at mode
+# Zero (a missing branch, a wrong scrutinee type, a missing motive: the
+# everyday ones) re-ran the whole subterm at every level and restored
+# the 2^depth curve on the ERROR path. Measured on the round-1 binary:
+# 0.11s at depth 18, 1.21s at 22, 18.18s at 26. Guarding the fallback on
+# the ambient mode makes the failing path O(depth^2). Budget 10s, so the
+# pre-fix cost clears it by 1.8x; the exact diagnosis is pinned as well,
+# because a FAST WRONG error is not a fix. Built binary, as above.
+out=$("$watchdog" 10 "$ROOT"/_build/default/bin/tot.exe check "$ROOT"/test/fixtures/m4fix-nest26-ill.tot 2>&1)
+code=$?
+{ [ "$code" -eq 1 ] \
+    && printf '%s\n' "$out" | rg -q 'match branches do not fit the declaration: expected false, found <none>'; } \
+  && echo PASS-M4FIX-NEST-ILL \
+  || { printf '%s\n' "$out"; echo "FAIL-M4FIX-NEST-ILL (exit=$code)"; exit 1; }
+
+# opus R1, the motive-less variant: 30 matches nested in SCRUTINEE
+# position with no `as .. return` anywhere. infer's Match arm calls
+# match_scrut BEFORE demanding a motive, so every enclosing level still
+# inferred the whole subterm and the missing motive failed at both
+# modes. Measured on the round-1 binary: 0.41s at depth 22, 5.79s at 26,
+# so about 80s at 30 -- 8x this gate's own budget.
+out=$("$watchdog" 10 "$ROOT"/_build/default/bin/tot.exe check "$ROOT"/test/fixtures/m4fix-nest30-nomotive.tot 2>&1)
+code=$?
+{ [ "$code" -eq 1 ] \
+    && printf '%s\n' "$out" | rg -q "cannot infer a type for a match without 'as \.\. return'"; } \
+  && echo PASS-M4FIX-NEST-NOMOTIVE \
+  || { printf '%s\n' "$out"; echo "FAIL-M4FIX-NEST-NOMOTIVE (exit=$code)"; exit 1; }
+
+# M4 fixes round 4 (opus R4-1): PASS-M4FIX-INST-BRANCHING USED TO SIT
+# HERE.  It is the slowest and least informative leg in the battery, and
+# this script fail-fasts, so a load-induced exit 124 here blanked six
+# later markers, the memo's own soundness pin (PASS-M4FIX-INST-MEMO-KEY)
+# and the whole prelude-channel gate among them.  The leg now runs LAST
+# in the M4-fixes block, after every cheap marker has already printed.
+
+# ---------------------------------------------------------------------
+# M4 fixes round 3
+# ---------------------------------------------------------------------
+
+# opus R3-1, the reach gates. Round 2 turned instance fuel into a budget
+# for the whole resolution but left the budget sized like a per-path
+# depth counter, so it rejected shapes whose total work merely grows
+# faster than the query's depth -- including two shapes that are not
+# exponential at all. All three files below RESOLVED on the round-1
+# binary and reported Inst_depth on the round-2 one; they are the
+# regression class made testable. Each pins exit 0 AND the computed
+# value (a fast WRONG answer is not a fix), on the already-built binary
+# for the same reason PASS-M4FIX-NEST-DEPTH does.
+
+# Two DIFFERENT classes on the same type variable, nesting 30. Work is
+# quadratic in the nesting, fuel was linear in it: rejected from nesting
+# 6 up. Measured after the memo: 0.052s.
+out=$("$watchdog" 15 "$ROOT"/_build/default/bin/tot.exe run "$ROOT"/test/fixtures/m4fix-inst-twoclass.tot 2>&1)
+code=$?
+{ [ "$code" -eq 0 ] && printf '%s\n' "$out" | rg -qx 'true'; } \
+  && echo PASS-M4FIX-INST-TWOCLASS \
+  || { printf '%s\n' "$out"; echo "FAIL-M4FIX-INST-TWOCLASS (exit=$code)"; exit 1; }
+
+# The SPEC's own branching shape (same class twice), nesting 16: 2^16
+# identical sub-resolutions without the memo, one derivation per
+# distinct sub-goal with it. Round 2 rejected this from nesting 4 up.
+# Measured after the memo: 1.03s, of which the resolution itself is a
+# small fraction (the rest is the 65k-node emitted dictionary).
+out=$("$watchdog" 20 "$ROOT"/_build/default/bin/tot.exe run "$ROOT"/test/fixtures/m4fix-inst-spec16.tot 2>&1)
+code=$?
+{ [ "$code" -eq 0 ] && printf '%s\n' "$out" | rg -qx 'true'; } \
+  && echo PASS-M4FIX-INST-SPEC16 \
+  || { printf '%s\n' "$out"; echo "FAIL-M4FIX-INST-SPEC16 (exit=$code)"; exit 1; }
+
+# Eight INDEPENDENT chains at n=40: exactly 320 sub-resolutions, linear
+# in the input, no sharing and no re-derivation, answered by the round-1
+# binary in 43ms and rejected by the round-2 one from k=8 n=20 up. This
+# is the file that proves the round-2 budget was not bounding an
+# exponential blow-up. Measured after the memo: 0.046s, so the 15s
+# budget is 300x headroom and a 124 means a real regression.
+out=$("$watchdog" 15 "$ROOT"/_build/default/bin/tot.exe run "$ROOT"/test/fixtures/m4fix-inst-chains.tot 2>&1)
+code=$?
+{ [ "$code" -eq 0 ] && printf '%s\n' "$out" | rg -qx 'true'; } \
+  && echo PASS-M4FIX-INST-CHAINS \
+  || { printf '%s\n' "$out"; echo "FAIL-M4FIX-INST-CHAINS (exit=$code)"; exit 1; }
+
+# opus R3-5: the SMALL-depth positive the round-2 gate set could not
+# see. PASS-M4FIX-INST-BRANCHING's old "resolve OR Inst_depth" oracle
+# was satisfied by a fix that rejected two-dictionary telescopes at
+# depth 1, so nothing pinned that they resolve at all. Two shapes, both
+# at a depth whose emitted term is small: two DIFFERENT classes at
+# nesting 6 (the exact shape round 2 first rejected) and the SAME class
+# twice at nesting 3. BOTH values pinned, so a fix that resolves one and
+# drops the other fails here.
+out=$("$watchdog" 15 "$ROOT"/_build/default/bin/tot.exe run "$ROOT"/test/fixtures/m4fix-inst-small-reach.tot 2>&1)
+code=$?
+{ [ "$code" -eq 0 ] \
+    && [ "$(printf '%s\n' "$out" | rg -cx 'true')" = "2" ]; } \
+  && echo PASS-M4FIX-INST-SMALL-REACH \
+  || { printf '%s\n' "$out"; echo "FAIL-M4FIX-INST-SMALL-REACH (exit=$code)"; exit 1; }
+
+# opus R3-1, the memo's SOUNDNESS pin, the half a reach gate cannot see.
+# The memo is keyed on (class, key) with the key spelled in FULL -- the
+# class argument's own quoted term, not its head symbol. A head-only key
+# is what the SPEC debt's wording suggested and it is UNSOUND: an
+# instance with two type binders puts two sibling dictionary sub-goals
+# in one telescope, and those can share a head while differing in its
+# arguments. This file makes PC (PBox Bool) and PC (PBox Nat) collide on
+# the head PBox and reads the SECOND dictionary, so a head-only memo
+# answers with the FIRST and the file computes `zero` (or fails the
+# candidate re-check) instead of `(succ zero)`. Exact value pinned.
+out=$("$watchdog" 15 "$ROOT"/_build/default/bin/tot.exe run "$ROOT"/test/fixtures/m4fix-inst-memo-key.tot 2>&1)
+code=$?
+{ [ "$code" -eq 0 ] && printf '%s\n' "$out" | rg -qx '\(succ zero\)'; } \
+  && echo PASS-M4FIX-INST-MEMO-KEY \
+  || { printf '%s\n' "$out"; echo "FAIL-M4FIX-INST-MEMO-KEY (exit=$code)"; exit 1; }
+
+# opus R3: an annotation on the spine's own HEAD, in a constructor
+# codomain and in a constructor PARAMETER argument. Totality.spine
+# unwinds App without stripping, so round 1's outer strip_ann never
+# reached the head and head_ok was false: a Bad_ctor on a term the
+# elaborator accepts in every other position. Exact output pinned.
+out=$("$watchdog" 30 "$ROOT"/_build/default/bin/tot.exe check "$ROOT"/test/fixtures/m4fix-ann-head.tot 2>&1)
+code=$?
+want=$'data AVec : (0 _ : Nat) -> Type 0\nctor avnil : (AVec zero)\ndata ABox : (0 A : Type 0) -> Type 0\nctor abx : (0 A : Type 0) -> (w _ : A) -> (ABox A)\nAVec : (0 _ : Nat) -> Type 0'
+{ [ "$code" -eq 0 ] && [ "$out" = "$want" ]; } \
+  && echo PASS-M4FIX-ANN-HEAD \
+  || { printf '%s\n' "$out"; echo "FAIL-M4FIX-ANN-HEAD (exit=$code)"; exit 1; }
+
+# opus R3, the NEGATIVE half: stripping the annotation off the spine
+# head must not start accepting a codomain whose head is the WRONG
+# family. `(Nat : Type 0) zero` strips to Global "Nat", not BVec, so
+# this stays a Bad_ctor naming BVec's own result shape -- rejected for
+# the intended reason, not for arity and not by accident.
+out=$("$watchdog" 30 "$ROOT"/_build/default/bin/tot.exe check "$ROOT"/test/fixtures/m4fix-ann-head-neg.tot 2>&1)
+code=$?
+{ [ "$code" -eq 1 ] \
+    && printf '%s\n' "$out" | rg -q 'invalid constructor bvnil: constructor must end in BVec applied to its parameters and 1 index expression'; } \
+  && echo PASS-M4FIX-ANN-HEAD-NEG \
+  || { printf '%s\n' "$out"; echo "FAIL-M4FIX-ANN-HEAD-NEG (exit=$code)"; exit 1; }
+
+# ---------------------------------------------------------------------
+# M4 fixes round 4
+# ---------------------------------------------------------------------
+
+# ctxcat r4 id 3, the NEGATIVE: an axiom must not reach a runtime
+# definition through a zero-constructor family. Empty is Complete [],
+# which zero_eliminable accepts, so rounds 1 to 3 stamped scrut_q = Zero
+# on `match ff with end` even though the ambient mode had already
+# rejected the scrutinee with Axiom_runtime_use, and `boom : Nat` became
+# a runtime def whose erased body is the erasure residue. The fallback
+# is now guarded on Erased_use, the one class it exists for.
+out=$("$watchdog" 15 "$ROOT"/_build/default/bin/tot.exe check "$ROOT"/test/fixtures/m4fix-axiom-empty.tot 2>&1)
+code=$?
+{ [ "$code" -eq 1 ] \
+    && printf '%s\n' "$out" | rg -q 'axiom ff used at runtime: axioms are usable only at quantity 0'; } \
+  && echo PASS-M4FIX-AXIOM-EMPTY \
+  || { printf '%s\n' "$out"; echo "FAIL-M4FIX-AXIOM-EMPTY (exit=$code)"; exit 1; }
+
+# ctxcat r4 id 3, the POSITIVE: the erased-hypothesis absurd elimination
+# the fallback exists for keeps checking, on all three subsingleton
+# shapes (zero-constructor Empty, the all-erased Eq/refl, the all-erased
+# Unit). The prelude's exfalso, subst0 and J0 are these shapes, so this
+# is the half a too-eager narrowing would break. Exact output pinned.
+out=$("$watchdog" 15 "$ROOT"/_build/default/bin/tot.exe check "$ROOT"/test/fixtures/m4fix-absurd.tot 2>&1)
+code=$?
+want=$'def absurdNat : (0 e : Empty) -> Nat\ndef substNat : (0 a : Nat) -> (0 b : Nat) -> (0 h : (((Eq Nat) a) b)) -> (w _ : Nat) -> Nat\ndef unitPeek : (0 u : Unit) -> Nat\nabsurdNat : (0 e : Empty) -> Nat'
+{ [ "$code" -eq 0 ] && [ "$out" = "$want" ]; } \
+  && echo PASS-M4FIX-ABSURD \
+  || { printf '%s\n' "$out"; echo "FAIL-M4FIX-ABSURD (exit=$code)"; exit 1; }
+
+# ctxcat r4 id 3, the CONTROL: an ambient scrutinee error that is
+# neither Erased_use nor Axiom_runtime_use still propagates unchanged.
+# `zero zero` is Not_a_function "Nat" at the ambient mode; the narrowed
+# guard returns it directly instead of re-inferring at Zero, and the
+# message is byte-identical to the round-3 one.
+out=$("$watchdog" 15 "$ROOT"/_build/default/bin/tot.exe check "$ROOT"/test/fixtures/m4fix-scrut-notfun.tot 2>&1)
+code=$?
+{ [ "$code" -eq 1 ] && printf '%s\n' "$out" | rg -q 'not a function type: Nat'; } \
+  && echo PASS-M4FIX-SCRUT-NOTFUN \
+  || { printf '%s\n' "$out"; echo "FAIL-M4FIX-SCRUT-NOTFUN (exit=$code)"; exit 1; }
+
+# ctxcat r4 id 4: an annotation wrapping the ENTIRE constructor type.
+# The finding predicted a false Bad_ctor; strip_pis calls strip_ann at
+# every level (round 1, ctxcat id 8), so all three spellings already
+# checked and the finding is refuted on behaviour. This is the missing
+# regression pin. Exact output.
+out=$("$watchdog" 30 "$ROOT"/_build/default/bin/tot.exe check "$ROOT"/test/fixtures/m4fix-ann-whole.tot 2>&1)
+code=$?
+want=$'data WFoo : (0 A : Type 0) -> (0 _ : Nat) -> Type 0\nctor wmk : (0 A : Type 0) -> (0 x : Nat) -> ((WFoo A) x)\ndata XFoo : (0 A : Type 0) -> (0 _ : Nat) -> Type 0\nctor xmk : (0 A : Type 0) -> (0 x : Nat) -> ((XFoo A) x)\ndata YFoo : (0 A : Type 0) -> (0 _ : Nat) -> Type 0\nctor ymk : (0 A : Type 0) -> (0 x : Nat) -> ((YFoo A) x)\nWFoo : (0 A : Type 0) -> (0 _ : Nat) -> Type 0'
+{ [ "$code" -eq 0 ] && [ "$out" = "$want" ]; } \
+  && echo PASS-M4FIX-ANN-WHOLE \
+  || { printf '%s\n' "$out"; echo "FAIL-M4FIX-ANN-WHOLE (exit=$code)"; exit 1; }
+
+# ctxcat r4 id 4, the NEGATIVE half: a genuinely wrong codomain under
+# the SAME whole-type annotation still fails Bad_ctor, so the positive
+# above is not passing because the shape stopped being checked.
+out=$("$watchdog" 30 "$ROOT"/_build/default/bin/tot.exe check "$ROOT"/test/fixtures/m4fix-ann-whole-neg.tot 2>&1)
+code=$?
+{ [ "$code" -eq 1 ] \
+    && printf '%s\n' "$out" | rg -q 'invalid constructor zbad: constructor must end in ZBad applied to its parameters and 1 index expression'; } \
+  && echo PASS-M4FIX-ANN-WHOLE-NEG \
+  || { printf '%s\n' "$out"; echo "FAIL-M4FIX-ANN-WHOLE-NEG (exit=$code)"; exit 1; }
+
+# ctxcat r4 id 0: the motive's index-binder order on a family with TWO
+# indices (Vec has one, and one index cannot tell the two candidate
+# conventions apart). "in Tw i c" must bind i to the FIRST declared
+# index; the positive elaborates only under that reading and the
+# negative, which needs the swapped reading, must fail with a Bool/Nat
+# mismatch. Both halves in one marker, so neither can pass alone.
+out=$("$watchdog" 15 "$ROOT"/_build/default/bin/tot.exe check "$ROOT"/test/fixtures/m4fix-motive-order.tot 2>&1)
+code=$?
+outn=$("$watchdog" 15 "$ROOT"/_build/default/bin/tot.exe check "$ROOT"/test/fixtures/m4fix-motive-order-neg.tot 2>&1)
+coden=$?
+want=$'data Tw : (0 _ : Nat) -> (0 _ : Bool) -> Type 0\nctor tw : ((Tw zero) true)\ndef TwP : (w _ : Nat) -> (w _ : Bool) -> Type 0\ndef twOrder : (0 n : Nat) -> (0 b : Bool) -> (0 t : ((Tw n) b)) -> ((TwP n) b)\ntwOrder : (0 n : Nat) -> (0 b : Bool) -> (0 t : ((Tw n) b)) -> Nat'
+{ [ "$code" -eq 0 ] && [ "$out" = "$want" ] && [ "$coden" -eq 1 ] \
+    && printf '%s\n' "$outn" | rg -q 'type mismatch: expected Bool, found Nat'; } \
+  && echo PASS-M4FIX-MOTIVE-ORDER \
+  || {
+    printf '%s\n' "$out"; printf '%s\n' "$outn"
+    echo "FAIL-M4FIX-MOTIVE-ORDER (exit=$code/$coden)"; exit 1
+  }
+
+# opus R4-3: a WIDE, SHALLOW instance query. Round 3 argued the flat
+# 10000 fuel floor "covers wide ones"; a constant bounds width only up
+# to that constant. A balanced WPair tree over 2500 pairwise distinct
+# leaf types charges 6 per distinct (class, key) pair, 14994 in all,
+# while its DEPTH is only log2 2500, so the round-3 formula sat at its
+# floor and rejected this query with Inst_depth (bisected to the leaf:
+# L = 1667 resolves at 9996, L = 1668 fails at 10002). inst_fuel now
+# also scales with term_size. Exact value pinned; the failure branch is
+# tailed because the fixture prints one line per declaration.
+out=$("$watchdog" 30 "$ROOT"/_build/default/bin/tot.exe run "$ROOT"/test/fixtures/m4fix-inst-wide.tot 2>&1)
+code=$?
+{ [ "$code" -eq 0 ] && [ "$(printf '%s\n' "$out" | rg -cx 'zero')" = "1" ] \
+    && ! printf '%s\n' "$out" | rg -q 'fuel'; } \
+  && echo PASS-M4FIX-INST-WIDE \
+  || { printf '%s\n' "$out" | tail -n 5; echo "FAIL-M4FIX-INST-WIDE (exit=$code)"; exit 1; }
+
+# M4 fixes round 5 (opus R5-2): the CLASS-COUNT dimension. 57 classes,
+# one WPair instance per class demanding every class on BOTH parameters
+# (so each instance carries 114 dictionary binders), and a four-leaf
+# query. The walk charges about K^2 per query node while every term of
+# the round-4 formula was linear in K, so the backstop fired on a
+# finite, well formed, resolvable query. Bisected on the round-4 binary
+# to the leaf: K = 56 resolves at exit 0, K = 57 reports "exceeded its
+# fuel" at exit 1. Regenerate with
+#   python3 dev/gen-inst-fuel.py classes 57 > test/fixtures/m4fix-inst-classes.tot
+# Exact value pinned, and an Inst_depth here is a FAIL by name so a
+# future re-narrowing cannot pass as a different error.
+# M4 fixes round 6 (opus R6-1): this pin's MARGIN, recorded here for the
+# first time. Measured on the round-5 binary with the same generator, the
+# leaf on this shape is K = 60 resolving at exit 0 and K = 61 reporting
+# "exceeded its fuel" at exit 1, so the K = 57 pinned here sits THREE
+# classes under the leaf, about 5 percent, thinner than D9f's recorded 7
+# percent. The leaf is a MEASUREMENT, not a proof: re-measure it
+# (python3 dev/gen-inst-fuel.py classes 61, run, expect exit 1) whenever
+# inst_fuel or build_instance's charge accounting changes, and lower K
+# here if the margin goes negative.
+out=$("$watchdog" 60 "$ROOT"/_build/default/bin/tot.exe run "$ROOT"/test/fixtures/m4fix-inst-classes.tot 2>&1)
+code=$?
+{ [ "$code" -eq 0 ] && [ "$(printf '%s\n' "$out" | rg -cx 'zero')" = "1" ] \
+    && ! printf '%s\n' "$out" | rg -q 'fuel'; } \
+  && echo PASS-M4FIX-INST-CLASSES \
+  || { printf '%s\n' "$out" | tail -n 3; echo "FAIL-M4FIX-INST-CLASSES (exit=$code)"; exit 1; }
+
+# M4 fixes round 5 (opus R5-5, ctxcat r5 id 15): the DRIVER's stderr
+# line is bounded for the whole printed-type error family, not just for
+# Inst_depth. Measured on the round-4 binary, worst single stderr line:
+# Inst_depth 503 bytes (capped), Inst_unresolved 32,122, Mismatch
+# 800,162 (two uncapped payloads). The oracle is INDEPENDENCE: the same
+# shape is generated at two very different sizes and the longest stderr
+# line must be the SAME length, which no choice of goal_print_cap can
+# fake, plus a SHORT mismatch must still print both types in full.
+mm_scratch=$(mktemp -d "${TMPDIR:-/tmp}/tot-gate-mm.XXXXXX")
+mm_nest() {
+  mm_n=$1
+  mm_i=0
+  mm_open=""
+  mm_close=""
+  while [ "$mm_i" -lt "$mm_n" ]; do
+    mm_open="$mm_open(MMWrap "
+    mm_close="$mm_close)"
+    mm_i=$((mm_i + 1))
+  done
+  printf '%s%s%s' "$mm_open" "MMKey" "$mm_close"
+}
+mm_write() {
+  mm_path=$1
+  mm_depth=$2
+  {
+    printf -- '-- GENERATED by dev/gates.sh (M4 fixes round 5): a Mismatch\n'
+    printf -- '-- whose BOTH payloads are printed types of depth %s.\n' "$mm_depth"
+    printf 'data MMKey : Type 0 := | mmKey : MMKey\n'
+    printf 'data MMWrap (0 A : Type 0) : Type 0 := | mmWrap : A -> MMWrap A\n'
+    printf 'def mmA : %s -> MMKey := fun z => mmKey\n' "$(mm_nest "$mm_depth")"
+    printf 'def mmB : %s -> MMKey := fun z => mmKey\n' "$(mm_nest $((mm_depth + 1)))"
+    printf 'def mmBad : %s -> MMKey := mmB\n' "$(mm_nest "$mm_depth")"
+  } > "$mm_path"
+}
+mm_write "$mm_scratch/small.tot" 300
+mm_write "$mm_scratch/large.tot" 900
+printf 'data MMKey : Type 0 := | mmKey : MMKey\ndata MMWrap (0 A : Type 0) : Type 0 := | mmWrap : A -> MMWrap A\ndef mmA : MMWrap MMKey -> MMKey := fun z => mmKey\ndef mmB : MMKey -> MMKey := fun z => mmKey\ndef mmBad : MMWrap MMKey -> MMKey := mmB\n' \
+  > "$mm_scratch/short.tot"
+"$watchdog" 30 "$ROOT"/_build/default/bin/tot.exe check "$mm_scratch/small.tot" \
+  > "$mm_scratch/o1" 2> "$mm_scratch/e1"
+mm_c1=$?
+"$watchdog" 30 "$ROOT"/_build/default/bin/tot.exe check "$mm_scratch/large.tot" \
+  > "$mm_scratch/o2" 2> "$mm_scratch/e2"
+mm_c2=$?
+"$watchdog" 30 "$ROOT"/_build/default/bin/tot.exe check "$mm_scratch/short.tot" \
+  > "$mm_scratch/o3" 2> "$mm_scratch/e3"
+mm_c3=$?
+mm_len1=$(awk '{ if (length($0) > m) m = length($0) } END { print m + 0 }' "$mm_scratch/e1")
+mm_len2=$(awk '{ if (length($0) > m) m = length($0) } END { print m + 0 }' "$mm_scratch/e2")
+mm_len3=$(awk '{ if (length($0) > m) m = length($0) } END { print m + 0 }' "$mm_scratch/e3")
+{ [ "$mm_c1" -eq 1 ] && [ "$mm_c2" -eq 1 ] && [ "$mm_c3" -eq 1 ] \
+    && [ "$mm_len1" = "$mm_len2" ] && [ "$mm_len1" -lt 5000 ] \
+    && rg -q 'type mismatch' "$mm_scratch/e1" && rg -q '\.\.\.' "$mm_scratch/e1" \
+    && rg -q '\.\.\.' "$mm_scratch/e2" \
+    && ! rg -q '\.\.\.' "$mm_scratch/e3" \
+    && [ "$mm_len3" -lt 200 ]; } \
+  && echo PASS-M4FIX-ERROR-LINE-BOUNDED \
+  || {
+    printf 'exit=%s/%s/%s longest=%s/%s/%s\n' "$mm_c1" "$mm_c2" "$mm_c3" "$mm_len1" "$mm_len2" "$mm_len3"
+    cut -c1-200 "$mm_scratch/e1" "$mm_scratch/e3"
+    echo "FAIL-M4FIX-ERROR-LINE-BOUNDED"
+    rm -rf "$mm_scratch"
+    exit 1
+  }
+rm -rf "$mm_scratch"
+
+# opus R4-2: the prelude is read exactly ONCE per driver invocation.
+# Round 3 asserted this in three docstrings and it was false on every
+# cache MISS: the driver's precheck read the file (read 1, which became
+# the cache KEY) and cached_state_of_src's miss branch called state (),
+# which read it again (read 2, whose bytes were what got elaborated).
+# Two consequences, both reproduced on the round-3 binary: read 2's
+# failure is a Serror INSIDE the --serror-exit mapping, so a prelude
+# removed between the two reads exited 0 under --serror-exit 0 (12 of
+# 12 attempts); and the cache entry stored under content A's key held a
+# state elaborated from content B, with no privilege on the cache dir
+# needed (5 of 8 sampled delays). Threading one src closes both by
+# construction. The race itself is not a battery-shaped oracle (it needs
+# a 20 MB prelude and a background unlink), so this leg pins the two
+# DETERMINISTIC facts that make the race impossible:
+#  (i)  surface/bootstrap.ml CALLS state () nowhere: no line binds it
+#       ("= state ()") and no line applies it on its own ("^ state ()").
+#       The definition line starts "let state ()" and doc comments spell
+#       it "[state ()]", so neither pattern matches them. Round 3 had
+#       exactly two such call lines, both inside cached_state_of_src.
+#  (ii) state_of_src is applied to src in three places: once inside
+#       state () and once in EACH branch of cached_state_of_src (the
+#       TOT_CACHE_VERIFY recompute and the cache miss), so the key and
+#       the elaborated content are the same bytes. The [^_] excludes
+#       "cached_state_of_src src", a substring of the same shape.
+# plus the channel contract itself: a prelude that is missing reports
+# the DRIVER message ("no such file", the literal exit 1, outside the
+# mapping) and never read 2's message shape ("prelude not found:").
+oneread_calls=$(rg -c '^\s*state \(\)|= state \(\)' "$ROOT"/surface/bootstrap.ml)
+oneread_calls=${oneread_calls:-0}
+oneread_srcs=$(rg -c '[^_]state_of_src src' "$ROOT"/surface/bootstrap.ml)
+oneread_srcs=${oneread_srcs:-0}
+oneread_scratch=$(mktemp -d "${TMPDIR:-/tmp}/tot-gate-oneread.XXXXXX")
+printf 'def oneReadOk : Bool := true\n' > "$oneread_scratch/target.tot"
+oneread_out=$(env TOT_PRELUDE="$oneread_scratch/absent-prelude.tot" \
+  TOT_CACHE_DIR="$oneread_scratch/cache" \
+  "$watchdog" 15 "$ROOT"/_build/default/bin/tot.exe check --serror-exit 0 \
+  "$oneread_scratch/target.tot" 2>&1 > "$oneread_scratch/out")
+oneread_code=$?
+{ [ "$oneread_calls" -eq 0 ] && [ "$oneread_srcs" -eq 3 ] \
+    && [ "$oneread_code" -eq 1 ] && [ ! -s "$oneread_scratch/out" ] \
+    && printf '%s\n' "$oneread_out" | rg -q 'no such file' \
+    && ! printf '%s\n' "$oneread_out" | rg -q 'prelude not found'; } \
+  && echo PASS-D-PRELUDE-ONEREAD \
+  || {
+    printf '%s\n' "$oneread_out"
+    echo "FAIL-D-PRELUDE-ONEREAD (calls=$oneread_calls srcs=$oneread_srcs exit=$oneread_code)"
+    rm -rf "$oneread_scratch"
+    exit 1
+  }
+rm -rf "$oneread_scratch"
+
+# M4 fixes round 5 (opus R5-4): the branching leg USED to sit here, and
+# the round-4 log claimed the move to the end of the M4-fixes block
+# protected PASS-D-PRELUDE-CHANNEL. It did not. This script has no
+# `set -e`; every leg is an `&&` chain onto its marker with an `|| { ..;
+# exit 1; }` arm, so a failure here ENDS the script, and four PASS-D-*
+# markers still sat downstream, PASS-D-PRELUDE-CHANNEL among them.
+# Simulated by pointing the leg at a missing fixture: GATE-EXIT=1,
+# FAIL-M4FIX-INST-BRANCHING, and none of the four printed. The leg now
+# runs LAST in the whole file (below PASS-D-USAGE-CHANNEL), so the
+# sentence is true of every marker, not four out of eight.
+
+# audit F2: driver errors go to STDERR, because stdout is the hook
+# protocol's decision channel, and a MISSING script file is an error
+# exit regardless of --serror-exit. Runs the built binary directly (not
+# `dune exec`) so the two channels can be compared exactly. Pre-fix this
+# printed the line on stdout and, under --serror-exit 0, exited 0.
+f2_scratch=$(mktemp -d "${TMPDIR:-/tmp}/tot-gate-f2.XXXXXX")
+f2_missing="$f2_scratch/no-such-file.tot"
+"$watchdog" 15 "$ROOT"/_build/default/bin/tot.exe check --serror-exit 0 "$f2_missing" \
+  > "$f2_scratch/out1" 2> "$f2_scratch/err1"
+f2c1=$?
+"$watchdog" 15 "$ROOT"/_build/default/bin/tot.exe check "$f2_missing" \
+  > "$f2_scratch/out2" 2> "$f2_scratch/err2"
+f2c2=$?
+{ [ "$f2c1" -eq 1 ] && [ "$f2c2" -eq 1 ] \
+    && [ ! -s "$f2_scratch/out1" ] && [ ! -s "$f2_scratch/out2" ] \
+    && [ "$(cat "$f2_scratch/err1")" = "$f2_missing: no such file" ] \
+    && [ "$(cat "$f2_scratch/err2")" = "$f2_missing: no such file" ]; } \
+  && echo PASS-D-MISSING-FILE-CHANNEL \
+  || {
+    cat "$f2_scratch/out1" "$f2_scratch/err1" 2> /dev/null
+    echo "FAIL-D-MISSING-FILE-CHANNEL (exit=$f2c1/$f2c2)"
+    rm -rf "$f2_scratch"
+    exit 1
+  }
+
+# M4 fixes round 2 (opus R2): the three SIBLING paths the existence
+# guard let through. A directory, a FIFO and a regular file with no read
+# permission all satisfy Sys.file_exists, so control reached
+# In_channel.with_open_text: the directory and the unreadable file
+# printed an OCaml crash dump and exited 2 (the code this driver
+# reserves for USAGE errors, so a hook could not tell "you called me
+# wrong" from "your script is unreadable"), --serror-exit was not
+# consulted at all, and the FIFO did not exit -- the open blocked on a
+# writer that never came (exit 124 at 8s, measured). All three now take
+# the same route as a missing file: stdout empty, one driver line on
+# stderr, the literal exit 1, outside the --serror-exit mapping. The
+# FIFO half is also a HANG gate: the watchdog turns a re-blocking open
+# into a loud 124.
+#
+# M4 fixes round 3 (ctxcat r3 id 1): the UNREADABLE sub-case rests on
+# `chmod 000`, and the kernel does not enforce permission bits against
+# uid 0. Run as root (a common CI container shape) the open would
+# SUCCEED, the probe would observe a different exit and stderr, and the
+# gate would fail for a reason that has nothing to do with the code --
+# or, worse, coincide and pass without ever reaching the Unreadable
+# branch. It is now skipped under `id -u` = 0 with an explicit line, so
+# a root run says so out loud instead of pretending to cover it. The
+# directory and FIFO sub-cases need no guard: their classification is a
+# stat, which root does not bypass.
+f2_dir="$f2_scratch/adir"
+f2_unread="$f2_scratch/unreadable.tot"
+f2_fifo="$f2_scratch/pipe.tot"
+mkdir "$f2_dir"
+printf 'def x : Bool := true\n' > "$f2_unread"
+chmod 000 "$f2_unread"
+mkfifo "$f2_fifo"
+f2_sib_ok=1
+# $1 path, $2 the expected stderr tail, then any extra flags. Pins all
+# three channels at once: exit 1, EMPTY stdout, exactly the driver line.
+# Written as six flat calls, matching this file's own gate style.
+f2_sibling() {
+  f2_path=$1
+  f2_msg=$2
+  shift 2
+  "$watchdog" 15 "$ROOT"/_build/default/bin/tot.exe check "$@" "$f2_path" \
+    > "$f2_scratch/out5" 2> "$f2_scratch/err5"
+  f2c5=$?
+  { [ "$f2c5" -eq 1 ] && [ ! -s "$f2_scratch/out5" ] \
+      && [ "$(cat "$f2_scratch/err5")" = "$f2_path: $f2_msg" ]; } || {
+    printf 'sibling %s exit=%s stdout=[%s] stderr=[%s]\n' "$f2_path" "$f2c5" \
+      "$(cat "$f2_scratch/out5")" "$(cat "$f2_scratch/err5")"
+    f2_sib_ok=0
+  }
+}
+f2_sibling "$f2_dir" "not a regular file"
+f2_sibling "$f2_dir" "not a regular file" --serror-exit 0
+f2_sibling "$f2_fifo" "not a regular file"
+f2_sibling "$f2_fifo" "not a regular file" --serror-exit 0
+if [ "$(id -u)" -eq 0 ]; then
+  echo "SKIP-D-UNUSABLE-FILE-CHANNEL-UNREADABLE (running as root: chmod 000 does not deny root)"
+else
+  f2_sibling "$f2_unread" "cannot be read"
+  f2_sibling "$f2_unread" "cannot be read" --serror-exit 0
+fi
+chmod 700 "$f2_unread"
+[ "$f2_sib_ok" -eq 1 ] \
+  && echo PASS-D-UNUSABLE-FILE-CHANNEL \
+  || { echo "FAIL-D-UNUSABLE-FILE-CHANNEL"; rm -rf "$f2_scratch"; exit 1; }
+
+# M4 fixes round 3 (opus R3-2): the FOURTH sibling, the PRELUDE read.
+# TOT_PRELUDE makes that path operator-controlled and it is reached on
+# every ordinary check/run, but round 2 fixed the target file only, so
+# surface/bootstrap.ml's read_prelude_src still guarded on
+# Sys.file_exists and then read unguarded. Measured on the round-2
+# binary, with a VALID target file throughout: a directory and an
+# unreadable file each printed `Fatal error: exception Sys_error(...)`
+# and exited 2, a FIFO did not exit at all (124 at the watchdog, no
+# output), and a MISSING path under --serror-exit 0 exited 0 -- the
+# fail-open the round-2 log itself argued must not happen. All four now
+# take the target file's contract: stdout EMPTY, one driver line on
+# stderr, the literal exit 1, OUTSIDE the --serror-exit mapping. Each
+# case is probed twice, bare and with --serror-exit 0, under
+# "$watchdog" 15 so a re-blocking open is a loud 124 rather than a
+# stalled battery. The unreadable case carries the same root guard as
+# the sibling block above (ctxcat r3 id 1).
+pre_scratch=$(mktemp -d "${TMPDIR:-/tmp}/tot-gate-prelude.XXXXXX")
+pre_ok="$pre_scratch/ok.tot"
+pre_dir="$pre_scratch/adir"
+pre_unread="$pre_scratch/unreadable.tot"
+pre_fifo="$pre_scratch/pipe.tot"
+pre_missing="$pre_scratch/no-such-prelude.tot"
+printf 'def x : Bool := true\n' > "$pre_ok"
+mkdir "$pre_dir"
+printf 'def y : Bool := true\n' > "$pre_unread"
+chmod 000 "$pre_unread"
+mkfifo "$pre_fifo"
+pre_gate_ok=1
+# $1 the TOT_PRELUDE value, $2 the expected stderr tail, then any extra
+# flags. Pins all three channels at once: exit 1, EMPTY stdout, exactly
+# the driver line, with the target file valid throughout.
+pre_probe() {
+  pre_path=$1
+  pre_msg=$2
+  shift 2
+  env TOT_PRELUDE="$pre_path" "$watchdog" 15 "$ROOT"/_build/default/bin/tot.exe check "$@" \
+    "$pre_ok" > "$pre_scratch/out" 2> "$pre_scratch/err"
+  pre_code=$?
+  { [ "$pre_code" -eq 1 ] && [ ! -s "$pre_scratch/out" ] \
+      && [ "$(cat "$pre_scratch/err")" = "prelude: $pre_path: $pre_msg" ]; } || {
+    printf 'prelude %s exit=%s stdout=[%s] stderr=[%s]\n' "$pre_path" "$pre_code" \
+      "$(cat "$pre_scratch/out")" "$(cat "$pre_scratch/err")"
+    pre_gate_ok=0
+  }
+}
+pre_probe "$pre_dir" "not a regular file"
+pre_probe "$pre_dir" "not a regular file" --serror-exit 0
+pre_probe "$pre_fifo" "not a regular file"
+pre_probe "$pre_fifo" "not a regular file" --serror-exit 0
+pre_probe "$pre_missing" "no such file"
+pre_probe "$pre_missing" "no such file" --serror-exit 0
+if [ "$(id -u)" -eq 0 ]; then
+  echo "SKIP-D-PRELUDE-CHANNEL-UNREADABLE (running as root: chmod 000 does not deny root)"
+else
+  pre_probe "$pre_unread" "cannot be read"
+  pre_probe "$pre_unread" "cannot be read" --serror-exit 0
+fi
+chmod 700 "$pre_unread"
+rm -rf "$pre_scratch"
+[ "$pre_gate_ok" -eq 1 ] \
+  && echo PASS-D-PRELUDE-CHANNEL \
+  || { echo "FAIL-D-PRELUDE-CHANNEL"; exit 1; }
+
+# audit F2, the flag surface: an unknown flag and a pathless invocation
+# both report on STDERR and exit 2, with stdout untouched.
+"$watchdog" 15 "$ROOT"/_build/default/bin/tot.exe check --bogus-flag /dev/null \
+  > "$f2_scratch/out3" 2> "$f2_scratch/err3"
+f2c3=$?
+"$watchdog" 15 "$ROOT"/_build/default/bin/tot.exe check \
+  > "$f2_scratch/out4" 2> "$f2_scratch/err4"
+f2c4=$?
+{ [ "$f2c3" -eq 2 ] && [ "$f2c4" -eq 2 ] \
+    && [ ! -s "$f2_scratch/out3" ] && [ ! -s "$f2_scratch/out4" ] \
+    && [ "$(cat "$f2_scratch/err3")" = "unknown flag: --bogus-flag" ] \
+    && rg -q '^usage: tot ' "$f2_scratch/err4"; } \
+  && echo PASS-D-USAGE-CHANNEL \
+  || {
+    cat "$f2_scratch/out3" "$f2_scratch/err3" "$f2_scratch/out4" "$f2_scratch/err4" 2> /dev/null
+    echo "FAIL-D-USAGE-CHANNEL (exit=$f2c3/$f2c4)"
+    rm -rf "$f2_scratch"
+    exit 1
+  }
+rm -rf "$f2_scratch"
+
+# ctxcat id 5: an instance with TWO dictionary binders on the SAME type
+# variable. Round 1's fuel bounded the depth of one resolution PATH,
+# never the total number of resolutions, so this branching shape
+# performed 2^n identical sub-resolutions while fuel grew only linearly
+# in the depth: the belt could not fire and the file took 32.82s at
+# n = 20 (7.43s at 18, 0.41s at 14). With fuel threaded as a BUDGET the
+# whole walk is bounded by inst_fuel. The round-2 oracle was "resolve or
+# report Inst_depth, never hang", accepting either exact outcome so that
+# adding a (class, key) memo would flip this gate DELIBERATELY rather
+# than silently.
+#
+# M4 fixes round 3 (opus R3-1): the memo landed, so this is that
+# deliberate flip. The oracle is now RESOLUTION: exit 0 and the value.
+# An Inst_depth here is a FAIL, because with the memo the budget must
+# not fire on any legitimate input.
+#
+# M4 fixes round 4 (opus R4-1), an AUTHORIZED oracle re-scope plus a
+# move. At nesting 20 the resolved dictionary is a binary tree of 2^20
+# nodes that the mandatory candidate re-check walks as a TREE (Term.t
+# has no sharing), so the leg cost 20.5s idle and 58 to 90s under load:
+# two of three gate-shaped runs hit the 60s watchdog at exit 124. The
+# fixture drops to nesting 16, which still over-pins the nesting-4-to-6
+# regression boundary by an order of magnitude while the term shrinks
+# 16x (measured after the change: 0.97s, so 60s is now about 60x
+# headroom rather than 2.9x). The depth-20 number is kept in the
+# fixture's own header as the M5 hash-consing motivation.
+#
+# M4 fixes round 5 (opus R5-4): this is the LAST leg in the file, so no
+# marker at all sits downstream of it and the round-4 claim is now true
+# as stated. It is the most expensive and the most timing-sensitive leg
+# here, which is exactly why nothing cheap may depend on it.
+out=$("$watchdog" 60 "$ROOT"/_build/default/bin/tot.exe run "$ROOT"/test/fixtures/m4fix-inst-branching.tot 2>&1)
+code=$?
+{ [ "$code" -eq 0 ] && printf '%s\n' "$out" | rg -qx 'true'; } \
+  && echo PASS-M4FIX-INST-BRANCHING \
+  || { printf '%s\n' "$out"; echo "FAIL-M4FIX-INST-BRANCHING (exit=$code)"; exit 1; }
+
 # scratch dir removal now rides the EXIT trap installed at Gate D's top
 exit 0

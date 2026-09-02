@@ -26,6 +26,14 @@ type kind =
   | KLetStar  (** M3 Stage C: "let*", the [bindIO] sugar keyword *)
   | KLetStarDiv  (** M3 Stage C: "let*!", the [bindDiv] sugar keyword *)
   | KPartial  (** M3 Stage C: "partial", follows "rec" in a def header *)
+  | KAxiom  (** M4 Stage B: "axiom", a postulated statement item *)
+  | KClass  (** M4 Stage D: "class", a dictionary-type declaration item *)
+  | KInstance  (** M4 Stage D: "instance", an instance-registration item *)
+  | KAuto  (** M4 Stage D: "auto", an instance-request atom *)
+  | KInst  (** M4 Stage D: "inst", the explicit instance escape hatch *)
+  | LBrace  (** M4 Stage D: "{", opens a class's method list *)
+  | RBrace  (** M4 Stage D: "}", closes a class's method list *)
+  | Semi  (** M4 Stage D: ";", separates a class's methods *)
   | Pipe
   | Ident of string
   | Nat of int
@@ -63,6 +71,14 @@ let describe (k : kind) : string =
   | KLetStar -> "'let*'"
   | KLetStarDiv -> "'let*!'"
   | KPartial -> "'partial'"
+  | KAxiom -> "'axiom'"
+  | KClass -> "'class'"
+  | KInstance -> "'instance'"
+  | KAuto -> "'auto'"
+  | KInst -> "'inst'"
+  | LBrace -> "'{'"
+  | RBrace -> "'}'"
+  | Semi -> "';'"
   | Pipe -> "'|'"
   | Ident s -> Printf.sprintf "identifier %s" s
   | Nat n -> Printf.sprintf "number %d" n

@@ -1,0 +1,17 @@
+-- M4 fixes round 1 (ctxcat ids 1+6): an instance with FOUR dictionary
+-- binders is registrable, so it must also be resolvable.  Fuel sized
+-- from the query's own node count rejected this at Inst_depth.
+class FC1 (0 A : Type 0) := { fc1 : A -> Bool }
+class FC2 (0 A : Type 0) := { fc2 : A -> Bool }
+class FC3 (0 A : Type 0) := { fc3 : A -> Bool }
+class FC4 (0 A : Type 0) := { fc4 : A -> Bool }
+class FCD (0 A : Type 0) := { fcd : A -> Bool }
+data FBox (0 A : Type 0) : Type 0 := | fbox : A -> FBox A
+instance : FC1 Bool := mkFC1 Bool (fun x => x)
+instance : FC2 Bool := mkFC2 Bool (fun x => x)
+instance : FC3 Bool := mkFC3 Bool (fun x => x)
+instance : FC4 Bool := mkFC4 Bool (fun x => x)
+instance : (0 A : Type 0) -> FC1 A -> FC2 A -> FC3 A -> FC4 A -> FCD (FBox A) :=
+  fun A d1 d2 d3 d4 => mkFCD (FBox A) (fun b => true)
+def fourBinders : Bool := fcd (FBox Bool) auto (fbox Bool true)
+eval fourBinders

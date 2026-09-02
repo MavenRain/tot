@@ -11,17 +11,40 @@ let ( let* ) = Result.bind
 let parse_err (loc : Loc.t) (msg : string) : ('a, Serror.t) result =
   Error (Serror.Parse { loc; msg })
 
+(** M4 Stage A: a short, human-readable description of a parsed term's
+    outermost shape, for the data-codomain peel's "expected 'Type',
+    found ..." error (the codomain is peeled from an already-parsed
+    [Syntax.t], not from raw tokens, so [Token.describe] is unavailable
+    there). *)
+let describe_syntax (s : Syntax.t) : string =
+  match s with
+  | Syntax.SVar (_, x) -> "identifier " ^ x
+  | Syntax.SType (_, _) -> "'Type'"
+  | Syntax.SPi (_, _, _, _, _) -> "a function type"
+  | Syntax.SLam (_, _, _) -> "a function"
+  | Syntax.SApp (_, _, _) -> "an application"
+  | Syntax.SLet (_, _, _, _, _) -> "a let expression"
+  | Syntax.SAnn (_, _, _) -> "an annotated term"
+  | Syntax.SMatch (_, _, _, _) -> "a match expression"
+  | Syntax.SStr (_, _) -> "a string literal"
+  | Syntax.SInt (_, n) -> "number " ^ string_of_int n
+  | Syntax.SLetStar (_, _, _, _, _, _, _) -> "a let* expression"
+  | Syntax.SAuto _ -> "'auto'"
+  | Syntax.SInst (_, _, _) -> "an 'inst' expression"
+
 let eof_err : ('a, Serror.t) result =
   (* unreachable: the lexer always materializes an Eof token *)
   parse_err Loc.start "unexpected end of input"
 
 let kind_starts_atom (k : Token.kind) : bool =
   match k with
-  | Token.Ident _ | Token.KType | Token.LParen | Token.Nat _ | Token.Str _ -> true
+  | Token.Ident _ | Token.KType | Token.LParen | Token.Nat _ | Token.Str _ | Token.KAuto -> true
   | Token.RParen | Token.Colon | Token.ColonEq | Token.Arrow | Token.DArrow
   | Token.KFun | Token.KLet | Token.KIn | Token.KDef | Token.KReducible | Token.KEval
   | Token.KCheck | Token.KData | Token.KMatch | Token.KWith | Token.KAs | Token.KReturn
   | Token.KRec | Token.KEnd | Token.KLetStar | Token.KLetStarDiv | Token.KPartial
+  | Token.KAxiom | Token.KClass | Token.KInstance | Token.KInst
+  | Token.LBrace | Token.RBrace | Token.Semi
   | Token.Pipe | Token.Eof ->
       false
 
@@ -64,7 +87,17 @@ let rec parse_term (ts : Token.t list) : (Syntax.t * Token.t list, Serror.t) res
   | { Token.kind = Token.KLetStar; loc } :: rest -> parse_let_star loc ~is_div:false rest
   | { Token.kind = Token.KLetStarDiv; loc } :: rest -> parse_let_star loc ~is_div:true rest
   | { Token.kind = Token.KMatch; loc } :: rest -> parse_match loc rest
+  | { Token.kind = Token.KInst; loc } :: rest -> parse_inst loc rest
   | ({ Token.kind = _; loc = _ } :: _ | []) -> parse_arrow ts
+
+(** "inst C T", pure sugar (D3): [C] and [T] are each ONE atom, the same
+    FALLBACK SHAPE [parse_let_star]'s own two type arguments use (a
+    compound type needs parens, e.g. "inst EqD (List Int)").  This is the
+    whole implementation;  [Elab] does the rest. *)
+and parse_inst (loc : Loc.t) (ts : Token.t list) : (Syntax.t * Token.t list, Serror.t) result =
+  let* c, rest = parse_atom ts in
+  let* t, rest2 = parse_atom rest in
+  Ok (Syntax.SInst (loc, c, t), rest2)
 
 and parse_fun (loc : Loc.t) (ts : Token.t list) :
     (Syntax.t * Token.t list, Serror.t) result =
@@ -146,6 +179,37 @@ and parse_match (loc : Loc.t) (ts : Token.t list) :
   | { Token.kind = Token.KWith; loc = _ } :: rest2 ->
       let* branches, rest3 = parse_branches rest2 [] in
       Ok (Syntax.SMatch (loc, scrut, None, branches), rest3)
+  (* M4 Stage A: "as x in I y1 .. ym return P". The index clause sits
+     INSIDE the motive clause, after "as x", so it cannot collide with a
+     "let .. in .." scrutinee (which [parse_term] has already fully
+     consumed by the time this arm looks for 'in'). *)
+  | { Token.kind = Token.KAs; loc = _ }
+    :: { Token.kind = Token.Ident x; loc = _ }
+    :: { Token.kind = Token.KIn; loc = _ }
+    :: { Token.kind = Token.Ident iname; loc = _ }
+    :: rest2 ->
+      let idx_names, rest3 = collect_idents rest2 in
+      (match rest3 with
+      | { Token.kind = Token.KReturn; loc = _ } :: rest4 ->
+          let* motive, rest5 = parse_term rest4 in
+          (match rest5 with
+          | { Token.kind = Token.KWith; loc = _ } :: rest6 ->
+              let* branches, rest7 = parse_branches rest6 [] in
+              let sm : Syntax.smotive =
+                {
+                  Syntax.sm_self = x;
+                  sm_ind = Some iname;
+                  sm_idx = idx_names;
+                  sm_body = motive;
+                }
+              in
+              Ok (Syntax.SMatch (loc, scrut, Some sm, branches), rest7)
+          | { Token.kind; loc = bad_loc } :: _rest ->
+              parse_err bad_loc ("expected 'with', found " ^ Token.describe kind)
+          | [] -> eof_err)
+      | { Token.kind; loc = bad_loc } :: _rest ->
+          parse_err bad_loc ("expected 'return', found " ^ Token.describe kind)
+      | [] -> eof_err)
   | { Token.kind = Token.KAs; loc = _ }
     :: { Token.kind = Token.Ident x; loc = _ }
     :: { Token.kind = Token.KReturn; loc = _ }
@@ -154,12 +218,15 @@ and parse_match (loc : Loc.t) (ts : Token.t list) :
       (match rest3 with
       | { Token.kind = Token.KWith; loc = _ } :: rest4 ->
           let* branches, rest5 = parse_branches rest4 [] in
-          Ok (Syntax.SMatch (loc, scrut, Some (x, motive), branches), rest5)
+          let sm : Syntax.smotive =
+            { Syntax.sm_self = x; sm_ind = None; sm_idx = []; sm_body = motive }
+          in
+          Ok (Syntax.SMatch (loc, scrut, Some sm, branches), rest5)
       | { Token.kind; loc = bad_loc } :: _rest ->
           parse_err bad_loc ("expected 'with', found " ^ Token.describe kind)
       | [] -> eof_err)
   | { Token.kind = Token.KAs; loc = bad_loc } :: _rest ->
-      parse_err bad_loc "expected 'NAME return TYPE' after 'as'"
+      parse_err bad_loc "expected 'NAME [in FAMILY IDX..] return TYPE' after 'as'"
   | { Token.kind; loc = bad_loc } :: _rest ->
       parse_err bad_loc ("expected 'as' or 'with', found " ^ Token.describe kind)
   | [] -> eof_err
@@ -262,6 +329,7 @@ and parse_app_rest (head : Syntax.t) (ts : Token.t list) :
 and parse_atom (ts : Token.t list) : (Syntax.t * Token.t list, Serror.t) result =
   match ts with
   | { Token.kind = Token.Ident x; loc } :: rest -> Ok (Syntax.SVar (loc, x), rest)
+  | { Token.kind = Token.KAuto; loc } :: rest -> Ok (Syntax.SAuto loc, rest)
   | { Token.kind = Token.KType; loc } :: { Token.kind = Token.Nat n; loc = _ } :: rest ->
       Ok (Syntax.SType (loc, n), rest)
   | { Token.kind = Token.KType; loc } :: rest -> Ok (Syntax.SType (loc, 0), rest)
@@ -309,9 +377,24 @@ let rec parse_items (ts : Token.t list) (acc : Syntax.item list) :
   | { Token.kind = Token.KCheck; loc } :: rest ->
       let* tm, rest2 = parse_term rest in
       parse_items rest2 (Syntax.ICheck (loc, tm) :: acc)
+  | { Token.kind = Token.KAxiom; loc }
+    :: { Token.kind = Token.Ident name; loc = _ }
+    :: { Token.kind = Token.Colon; loc = _ }
+    :: rest ->
+      let* ty, rest2 = parse_term rest in
+      parse_items rest2 (Syntax.IAxiom { loc; name; ty } :: acc)
+  | { Token.kind = Token.KAxiom; loc = bad_loc } :: _rest ->
+      parse_err bad_loc "expected 'NAME : TYPE' after 'axiom'"
+  | { Token.kind = Token.KClass; loc } :: rest ->
+      let* item, rest2 = parse_class ~loc rest in
+      parse_items rest2 (item :: acc)
+  | { Token.kind = Token.KInstance; loc } :: rest ->
+      let* item, rest2 = parse_instance ~loc rest in
+      parse_items rest2 (item :: acc)
   | { Token.kind; loc = bad_loc } :: _rest ->
       parse_err bad_loc
-        ("expected 'def', 'reducible', 'data', 'eval', or 'check', found "
+        ("expected 'def', 'reducible', 'data', 'eval', 'check', 'axiom', 'class', or \
+          'instance', found "
         ^ Token.describe kind)
   | [] -> eof_err
 
@@ -324,13 +407,13 @@ and parse_def ~(loc : Loc.t) ~(reducible : bool) (ts : Token.t list) :
     (Syntax.item * Token.t list, Serror.t) result =
   match ts with
   | { Token.kind = Token.KRec; loc = _ } :: { Token.kind = Token.KPartial; loc = _ } :: rest ->
-      parse_def_body ~loc ~reducible ~rec_:true ~partial:true rest
+      parse_def_body ~loc ~reducible ~kind:Syntax.DRecPartial rest
   | { Token.kind = Token.KRec; loc = _ } :: rest ->
-      parse_def_body ~loc ~reducible ~rec_:true ~partial:false rest
+      parse_def_body ~loc ~reducible ~kind:Syntax.DRec rest
   | ({ Token.kind = _; loc = _ } :: _ | []) ->
-      parse_def_body ~loc ~reducible ~rec_:false ~partial:false ts
+      parse_def_body ~loc ~reducible ~kind:Syntax.DNonRec ts
 
-and parse_def_body ~(loc : Loc.t) ~(reducible : bool) ~(rec_ : bool) ~(partial : bool)
+and parse_def_body ~(loc : Loc.t) ~(reducible : bool) ~(kind : Syntax.defkind)
     (ts : Token.t list) : (Syntax.item * Token.t list, Serror.t) result =
   match ts with
   | { Token.kind = Token.Ident name; loc = _ }
@@ -340,7 +423,7 @@ and parse_def_body ~(loc : Loc.t) ~(reducible : bool) ~(rec_ : bool) ~(partial :
       (match rest2 with
       | { Token.kind = Token.ColonEq; loc = _ } :: rest3 ->
           let* def, rest4 = parse_term rest3 in
-          Ok (Syntax.IDef { loc; name; reducible; rec_; partial; ty; def }, rest4)
+          Ok (Syntax.IDef { loc; name; reducible; kind; ty; def }, rest4)
       | { Token.kind; loc = bad_loc } :: _rest ->
           parse_err bad_loc ("expected ':=', found " ^ Token.describe kind)
       | [] -> eof_err)
@@ -349,9 +432,14 @@ and parse_def_body ~(loc : Loc.t) ~(reducible : bool) ~(rec_ : bool) ~(partial :
         ("expected 'NAME : TYPE := TERM' after 'def', found " ^ Token.describe kind)
   | [] -> eof_err
 
-(** "data NAME (0 p : T) .. : Type L := | c : CT ..". Parameters are
-    single-binder groups that MUST carry the literal 0 marker; the level
-    defaults to 0; a data declaration may have zero constructors. *)
+(** "data NAME (0 p : T) .. : IDXTELE Type L := | c : CT ..". Parameters
+    are single-binder groups that MUST carry the literal 0 marker; a data
+    declaration may have zero constructors. M4 Stage A: the codomain
+    (everything between ':' and ':=') is now ONE ordinary term, peeled by
+    [peel_data_codomain] into an index telescope plus the level, which is
+    what lets "Nat -> Type 0" parse as one Nat-typed index (via the same
+    "A -> B" = "(w _ : A) -> B" arrow sugar every other arrow uses) and
+    what retires [parse_data_level]. *)
 and parse_data ~(loc : Loc.t) (ts : Token.t list) :
     (Syntax.item * Token.t list, Serror.t) result =
   match ts with
@@ -359,11 +447,12 @@ and parse_data ~(loc : Loc.t) (ts : Token.t list) :
       let* params, rest2 = parse_data_params rest [] in
       (match rest2 with
       | { Token.kind = Token.Colon; loc = _ } :: rest3 ->
-          let* level, rest4 = parse_data_level rest3 in
+          let* codomain, rest4 = parse_term rest3 in
+          let* indices, level = peel_data_codomain codomain in
           (match rest4 with
           | { Token.kind = Token.ColonEq; loc = _ } :: rest5 ->
               let* ctors, rest6 = parse_ctors rest5 [] in
-              Ok (Syntax.IData { loc; name; params; level; ctors }, rest6)
+              Ok (Syntax.IData { loc; name; params; indices; level; ctors }, rest6)
           | { Token.kind; loc = bad_loc } :: _rest ->
               parse_err bad_loc ("expected ':=', found " ^ Token.describe kind)
           | [] -> eof_err)
@@ -373,6 +462,35 @@ and parse_data ~(loc : Loc.t) (ts : Token.t list) :
   | { Token.kind; loc = bad_loc } :: _rest ->
       parse_err bad_loc ("expected a name after 'data', found " ^ Token.describe kind)
   | [] -> eof_err
+
+(** Peel a data header's codomain: a chain of quantity-0 (or arrow-sugar)
+    Pi binders, each one index, ending in [Type L]. Peel rules, applied
+    left to right: [SType] ends the peel; [SPi (Zero, x, dom, cod)]
+    contributes index [(Zero, x, dom)]; [SPi (Many, "_", dom, cod)] (the
+    "A ->" arrow-sugar shape) contributes [(Zero, "_", dom)] too (an
+    explicitly written "(w _ : T) ->" index is thus silently forced to
+    quantity 0 rather than rejected, a documented SPEC section 6 debt: a
+    NAMED [w] binder, below, IS rejected); any other named [Many] Pi is
+    "data indices must be marked 0"; anything else is "expected
+    'Type'". *)
+and peel_data_codomain (t : Syntax.t) :
+    ((Quantity.t * string * Syntax.t) list * int, Serror.t) result =
+  match t with
+  | Syntax.SType (_loc, level) -> Ok ([], level)
+  | Syntax.SPi (_loc, Quantity.Zero, x, dom, cod) ->
+      let* rest, level = peel_data_codomain cod in
+      Ok ((Quantity.Zero, x, dom) :: rest, level)
+  | Syntax.SPi (_loc, Quantity.Many, "_", dom, cod) ->
+      let* rest, level = peel_data_codomain cod in
+      Ok ((Quantity.Zero, "_", dom) :: rest, level)
+  | Syntax.SPi (loc, Quantity.Many, _x, _dom, _cod) ->
+      parse_err loc "data indices must be marked 0"
+  | ( Syntax.SVar (loc, _) | Syntax.SLam (loc, _, _) | Syntax.SApp (loc, _, _)
+    | Syntax.SLet (loc, _, _, _, _) | Syntax.SAnn (loc, _, _) | Syntax.SMatch (loc, _, _, _)
+    | Syntax.SStr (loc, _) | Syntax.SInt (loc, _) | Syntax.SLetStar (loc, _, _, _, _, _, _)
+    | Syntax.SAuto loc | Syntax.SInst (loc, _, _) ) as
+    s ->
+      parse_err loc ("expected 'Type', found " ^ describe_syntax s)
 
 (** Zero or more "(0 x : T)" parameter groups. After "data NAME" a '('
     can only open a parameter, so no backtracking is needed. *)
@@ -402,17 +520,6 @@ and parse_data_params (ts : Token.t list) (acc : (string * Syntax.t) list) :
       parse_err bad_loc "data parameters must be marked 0"
   | ({ Token.kind = _; loc = _ } :: _ | []) -> Ok (List.rev acc, ts)
 
-(** "Type [L]" in a data header; the level defaults to 0. *)
-and parse_data_level (ts : Token.t list) : (int * Token.t list, Serror.t) result =
-  match ts with
-  | { Token.kind = Token.KType; loc = _ } :: { Token.kind = Token.Nat n; loc = _ } :: rest
-    ->
-      Ok (n, rest)
-  | { Token.kind = Token.KType; loc = _ } :: rest -> Ok (0, rest)
-  | { Token.kind; loc = bad_loc } :: _rest ->
-      parse_err bad_loc ("expected 'Type', found " ^ Token.describe kind)
-  | [] -> eof_err
-
 (** Zero or more "| c : CT" constructor declarations. The list ends at
     the next item keyword or end of input. *)
 and parse_ctors (ts : Token.t list) (acc : (string * Syntax.t) list) :
@@ -432,11 +539,77 @@ and parse_ctors (ts : Token.t list) (acc : (string * Syntax.t) list) :
   | { Token.kind = Token.KData; loc = _ } :: _rest
   | { Token.kind = Token.KEval; loc = _ } :: _rest
   | { Token.kind = Token.KCheck; loc = _ } :: _rest
+  | { Token.kind = Token.KAxiom; loc = _ } :: _rest
+  | { Token.kind = Token.KClass; loc = _ } :: _rest
+  | { Token.kind = Token.KInstance; loc = _ } :: _rest
   | { Token.kind = Token.Eof; loc = _ } :: _rest ->
       Ok (List.rev acc, ts)
   | { Token.kind; loc = bad_loc } :: _rest ->
       parse_err bad_loc
         ("expected '|' or the next item, found " ^ Token.describe kind)
+  | [] -> eof_err
+
+(** "class NAME (0 A : Type L) := { m1 : T1 ; .. ; mn : Tn }" (D3): one
+    parameter binder, forced quantity 0 exactly like a [data] parameter,
+    then at least one "NAME : TYPE" method separated by ';', closed by
+    '}'.  [Run.item] does the whole expansion into an [IData] plus one
+    projection [IDef] per method;  the parser only builds [Syntax.IClass]. *)
+and parse_class ~(loc : Loc.t) (ts : Token.t list) : (Syntax.item * Token.t list, Serror.t) result =
+  match ts with
+  | { Token.kind = Token.Ident name; loc = _ }
+    :: { Token.kind = Token.LParen; loc = _ }
+    :: { Token.kind = Token.Nat 0; loc = _ }
+    :: { Token.kind = Token.Ident a; loc = _ }
+    :: { Token.kind = Token.Colon; loc = _ }
+    :: rest -> (
+      let* ty, rest2 = parse_term rest in
+      match rest2 with
+      | { Token.kind = Token.RParen; loc = _ } :: { Token.kind = Token.ColonEq; loc = _ }
+        :: { Token.kind = Token.LBrace; loc = _ } :: rest3 ->
+          let* methods, rest4 = parse_class_methods rest3 [] in
+          Ok (Syntax.IClass { loc; name; param = (a, ty); methods }, rest4)
+      | { Token.kind; loc = bad_loc } :: _rest ->
+          parse_err bad_loc ("expected ') := {', found " ^ Token.describe kind)
+      | [] -> eof_err)
+  | { Token.kind; loc = bad_loc } :: _rest ->
+      parse_err bad_loc
+        ("expected 'NAME (0 A : TYPE)' after 'class', found " ^ Token.describe kind)
+  | [] -> eof_err
+
+(** At least one "NAME : TYPE" method, ';'-separated, closed by '}'. *)
+and parse_class_methods (ts : Token.t list) (acc : (string * Syntax.t) list) :
+    ((string * Syntax.t) list * Token.t list, Serror.t) result =
+  match ts with
+  | { Token.kind = Token.Ident m; loc = _ } :: { Token.kind = Token.Colon; loc = _ } :: rest ->
+      let* ty, rest2 = parse_term rest in
+      (match rest2 with
+      | { Token.kind = Token.Semi; loc = _ } :: rest3 -> parse_class_methods rest3 ((m, ty) :: acc)
+      | { Token.kind = Token.RBrace; loc = _ } :: rest3 -> Ok (List.rev ((m, ty) :: acc), rest3)
+      | { Token.kind; loc = bad_loc } :: _rest ->
+          parse_err bad_loc ("expected ';' or '}', found " ^ Token.describe kind)
+      | [] -> eof_err)
+  | { Token.kind; loc = bad_loc } :: _rest ->
+      parse_err bad_loc ("expected 'NAME : TYPE' in a class method, found " ^ Token.describe kind)
+  | [] -> eof_err
+
+(** "instance : TY := TERM" (D3). [Run.item] walks [ty]'s own parsed
+    codomain spine to name the mangled registration target;  the parser
+    only builds [Syntax.IInstance]. *)
+and parse_instance ~(loc : Loc.t) (ts : Token.t list) :
+    (Syntax.item * Token.t list, Serror.t) result =
+  match ts with
+  | { Token.kind = Token.Colon; loc = _ } :: rest -> (
+      let* ty, rest2 = parse_term rest in
+      match rest2 with
+      | { Token.kind = Token.ColonEq; loc = _ } :: rest3 ->
+          let* def, rest4 = parse_term rest3 in
+          Ok (Syntax.IInstance { loc; ty; def }, rest4)
+      | { Token.kind; loc = bad_loc } :: _rest ->
+          parse_err bad_loc ("expected ':=', found " ^ Token.describe kind)
+      | [] -> eof_err)
+  | { Token.kind; loc = bad_loc } :: _rest ->
+      parse_err bad_loc
+        ("expected ': TYPE := TERM' after 'instance', found " ^ Token.describe kind)
   | [] -> eof_err
 
 let parse (ts : Token.t list) : (Syntax.item list, Serror.t) result = parse_items ts []

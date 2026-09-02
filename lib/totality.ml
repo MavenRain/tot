@@ -15,7 +15,7 @@ type status =
 let rec peel (n : int) (t : Term.t) : int * Term.t =
   match t with
   | Term.Lam (_q, _x, b) -> peel (n + 1) b
-  | Term.Var _ | Term.Univ _
+  | Term.Var _ | Term.Univ _ | Term.Auto
   | Term.Pi (_, _, _, _)
   | Term.App (_, _, _)
   | Term.Let (_, _, _, _)
@@ -27,7 +27,7 @@ let rec peel (n : int) (t : Term.t) : int * Term.t =
 let rec spine (t : Term.t) (args : Term.t list) : Term.t * Term.t list =
   match t with
   | Term.App (_q, f, a) -> spine f (a :: args)
-  | Term.Var _ | Term.Univ _
+  | Term.Var _ | Term.Univ _ | Term.Auto
   | Term.Pi (_, _, _, _)
   | Term.Lam (_, _, _)
   | Term.Let (_, _, _, _)
@@ -45,6 +45,7 @@ let rec mentions (name : string) (t : Term.t) : bool =
   | Term.Var _ -> false
   | Term.Univ _ -> false
   | Term.Lit _ -> false
+  | Term.Auto -> false
   | Term.Global g -> String.equal g name
   | Term.Pi (_q, _x, dom, cod) -> mentions name dom || mentions name cod
   | Term.Lam (_q, _x, body) -> mentions name body
@@ -52,9 +53,11 @@ let rec mentions (name : string) (t : Term.t) : bool =
   | Term.Let (_x, ty, def, body) ->
       mentions name ty || mentions name def || mentions name body
   | Term.Ann (tm, ty) -> mentions name tm || mentions name ty
-  | Term.Match { scrut; motive; branches } ->
+  | Term.Match { scrut; scrut_q = _; motive; branches } ->
       mentions name scrut
-      || (motive |> Option.fold ~none:false ~some:(fun (_x, mot) -> mentions name mot))
+      || (motive
+         |> Option.fold ~none:false ~some:(fun (mo : Term.motive) ->
+                mentions name mo.Term.m_body))
       || List.exists (fun (_c, _binders, body) -> mentions name body) branches
 
 let status_at (st : status list) (ix : int) : status option = List.nth_opt st ix
@@ -81,7 +84,7 @@ let passes ~(recname : string) (k : int) (formals : int) (body : Term.t) : bool 
     |> Option.fold ~none:false ~some:(fun a ->
            match a with
            | Term.Var ix -> smaller_at st ix
-           | Term.Univ _
+           | Term.Univ _ | Term.Auto
            | Term.Pi (_, _, _, _)
            | Term.Lam (_, _, _)
            | Term.App (_, _, _)
@@ -95,6 +98,7 @@ let passes ~(recname : string) (k : int) (formals : int) (body : Term.t) : bool 
     | Term.Var _ -> true
     | Term.Univ _ -> true
     | Term.Lit _ -> true
+    | Term.Auto -> true
     (* a bare (unapplied) occurrence of the rec global always fails *)
     | Term.Global g -> not (String.equal g recname)
     | Term.App (_q, _f, _a) ->
@@ -103,7 +107,7 @@ let passes ~(recname : string) (k : int) (formals : int) (body : Term.t) : bool 
           match head with
           | Term.Global g when String.equal g recname -> guarded_call st args
           | Term.Global _ -> true
-          | Term.Var _ | Term.Univ _ | Term.Lit _ -> true
+          | Term.Var _ | Term.Univ _ | Term.Lit _ | Term.Auto -> true
           | Term.Pi (_, _, _, _)
           | Term.Lam (_, _, _)
           | Term.App (_, _, _) (* unreachable: [spine] never returns an App head *)
@@ -117,11 +121,11 @@ let passes ~(recname : string) (k : int) (formals : int) (body : Term.t) : bool 
     | Term.Lam (_q, _x, b) -> ok (Other :: st) b
     | Term.Let (_x, ty, def, b) -> ok st ty && ok st def && ok (Other :: st) b
     | Term.Ann (tm, ty) -> ok st tm && ok st ty
-    | Term.Match { scrut; motive; branches } ->
+    | Term.Match { scrut; scrut_q = _; motive; branches } ->
         let scrut_special =
           match scrut with
           | Term.Var ix -> principal_or_smaller_at st ix
-          | Term.Univ _
+          | Term.Univ _ | Term.Auto
           | Term.Pi (_, _, _, _)
           | Term.Lam (_, _, _)
           | Term.App (_, _, _)
@@ -131,8 +135,17 @@ let passes ~(recname : string) (k : int) (formals : int) (body : Term.t) : bool 
               false
         in
         let binder_status = if scrut_special then Smaller else Other in
+        (* M4 Stage A: the motive body is walked under [m + 1] binders of
+           status [Other] (one per index binder, plus the scrutinee
+           binder); indices add no branch binders, so [branch_ok] below
+           stays byte-for-byte M2's. *)
         let motive_ok =
-          motive |> Option.fold ~none:true ~some:(fun (_x, mot) -> ok (Other :: st) mot)
+          motive
+          |> Option.fold ~none:true ~some:(fun (mo : Term.motive) ->
+                 let st_m =
+                   List.fold_left (fun acc _y -> Other :: acc) (Other :: st) mo.Term.m_idx
+                 in
+                 ok st_m mo.Term.m_body)
         in
         let branch_ok (_c, binders, bbody) =
           let st' = List.fold_left (fun acc _b -> binder_status :: acc) st binders in

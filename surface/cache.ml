@@ -5,7 +5,13 @@
     Key: [Digest.string] (MD5; total, never raises) of the prelude
     SOURCE BYTES concatenated with this module's own compiled-in
     [format_version] AND the MD5 digest of the RUNNING BINARY's own
-    contents ([exe_digest_hex]; M3 fixes round 2, R1).  The binary
+    contents ([exe_digest_hex]; M3 fixes round 2, R1;  restored in M4
+    fixes round 1 after Stage D's D5.3 had weakened it to a [Unix.stat]
+    digest, which is metadata and therefore forgeable: an audit produced
+    two byte-different binaries sharing one inode, size and mtime, and
+    the second one LOADED the first one's blob.  The stat fields survive
+    only as the memo KEY of a fast path that skips re-hashing, never as
+    the identity itself;  see [exe_digest_hex]).  The binary
     digest is the load-bearing fence: the round-2 re-probe proved that
     [format_version] alone cannot detect layout drift (two binaries
     sharing a version but differing in one marshaled payload type
@@ -89,8 +95,27 @@ open Tot_kernel
     digest, and run mode now stores every prelude def as a
     [GDeferred] thunk, so the marshaled [gval] contents changed.
     Since R1 the version bump is belt-and-suspenders only: the
-    executable digest already keys and fences every blob. *)
-let format_version : int = 5
+    executable digest already keys and fences every blob. Bumped 5 -> 6
+    (M4 Stage A): [Term.t] gained [Auto] and [Match]'s payload gained
+    [scrut_q] plus the [motive] record (was a bare binder tuple);
+    [Value.stuck_match]'s motive payload changed the same way;
+    [Global.ind_entry] gained [indices] and its [ctor_names] became the
+    three-state [ctors : ctor_status]; [Global.ctor_entry] gained
+    [res_idx], [full_arity] and [self_rec]. Bumped 6 -> 7 (M4 Stage B):
+    [Global.entry] gained the [Axiom] constructor. Bumped 7 -> 8 (M4
+    Stage C): [Interp.gentry]'s [grec_arg : int option] became
+    [gguard : Interp.guard], the three-state [Unguarded | GuardedAt of
+    int | Frozen] runtime unfolding guard. Bumped 8 -> 9 (M4 Stage D,
+    D5.3): no marshaled OCaml type changed (classes are ordinary [Ind],
+    [Ctor] and [Def] entries, and [Syntax.defkind] is not marshaled);
+    the bump is for the cache HEADER's exe-identity field, whose MEANING
+    changed from a full-file MD5 to a device/inode/mtime/size stat
+    digest (see [exe_digest_hex]).  Bumped 9 -> 10 (M4 fixes round 1,
+    audit F1): no marshaled OCaml type changed and the header SHAPE is
+    the same 32 hex chars, but the exe-identity field's meaning returns
+    to the full-file MD5, so every stat-identity blob a version-9 binary
+    wrote must be orphaned rather than read. *)
+let format_version : int = 10
 
 (** On-disk layout (M3 fixes, B2; round 2, R1): [magic] (8 ASCII
     bytes), the fixed-width [format_version] (8 ASCII decimal digits,
@@ -107,27 +132,6 @@ let digest_width : int = 32
 let exe_width : int = 32
 let header_width : int = magic_width + version_width + digest_width + exe_width
 let version_field : string = Printf.sprintf "%0*d" version_width format_version
-
-(** The MD5 digest (hex) of the running binary's own contents, read
-    once per process on first use (M3 fixes round 2, R1): the fence
-    that binds every cache blob to the EXACT executable, folded into
-    the key by [key] and verified against the header field by [load].
-    [Digest.file] opens and reads [Sys.executable_name], so it can
-    raise [Sys_error] (an unlinked or unreadable binary image); on
-    that one failure the cache is DISABLED for the whole run ([load]
-    misses, [save] no-ops), with a single loud stderr line, never a
-    crash and never a digestless blob. *)
-let exe_digest_hex : string option Lazy.t =
-  lazy
-    (match Digest.file Sys.executable_name with
-    | exception Sys_error _ ->
-        let () =
-          prerr_endline
-            ("tot: prelude cache disabled for this run: cannot read the executable at "
-           ^ Sys.executable_name)
-        in
-        None
-    | d -> Some (Digest.to_hex d))
 
 (** [~/.cache/tot], or [TOT_CACHE_DIR] when set. A Stage D test-
     isolation fill-in this module's own doc comment names: the plan
@@ -165,20 +169,6 @@ let cache_dir_opt : string option Lazy.t =
 
 let cache_dir () : string option = Lazy.force cache_dir_opt
 
-let file_path (dir : string) (key : string) : string =
-  Filename.concat dir ("prelude-" ^ key ^ ".bin")
-
-(** The cache key: prelude source bytes plus [format_version] plus the
-    running binary's own digest (M3 fixes round 2, R1), folded through
-    one [Digest.string] call (MD5; a total function, it never raises).
-    When [exe_digest_hex] is unavailable the cache is disabled anyway
-    ([load]/[save] below), so the placeholder key never names a file
-    that gets read or written. *)
-let key (prelude_src : string) : string =
-  let exe = Lazy.force exe_digest_hex |> Option.value ~default:"exe-digest-unavailable" in
-  Digest.to_hex
-    (Digest.string (prelude_src ^ "\x00" ^ string_of_int format_version ^ "\x00" ^ exe))
-
 (** ONE raw call: [mkdir] a single path component. Tolerates "already
     exists" (the expected steady state after the first-ever run) and
     every other host failure alike, by degrading to a no-op rather than
@@ -201,6 +191,159 @@ let rec ensure_dir (dir : string) : unit =
   | () ->
       let () = ensure_dir (Filename.dirname dir) in
       mkdir_one dir
+
+(** M4 fixes round 1 (audit F1): the running binary's stat SIGNATURE,
+    the memo key of [exe_digest_hex]'s fast path.  FIVE fields, not the
+    four Stage D's D5.3 hashed AS the identity: [st_ctime] joins them
+    because it is the one field userspace cannot restore.  [utimes]
+    (what `touch -r` and a reproducible-build install step call) resets
+    mtime but BUMPS ctime, so overwriting one inode in place, the
+    audit's own recipe for two byte-different binaries sharing a blob,
+    misses the memo and re-hashes the content.  A signature is only ever
+    a reason to SKIP work that a previous run already did;  it is never
+    the identity, and the ONE way it can serve a wrong answer is a memo
+    HIT on a binary whose bytes changed while all five fields stayed
+    equal, which is the residual SPEC.md section 6 records and
+    dev/gates.sh's PASS-CACHE-EXEID-MEMO comment argues has no
+    unprivileged construction on this platform.
+
+    M4 fixes round 5 (ctxcat r5 id 9): the timestamps are rendered
+    LOSSLESSLY ([%.17g]), not to six decimals.  [%.6f] is microsecond
+    resolution, and [st_mtime]/[st_ctime] are floats carrying whatever
+    the filesystem provides: APFS and ext4 both provide NANOSECONDS, so
+    two writes less than a microsecond apart produced two DISTINCT
+    floats that [%.6f] rendered as the same string.  That was real
+    information the kernel gave us and the rendering threw away.
+    [%.17g] round-trips a float exactly, so the signature now
+    distinguishes every pair of timestamps the OS itself distinguishes.
+    It does NOT close the residual above, and no rendering can: on a
+    filesystem or mount whose observed ctime does not move on an
+    in-place overwrite, the two timestamps are genuinely EQUAL and
+    there is nothing left to render.  That exposure is a property of
+    the clock, not of this format string. *)
+let exe_stat_signature () : string option =
+  match Unix.stat Sys.executable_name with
+  | st ->
+      Some
+        (Printf.sprintf "%d:%d:%.17g:%.17g:%d" st.Unix.st_dev st.Unix.st_ino st.Unix.st_mtime
+           st.Unix.st_ctime st.Unix.st_size)
+  | exception Unix.Unix_error (_, _, _) -> None
+
+(** Where the memo for THIS executable path lives.  Keyed by the path so
+    two installs sharing one cache directory keep separate memos, and
+    named with a prefix no blob can collide with ([file_path]'s files are
+    "prelude-*.bin"). *)
+let exe_memo_path (dir : string) : string =
+  Filename.concat dir ("exeid-" ^ Digest.to_hex (Digest.string Sys.executable_name) ^ ".txt")
+
+(** The memoized CONTENT digest for [signature], or [None] when there is
+    no memo, it is unreadable, it is malformed, or it was written for a
+    different signature.  Every one of those degrades to a re-hash. *)
+let read_exe_memo (dir : string) (signature : string) : string option =
+  let path = exe_memo_path dir in
+  if not (Sys.file_exists path) then None
+  else
+    match In_channel.with_open_text path In_channel.input_lines with
+    | exception Sys_error _ -> None
+    | [ got_sig; got_hex ]
+      when String.equal got_sig signature && Int.equal (String.length got_hex) digest_width ->
+        Some got_hex
+    | [] | _ :: _ -> None
+
+(** Record "this signature was content-verified to have this digest".
+    Best effort, exactly like [save]: write to a temp file in the same
+    directory and rename it into place, unlink the temp file on either
+    failure, never raise. *)
+let write_exe_memo (dir : string) (signature : string) (hex : string) : unit =
+  let () = ensure_dir dir in
+  let path = exe_memo_path dir in
+  let tmp = path ^ ".tmp" ^ string_of_int (Unix.getpid ()) in
+  let remove_tmp () : unit = match Sys.remove tmp with exception Sys_error _ -> () | () -> () in
+  match
+    Out_channel.with_open_text tmp (fun oc ->
+        Out_channel.output_string oc (signature ^ "\n" ^ hex ^ "\n"))
+  with
+  | exception Sys_error _ -> remove_tmp ()
+  | () -> (
+      match Sys.rename tmp path with exception Sys_error _ -> remove_tmp () | () -> ())
+
+(** [TOT_CACHE_VERIFY=1] also makes the identity path announce WHICH
+    branch produced the digest, so dev/gates.sh can pin the fast path
+    itself instead of inferring it from a timing.  Quiet otherwise. *)
+let exe_verify_flag : bool Lazy.t =
+  lazy (Sys.getenv_opt "TOT_CACHE_VERIFY" |> Option.fold ~none:false ~some:(String.equal "1"))
+
+let exe_marker (line : string) : unit =
+  if Lazy.force exe_verify_flag then prerr_endline line else ()
+
+(** Hash the executable's own bytes, the TRUE identity, and record the
+    result in the memo for the next run.  Fail CLOSED: when the bytes
+    cannot be read (an execute-only install, M3 fixes round 3, O4) the
+    cache is DISABLED for the whole run ([load] misses, [save] no-ops)
+    with a single loud stderr line, never a crash and never a blob whose
+    identity field was derived without reading the binary. *)
+let exe_content_digest () : string option =
+  match Digest.file Sys.executable_name with
+  | d ->
+      let hex = Digest.to_hex d in
+      let () = exe_marker "TOT-CACHE-EXEID-CONTENT" in
+      let () =
+        cache_dir ()
+        |> Option.iter (fun dir ->
+               exe_stat_signature () |> Option.iter (fun s -> write_exe_memo dir s hex))
+      in
+      Some hex
+  | exception Sys_error _ ->
+      let () =
+        prerr_endline
+          ("tot: prelude cache disabled for this run: cannot read the executable at "
+         ^ Sys.executable_name)
+      in
+      None
+
+(** The running binary's own IDENTITY digest (hex), computed once per
+    process on first use (M3 fixes round 2, R1;  M4 fixes round 1, audit
+    F1): the fence that binds every cache blob to the EXACT executable,
+    folded into the key by [key] and verified against the header field by
+    [load].  The identity IS [Digest.file]'s content hash.  The
+    [Unix.stat] signature is a MEMO key only: when it matches what a
+    previous, content-verified run recorded, the ~3.3ms re-hash is
+    skipped;  an absent, unreadable, malformed or mismatched memo, or an
+    unavailable cache directory, re-hashes the content.  So two
+    byte-different binaries can never share a blob (their content
+    digests differ, and only the re-hash can produce the recorded one),
+    which is precisely the property D5.3's stat-AS-identity shape lost.
+    Each raising call is guarded RIGHT THERE, by its own named exception,
+    per the module's own house style. *)
+let exe_digest_hex : string option Lazy.t =
+  lazy
+    (let memoed =
+       cache_dir ()
+       |> Option.fold ~none:None ~some:(fun dir ->
+              exe_stat_signature ()
+              |> Option.fold ~none:None ~some:(fun signature -> read_exe_memo dir signature))
+     in
+     (memoed
+     |> Option.fold
+          ~none:(fun () -> exe_content_digest ())
+          ~some:(fun (hex : string) () ->
+            let () = exe_marker "TOT-CACHE-EXEID-MEMO" in
+            Some hex))
+       ())
+
+let file_path (dir : string) (key : string) : string =
+  Filename.concat dir ("prelude-" ^ key ^ ".bin")
+
+(** The cache key: prelude source bytes plus [format_version] plus the
+    running binary's own digest (M3 fixes round 2, R1), folded through
+    one [Digest.string] call (MD5; a total function, it never raises).
+    When [exe_digest_hex] is unavailable the cache is disabled anyway
+    ([load]/[save] below), so the placeholder key never names a file
+    that gets read or written. *)
+let key (prelude_src : string) : string =
+  let exe = Lazy.force exe_digest_hex |> Option.value ~default:"exe-digest-unavailable" in
+  Digest.to_hex
+    (Digest.string (prelude_src ^ "\x00" ^ string_of_int format_version ^ "\x00" ^ exe))
 
 (** Split a whole-file read into its four fixed-width header fields
     and the body after them. [None] when the file is shorter than

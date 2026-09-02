@@ -30,6 +30,17 @@ type t =
           in BOTH check and run modes, carrying the printed type.  A
           MISSPELLED main stays silent (documented SPEC section 6
           residual; a strict driver flag is M4 work). *)
+  | Axioms_disabled of {
+      loc : Loc.t;
+      name : string;
+    }  (** M4 Stage B: an [axiom] item under [--no-axioms]. Installation
+          POLICY, not a kernel notion: the flag applies to the USER file
+          only, never to the prelude ([Bootstrap.fold_prelude_items] always
+          folds with [Run.default_policy]). *)
+  | Missing_main
+      (** M4 Stage D (D5.2): [--require-main] was given and the script
+          defines no [main].  Installation POLICY, like [Axioms_disabled]
+          above: the driver flag applies to the USER file only. *)
 
 let to_string (e : t) : string =
   match e with
@@ -46,6 +57,10 @@ let to_string (e : t) : string =
         "main is a reserved driver name: its type must convert to IO Verdict or IO Unit, \
          got %s"
         ty
+  | Axioms_disabled { loc; name } ->
+      Printf.sprintf "%s: axiom %s rejected: this installation runs with --no-axioms"
+        (Loc.to_string loc) name
+  | Missing_main -> "this file must define a driver main, and it does not"
 
 let tag (e : t) : string =
   match e with
@@ -55,3 +70,5 @@ let tag (e : t) : string =
   | Bad_level _ -> "Bad_level"
   | Kernel { loc = _loc; err } -> "Kernel." ^ Tot_kernel.Error.tag err
   | Main_bad_type _ -> "Main_bad_type"
+  | Axioms_disabled _ -> "Axioms_disabled"
+  | Missing_main -> "Missing_main"

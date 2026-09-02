@@ -87,7 +87,7 @@ let rec kept_pi_count (s : Syntax.t) : int =
   | Syntax.SVar (_, _) | Syntax.SType (_, _) | Syntax.SLam (_, _, _)
   | Syntax.SApp (_, _, _) | Syntax.SLet (_, _, _, _, _) | Syntax.SAnn (_, _, _)
   | Syntax.SMatch (_, _, _, _) | Syntax.SStr (_, _) | Syntax.SInt (_, _)
-  | Syntax.SLetStar (_, _, _, _, _, _, _) ->
+  | Syntax.SLetStar (_, _, _, _, _, _, _) | Syntax.SAuto _ | Syntax.SInst (_, _, _) ->
       0
 
 (** Phase-1 prims: their source-text type mentions only builtins. M3
@@ -190,8 +190,7 @@ let phase1 () : (Run.state, Serror.t) result =
       (fun acc (name, params) ->
         let* st = acc in
         let* globals =
-          Run.kernel Loc.start
-            (Check.declare_ind st.Run.globals ~name ~params ~level:Level.zero)
+          Run.kernel Loc.start (Check.declare_builtin st.Run.globals ~name ~params)
         in
         let eglobals = Interp.add_erased st.Run.eglobals ~name in
         Ok { st with Run.globals; eglobals })
@@ -246,15 +245,45 @@ let default_prelude_path () : string =
 let prelude_path () : string =
   Sys.getenv_opt "TOT_PRELUDE" |> Option.value ~default:(default_prelude_path ())
 
-(** Read the prelude source. [Sys.file_exists] turns the common
-    missing-file case into a clean [Result] error; the residual
-    raise-on-permission-race inside [In_channel.with_open_text] is the
-    SAME documented SPEC debt [bin/tot.ml]'s own file read already
-    accepts (an unguarded read, not a caught host-boundary exception),
-    not a new one this milestone adds. *)
+(** M4 fixes round 3 (opus R3-2): the prelude PATH's own usability,
+    classified by exactly the precheck [bin/tot.ml] applies to the
+    TARGET file ([Source.read]), and returned with the path so the
+    driver can name it. The driver routes this OUTSIDE the
+    [--serror-exit] mapping, because an unusable prelude path is a
+    verdict about the INSTALLATION, not about the script's content.
+    Returns the bytes on success, so the caller can hand them to
+    [cached_state_of_src] and the prelude is read once. M4 fixes round
+    4 (opus R4-2): "read once" is TRUE from round 4 on. Under round 3
+    the miss branch of [cached_state_of_src] re-read the path, so these
+    bytes only ever became the cache KEY; [state_of_src] now elaborates
+    them too. *)
+let prelude_source () : (string, string * Source.error) result =
+  let path = prelude_path () in
+  Source.read path |> Result.map_error (fun (e : Source.error) -> (path, e))
+
+(** Read the prelude source for the IN-BAND callers ([state ()], which
+    test/surface.ml and test/main.ml drive directly): every failure is a
+    [Serror], never a raise and never a block.
+
+    M4 fixes round 3 (opus R3-2): round 2 guarded on [Sys.file_exists]
+    alone and then read unguarded, which is TRUE for a directory, for a
+    FIFO and for a regular file with no read permission -- the three
+    sibling shapes round 2 had just closed for [bin/tot.ml]'s own target
+    read. This is the fourth sibling, and it shares the fix rather than
+    re-deriving it. The docstring this replaces cited "the SAME
+    documented SPEC debt [bin/tot.ml]'s own file read already accepts";
+    that debt was retired IN PLACE by round 2, so the citation pointed
+    at a retired entry while the raise it excused was still live. *)
 let read_prelude_src (path : string) : (string, Serror.t) result =
-  if Sys.file_exists path then Ok (In_channel.with_open_text path In_channel.input_all)
-  else Error (Serror.Lex { loc = Loc.start; msg = "prelude not found: " ^ path })
+  Source.read path
+  |> Result.map_error (fun (e : Source.error) ->
+         let msg =
+           match e with
+           | Source.Missing -> "prelude not found: " ^ path
+           | Source.Not_regular -> "prelude is not a regular file: " ^ path
+           | Source.Unreadable -> "prelude cannot be read: " ^ path
+         in
+         Serror.Lex { loc = Loc.start; msg })
 
 (** The [Syntax.item]'s own declared name, when it has one; used only
     to locate [state ()]'s two prelude-fold split points by NAME
@@ -264,6 +293,10 @@ let item_name (it : Syntax.item) : string option =
   match it with
   | Syntax.IDef { name; _ } -> Some name
   | Syntax.IData { name; _ } -> Some name
+  | Syntax.IAxiom { name; _ } -> Some name
+  | Syntax.IClass { name; _ } -> Some name
+  | Syntax.IInstance { ty; _ } ->
+      Run.instance_key ty |> Option.map (fun (c, k) -> "inst$" ^ c ^ "$" ^ k)
   | Syntax.ICheck (_, _) | Syntax.IEval (_, _) -> None
 
 (** Split [items] right after the FIRST item named [target]: [Some
@@ -284,8 +317,23 @@ let split_after_name (target : string) (items : Syntax.item list) :
   in
   go [] items
 
-let fold_items (st : Run.state) (items : Syntax.item list) : (Run.state, Serror.t) result =
-  List.fold_left (fun acc it -> let* s = acc in Run.item ~exec:true s it) (Ok st) items
+(* M4 Stage B: [default_policy] here is load-bearing, not merely a
+   filled-in default: [--no-axioms] applies to the USER file only, and
+   the prelude's own monad-law axioms (stdlib/prelude.tot) must always
+   fold regardless of the driver's flag, or every hook installation
+   that runs with [--no-axioms] would lose its prelude.
+
+   M4 fixes round 5 (ctxcat r5 id 6): the name says PRELUDE now.  The
+   old name was policy-neutral.  The hardcoded policy is correct for the one caller
+   this has, folding stdlib/prelude.tot, and wrong for any other:
+   reused for user-script items it would silently defeat [--no-axioms]
+   for them too.  The NAME now carries that restriction to every future
+   call site, so the hardcoding cannot be inherited by accident. *)
+let fold_prelude_items (st : Run.state) (items : Syntax.item list) :
+    (Run.state, Serror.t) result =
+  List.fold_left
+    (fun acc it -> let* s = acc in Run.item ~exec:true ~policy:Run.default_policy s it)
+    (Ok st) items
 
 (** Run [phase1], then fold [stdlib/prelude.tot] and seed the
     remaining phases TOGETHER, interleaved (M3 Stage C): the prelude's
@@ -306,10 +354,31 @@ let fold_items (st : Run.state) (items : Syntax.item list) : (Run.state, Serror.
     lines reset ONCE, at the very end, so the prelude's own output
     never leaks into a script's; [verify_required_ctors] runs last,
     once every phase has seeded and every segment has folded. Tests
-    use this from Stage A on. *)
-let state () : (Run.state, Serror.t) result =
+    use this from Stage A on.
+
+    M4 fixes round 4 (opus R4-2): split into [state_of_src], which
+    elaborates the bytes it is GIVEN, and [state ()], which reads the
+    prelude and hands them over. Round 3 documented in three places
+    that the prelude is read exactly once per invocation, and on a
+    cache MISS it was read twice: the driver's precheck read it (read
+    1, whose bytes became [Cache.key]) and this function read it again
+    (read 2, whose bytes were elaborated). Two consequences, both
+    reproduced on the round-3 binary. (a) The fail-open R3-2 closed was
+    still reachable: read 1's failure is a driver verdict outside the
+    [--serror-exit] mapping, but read 2's failure is a [Serror.Lex]
+    INSIDE it, so a prelude that vanished between the two reads exited
+    0 under [--serror-exit 0] (12 attempts, 12 hits). (b) The cache
+    could be poisoned with no privilege on the cache directory at all:
+    the key came from read 1 and the state from read 2, so a prelude
+    rewritten in between stored, under content A's key, a state content
+    A never produced, and every later run of content A loaded it (5 of
+    8 sampled delays poisoned, [cmp]-verified against content A).
+    Threading one [src] closes both BY CONSTRUCTION, not by narrowing a
+    window: the key and the elaborated content are now the same bytes,
+    and there is no second [read_prelude_src] on the driver's path to
+    fail inside the mapping. *)
+let state_of_src (src : string) : (Run.state, Serror.t) result =
   let* st1 = phase1 () in
-  let* src = read_prelude_src (prelude_path ()) in
   let* tokens = Lexer.lex src in
   let* syn_items = Parser.parse tokens in
   let not_found (marker : string) : Serror.t =
@@ -320,12 +389,20 @@ let state () : (Run.state, Serror.t) result =
     split_after_name "foldNat" syn_items |> Option.to_result ~none:(not_found "foldNat")
   in
   let* seg2, seg3 = split_after_name "Json" rest1 |> Option.to_result ~none:(not_found "Json") in
-  let* st_a = fold_items st1 seg1 in
+  let* st_a = fold_prelude_items st1 seg1 in
   let* st_b = phase2 st_a in
-  let* st_c = fold_items st_b seg2 in
+  let* st_c = fold_prelude_items st_b seg2 in
   let* st_d = phase3 st_c in
-  let* st_e = fold_items st_d seg3 in
+  let* st_e = fold_prelude_items st_d seg3 in
   verify_required_ctors { st_e with Run.lines = [] }
+
+(** [state_of_src] over the bytes at [prelude_path ()]. The IN-BAND
+    entry point ([test/surface.ml] and [test/main.ml] drive it
+    directly); [bin/tot.ml] never calls it, because the driver already
+    holds the bytes and passes them to [cached_state_of_src]. *)
+let state () : (Run.state, Serror.t) result =
+  let* src = read_prelude_src (prelude_path ()) in
+  state_of_src src
 
 (** [TOT_CACHE_VERIFY=1] recomputes [state ()] on every cache HIT too,
     purely to COMPARE against the cached blob, never to replace the
@@ -345,9 +422,24 @@ let cache_verify_flag () : bool =
     calls this once per invocation; test/surface.ml's own tests call
     [state ()] directly, exercising the COLD path on every run (a
     cache hit would only make the SAME assertions faster, never
-    different, given that correctness argument). *)
-let cached_state () : (Run.state, Serror.t) result =
-  let* src = read_prelude_src (prelude_path ()) in
+    different, given that correctness argument).
+
+    M4 fixes round 3 (opus R3-2): split so the driver, which has already
+    classified the prelude path and holds its bytes, does not read the
+    file a second time. [cached_state ()] keeps the old one-call shape
+    for every other caller.
+
+    M4 fixes round 4 (opus R4-2): round 3's split stopped at the cache
+    KEY. The miss branch called [state ()], which re-read the path, so
+    the driver still read the prelude twice on every cold run and the
+    entry written under [Cache.key src] held a state elaborated from
+    DIFFERENT bytes. Both branches now use [src] alone: the miss branch
+    elaborates it with [state_of_src], and [TOT_CACHE_VERIFY=1]
+    recomputes from it too, so the verify comparison is "the state
+    these exact bytes produce" against "the state stored under these
+    exact bytes' key", which is the property [Cache]'s own correctness
+    argument states. *)
+let cached_state_of_src (src : string) : (Run.state, Serror.t) result =
   let cache_key = Cache.key src in
   (* M3 fixes round 2 (ctxcat id 12): dispatch on the load result
      directly ([Option.to_result] + [Result.fold], both branches a
@@ -360,7 +452,7 @@ let cached_state () : (Run.state, Serror.t) result =
        ~ok:(fun (globals, eglobals) ->
          let () =
            if cache_verify_flag () then
-             state ()
+             state_of_src src
              |> Result.fold
                   ~ok:(fun fresh ->
                     let cold_bytes = Marshal.to_string (fresh.Run.globals, fresh.Run.eglobals) [] in
@@ -373,6 +465,10 @@ let cached_state () : (Run.state, Serror.t) result =
          in
          Ok { Run.globals; eglobals; lines = [] })
        ~error:(fun () ->
-         let* st = state () in
+         let* st = state_of_src src in
          let () = Cache.save cache_key st.Run.globals st.Run.eglobals in
          Ok st)
+
+let cached_state () : (Run.state, Serror.t) result =
+  let* src = read_prelude_src (prelude_path ()) in
+  cached_state_of_src src

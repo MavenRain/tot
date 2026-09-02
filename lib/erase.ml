@@ -42,7 +42,27 @@ let rec term (ctx : ctx) (tm : Term.t) : (Eterm.t, Error.t) result =
   | Term.Ann (tm', _ty) -> term ctx tm'
   | Term.Global name -> Ok (Eterm.EGlobal name)
   | Term.Lit l -> Ok (Eterm.ELit l)
-  | Term.Match { scrut; motive = _; branches } ->
+  | Term.Auto ->
+      (* M4 Stage A: unreachable on checker output; [Auto] never survives
+         [Check]. Total backstop. *)
+      Error (Error.Cannot_infer "auto")
+  | Term.Match { scrut = _; scrut_q = Quantity.Zero; motive = _; branches } ->
+      (* M4 Stage A, subsingleton elimination: the family carries no
+         runtime bits (user decision 1), so the scrutinee is dropped
+         entirely. Dropping it is sound because the language is total:
+         the scrutinee is a pure, terminating computation whose value the
+         branch cannot inspect. The checker stamps [scrut_q = Zero] only
+         for a zero-constructor family or for one all-erased
+         non-self-recursive constructor, so the one-branch arm below
+         binds only dropped binders and the two-or-more arm is genuinely
+         unreachable; both stay as total backstops. *)
+      (match branches with
+      | [] -> Ok Eterm.EErased
+      | [ (_c, binders, body) ] ->
+          let ctx' = List.fold_left (fun cacc (_q, x) -> (x, false) :: cacc) ctx binders in
+          term ctx' body
+      | _ :: _ :: _ -> Error (Error.Erased_use "match"))
+  | Term.Match { scrut; scrut_q = Quantity.Many; motive = _; branches } ->
       (* the motive is a type: it never reaches runtime. Branch binders
          keep only the Many-stamped positions. *)
       let* scrut_e = term ctx scrut in

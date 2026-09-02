@@ -1,0 +1,9 @@
+-- M4 Stage A, gate PASS-M4A-BOX.  A one-constructor family that carries
+-- a RUNTIME (quantity w) argument stays Kernel.Erased_use when matched
+-- from an erased hypothesis: the subsingleton criterion's second clause
+-- (every constructor argument at quantity 0) is what fences this out,
+-- distinct from SX's self-recursion fence.  A regression that flips
+-- this to check (the subsingleton criterion applied too broadly) shows
+-- up here.
+data Box : Type 0 := | mkBox : (w x : Nat) -> Box
+def unbox : (0 b : Box) -> Nat := fun b => match b with | mkBox x => x end

@@ -1,0 +1,29 @@
+#!/usr/bin/env -S tot run
+-- M4 Stage D: the house rg/sd rule again, this time with the flagged
+-- command list behind a type class and with two guard predicates proven
+-- to agree on the true case.
+reducible def verdictOfDanger : Bool -> Verdict :=
+  fun b => match b with | true => deny "use rg / sd" | false => allow end
+-- a DIFFERENT program with the same meaning: it tests the negated case
+-- and swaps the arms, so the agreement proof below compares two guards
+-- rather than two copies of one (M4 fixes round 1, ctxcat id 0)
+reducible def verdictOfDanger2 : Bool -> Verdict :=
+  fun b => match boolEq b false with | true => allow | false => deny "use rg / sd" end
+
+-- the two guards agree on the [true] constructor case, by computation
+def agreeOnTrue : Eq Verdict (verdictOfDanger true) (verdictOfDanger2 true) :=
+  refl Verdict (deny "use rg / sd")
+check agreeOnTrue
+
+-- congruence carries a command-name equality through a guard
+def denyStable : (cmd : String) -> (0 h : Eq String cmd "grep") ->
+    (0 flag : String -> Bool) ->
+    Eq Verdict (verdictOfDanger (flag cmd)) (verdictOfDanger (flag "grep")) :=
+  fun cmd h flag =>
+    cong0 String Verdict cmd "grep" (fun c => verdictOfDanger (flag c)) h
+check denyStable
+
+def flagged : List String := cons String "grep" (cons String "sed" (nil String))
+def isFlagged : String -> Bool := fun c => member String auto c flagged
+eval isFlagged "sed"
+eval isFlagged "rg"

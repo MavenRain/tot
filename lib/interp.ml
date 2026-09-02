@@ -78,6 +78,22 @@ type gbody =
   | GForced of v
   | GDeferred of Eterm.t
 
+(** M4 Stage C: the runtime unfolding guard, three-state.
+    [Unguarded] and [GuardedAt] are the M2-fixes behaviors: [Unguarded]
+    covers a plain (non-rec) def, a data ctor, an erased type
+    constructor, or a prim (every one of [add_ctor]/[add_erased]/
+    [add_prim] seeds it); [GuardedAt k] marks a rec def guarded on
+    (erased-spine) argument [k], tested for canonicity before it
+    unfolds. [Frozen] NEVER unfolds: the global stays an [EHGlobal]
+    neutral under any application. [Frozen] is reachable only through
+    an inhabitant of a provably empty type, so it is dead code by the
+    Stage A soundness argument; it exists so that a missed case
+    degrades to a permanent neutral instead of a loop. *)
+type guard =
+  | Unguarded
+  | GuardedAt of int
+  | Frozen
+
 (** One runtime global binding. [gval] is the body [EGlobal] resolves to
     when the guard does not apply (a non-rec def's cached closure or
     deferred term, a ctor's growing [VCon], or [VErased] for an inert
@@ -86,16 +102,16 @@ type gbody =
     cell so [force] can memoize a deferred body's computed value in
     place (M3 fixes, A2); map copies threaded through [Run.state]
     share the cell, so one force pays for every later reference.
-    [grec_arg]:
-    [Some k] marks a rec def guarded on argument [k]; [None] covers
-    every other kind of entry, including a plain (non-rec) def.
+    [gguard]: see [guard] above (M4 Stage C; was [grec_arg : int
+    option], [Some k]/[None], before this stage widened it to a third
+    state).
     [gctor_arity]: [Some n] marks a data constructor whose KEPT
     (quantity-`w`) arity is [n], the runtime analogue of
     [Eval.is_canonical]'s full-arity check (erased args and params
     never reach a runtime [VCon]). *)
 type gentry = {
   gval : gbody ref;
-  grec_arg : int option;
+  gguard : guard;
   gctor_arity : int option;
 }
 
@@ -357,7 +373,7 @@ let result_traverse (f : 'a -> ('b, Error.t) result) (xs : 'a list) : ('b list, 
     unreachable on a checked program; the fallback arms are total
     backstops only, mirroring [fire_prim]'s own shape-mismatch style.
     [Pp.escape_string] is reused for JSON string quoting (M3 Stage A's
-    own escape set — backslash, quote, newline, tab — is a subset of
+    own escape set (backslash, quote, newline, tab) is a subset of
     JSON's, so it produces valid JSON text for every string this
     parser can itself have produced; a string containing OTHER control
     characters this parser cannot itself construct is a documented
@@ -536,9 +552,10 @@ let rec exec (eglobals : globals) (env : v list) (e : Eterm.t) : (v, Error.t) re
         Global.StringMap.find_opt name eglobals
         |> Option.to_result ~none:(Error.Unbound_global name)
       in
-      g.grec_arg
-      |> Option.fold ~none:(force eglobals g.gval) ~some:(fun _k ->
-             Ok (VNeut (EHGlobal name, [])))
+      (match g.gguard with
+      | Unguarded -> force eglobals g.gval
+      | GuardedAt _k -> Ok (VNeut (EHGlobal name, []))
+      | Frozen -> Ok (VNeut (EHGlobal name, [])))
   | Eterm.EErased -> Ok VErased
   | Eterm.ELit l -> Ok (VLit l)
   | Eterm.EMatch (scrut, branches) ->
@@ -570,18 +587,29 @@ and apply (eglobals : globals) (f : v) (a : v) : (v, Error.t) result =
       let frames' = FEApp a :: frames in
       let stuck = VNeut (EHGlobal name, frames') in
       Global.StringMap.find_opt name eglobals
-      |> Fun.flip Option.bind (fun (g : gentry) ->
-             Option.map (fun k -> (g.gval, k)) g.grec_arg)
-      |> Option.fold ~none:(Ok stuck) ~some:(fun (gbody, k) ->
-             let oldest = List.rev frames' in
-             let guarded =
-               List.nth_opt (leading_fapp_args oldest) k
-               |> Option.fold ~none:false ~some:(is_canonical eglobals)
-             in
-             if guarded then
-               let* head_v = force eglobals gbody in
-               replay eglobals head_v oldest
-             else Ok stuck)
+      |> Option.fold ~none:(Ok stuck) ~some:(fun (g : gentry) ->
+             match g.gguard with
+             | GuardedAt k ->
+                 let oldest = List.rev frames' in
+                 let guarded =
+                   List.nth_opt (leading_fapp_args oldest) k
+                   |> Option.fold ~none:false ~some:(is_canonical eglobals)
+                 in
+                 if guarded then
+                   let* head_v = force eglobals g.gval in
+                   replay eglobals head_v oldest
+                 else Ok stuck
+             | Frozen ->
+                 (* dead by the Stage A emptiness argument (see [guard]
+                    above): a missed case degrades to a permanent
+                    neutral instead of a loop. *)
+                 Ok stuck
+             | Unguarded ->
+                 (* unreachable: an [Unguarded] entry is forced at
+                    [exec] time and therefore never births an
+                    [EHGlobal] neutral in the first place. Spelled out
+                    anyway, because this match must be exhaustive. *)
+                 Ok stuck)
   | VNeut ((EHVar _ as h), frames) -> Ok (VNeut (h, FEApp a :: frames))
   | VErased -> Error (Error.Not_a_function "<erased>")
   | VLit _ -> Error (Error.Not_a_function "<literal value>")
@@ -834,23 +862,22 @@ and fire_prim (eglobals : globals) (p : Prim.t) (args : v list) : (v, Error.t) r
     [Eterm.t]); the one observable shift is that a LIVE def's
     definition-time abort now surfaces at force time.  Total: no body
     execution means no error path, hence no [result]. *)
-let define (eglobals : globals) ~(name : string) ~(rec_arg : int option) (def : Eterm.t) :
-    globals =
+let define (eglobals : globals) ~(name : string) ~(guard : guard) (def : Eterm.t) : globals =
   Global.StringMap.add name
-    { gval = ref (GDeferred def); grec_arg = rec_arg; gctor_arity = None }
+    { gval = ref (GDeferred def); gguard = guard; gctor_arity = None }
     eglobals
 
 (** Seed a data constructor: it accumulates its runtime (KEPT) arguments
     up to [arity]. *)
 let add_ctor (eglobals : globals) ~(name : string) ~(arity : int) : globals =
   Global.StringMap.add name
-    { gval = ref (GForced (VCon (name, []))); grec_arg = None; gctor_arity = Some arity }
+    { gval = ref (GForced (VCon (name, []))); gguard = Unguarded; gctor_arity = Some arity }
     eglobals
 
 (** Seed a type constructor: types are inert at runtime. *)
 let add_erased (eglobals : globals) ~(name : string) : globals =
   Global.StringMap.add name
-    { gval = ref (GForced VErased); grec_arg = None; gctor_arity = None }
+    { gval = ref (GForced VErased); gguard = Unguarded; gctor_arity = None }
     eglobals
 
 (** Seed a native prim (M3 Stage A). TRAP: a prim of arity 0 can never
@@ -867,7 +894,7 @@ let add_prim (eglobals : globals) ~(name : string) ~(prim : Prim.t) :
   in
   Ok
     (Global.StringMap.add name
-       { gval = ref (GForced v); grec_arg = None; gctor_arity = None }
+       { gval = ref (GForced v); gguard = Unguarded; gctor_arity = None }
        eglobals)
 
 let rec quote (eglobals : globals) (size : int) (v : v) : (Eterm.t, Error.t) result =

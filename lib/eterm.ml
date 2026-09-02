@@ -22,3 +22,21 @@ type t =
       (** M3 Stage A. Cache-format note: this type feeds Stage D's
           prelude cache, so any change here bumps that cache's format
           version constant once it exists. *)
+
+(** Does [name] occur anywhere in [e] as an [EGlobal]?  Structural,
+    total, exhaustive over every [Eterm.t] arm.  [surface/run.ml] runs
+    it on an erased body to decide the runtime guard (M4 Stage C).
+    Promoted from a test-private walk ([test/main.ml]'s "T0" case) so
+    the promotion itself is proven by that test calling this function
+    rather than merely asserting the two copies agree. *)
+let rec mentions (name : string) (e : t) : bool =
+  match e with
+  | EVar _ -> false
+  | ELit _ -> false
+  | EErased -> false
+  | EGlobal g -> String.equal g name
+  | ELam (_x, b) -> mentions name b
+  | EApp (f, a) -> mentions name f || mentions name a
+  | ELet (_x, d, b) -> mentions name d || mentions name b
+  | EMatch (s, branches) ->
+      mentions name s || List.exists (fun (_c, _bs, b) -> mentions name b) branches

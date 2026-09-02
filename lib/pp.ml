@@ -39,11 +39,33 @@ let rec term (names : string list) (tm : Term.t) : string =
   | Term.Ann (tm', ty) -> Printf.sprintf "(%s : %s)" (term names tm') (term names ty)
   | Term.Global n -> n
   | Term.Lit l -> literal l
-  | Term.Match { scrut; motive; branches } ->
+  | Term.Auto -> "auto"
+  | Term.Match { scrut; scrut_q = _; motive; branches } ->
       let motive_s =
         motive
-        |> Option.fold ~none:"" ~some:(fun (x, mot) ->
-               Printf.sprintf " as %s return %s" x (term (x :: names) mot))
+        |> Option.fold ~none:"" ~some:(fun (mo : Term.motive) ->
+               (* M4 Stage A: [m_body] is scoped under [m_idx]
+                  (DECLARATION order, outermost first) then [m_self]
+                  (innermost).  [names] is indexed by DE BRUIJN index,
+                  which runs the other way, so extend it self-first and
+                  then the indices reversed ([List.rev m_idx]).  The
+                  "in" clause below prints [m_idx] UNreversed, because
+                  that clause is source syntax and source syntax is
+                  declaration order.  M4 fixes round 4 (ctxcat r4 id 0):
+                  the two orders are one convention read on two axes;
+                  [Term.motive]'s own comment states it once. *)
+               let names' = mo.Term.m_self :: List.rev mo.Term.m_idx @ names in
+               let body_s = term names' mo.Term.m_body in
+               let in_clause =
+                 match () with
+                 | () when Option.is_none mo.Term.m_ind && Int.equal (List.length mo.Term.m_idx) 0
+                   ->
+                     ""
+                 | () ->
+                     let iname = Option.value mo.Term.m_ind ~default:"_" in
+                     " in " ^ String.concat " " (iname :: mo.Term.m_idx)
+               in
+               Printf.sprintf " as %s%s return %s" mo.Term.m_self in_clause body_s)
       in
       let branch_s (c, binders, body) =
         let bnames = List.map (fun (_q, x) -> x) binders in

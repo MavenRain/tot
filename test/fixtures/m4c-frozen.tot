@@ -1,0 +1,1 @@
+eval subst0 Nat zero zero (fun n => Nat) (refl Nat zero) (succ zero)

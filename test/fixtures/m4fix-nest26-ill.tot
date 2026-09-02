@@ -1,0 +1,12 @@
+-- M4 fixes round 2 (ctxcat id 4, opus R1): the ILL-TYPED twin of
+-- m4fix-nest26.tot.  26 matches nested in SCRUTINEE position, with
+-- one ordinary mistake at the INNERMOST one: the `false` branch is
+-- missing.  That error fails at the ambient mode AND at Zero, so the
+-- round-1 Zero fallback re-ran the whole subterm at every level and
+-- the 2^depth curve came back on the error path (measured on the
+-- round-1 binary: 0.11s at depth 18, 1.21s at depth 22, 18.18s at
+-- depth 26).  Guarding the fallback on the ambient mode makes the
+-- failing path O(depth^2).  The gate pins the exact diagnosis too, so
+-- a fast WRONG error cannot pass for a fix.
+def illnest : Bool := match (match (match (match (match (match (match (match (match (match (match (match (match (match (match (match (match (match (match (match (match (match (match (match (match (match ((true)) as x0 return Bool with | true => false end) as x1 return Bool with | true => false | false => true end) as x2 return Bool with | true => false | false => true end) as x3 return Bool with | true => false | false => true end) as x4 return Bool with | true => false | false => true end) as x5 return Bool with | true => false | false => true end) as x6 return Bool with | true => false | false => true end) as x7 return Bool with | true => false | false => true end) as x8 return Bool with | true => false | false => true end) as x9 return Bool with | true => false | false => true end) as x10 return Bool with | true => false | false => true end) as x11 return Bool with | true => false | false => true end) as x12 return Bool with | true => false | false => true end) as x13 return Bool with | true => false | false => true end) as x14 return Bool with | true => false | false => true end) as x15 return Bool with | true => false | false => true end) as x16 return Bool with | true => false | false => true end) as x17 return Bool with | true => false | false => true end) as x18 return Bool with | true => false | false => true end) as x19 return Bool with | true => false | false => true end) as x20 return Bool with | true => false | false => true end) as x21 return Bool with | true => false | false => true end) as x22 return Bool with | true => false | false => true end) as x23 return Bool with | true => false | false => true end) as x24 return Bool with | true => false | false => true end) as x25 return Bool with | true => false | false => true end
+check illnest

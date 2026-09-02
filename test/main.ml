@@ -12,6 +12,14 @@ let ty0 = Term.Univ Level.zero
 let ty1 = Term.Univ Level.one
 let cnat = Term.Global "cnat"
 
+(* M4 Stage A: the M2/M3-shaped motive, a bare binder over the scrutinee
+   with no index clause; every hand-built M2/M3 match term uses exactly
+   this shape (Term.t's own doc comment: "the old (string * t) option
+   motive is exactly the { m_ind = None; m_idx = []; m_self = x; m_body =
+   t } case"). *)
+let m2_motive (self : string) (body : Term.t) : Term.motive =
+  { Term.m_ind = None; m_idx = []; m_self = self; m_body = body }
+
 (* (0 a : Type 0) -> (w f : (w x : a) -> a) -> (w z : a) -> a *)
 let cnat_def : Term.t =
   Term.Pi
@@ -91,7 +99,8 @@ let add_def : Term.t =
           Term.Match
             {
               scrut = Term.Var 1;
-              motive = Some ("_m", nat);
+              scrut_q = qw;
+              motive = Some (m2_motive "_m" nat);
               branches =
                 [
                   ("zero", [], Term.Var 0);
@@ -118,12 +127,12 @@ let build_globals () : (Global.t, Error.t) result =
   in
   let* g = Check.define g ~name:"idT" ~reducible:false ~ty:idt_ty ~def:idt_def in
   (* M2: inductives, a guarded rec def, and an opaque Nat *)
-  let* g = Check.declare_ind g ~name:"Nat" ~params:[] ~level:Level.zero in
+  let* g = Check.declare_ind g ~name:"Nat" ~params:[] ~indices:[] ~level:Level.zero in
   let* g =
     Check.define_ind g ~name:"Nat"
       ~ctors:[ ("zero", nat); ("succ", Term.Pi (qw, "n", nat, nat)) ]
   in
-  let* g = Check.declare_ind g ~name:"Opt" ~params:[ (q0, "A", ty0) ] ~level:Level.zero in
+  let* g = Check.declare_ind g ~name:"Opt" ~params:[ (q0, "A", ty0) ] ~indices:[] ~level:Level.zero in
   let* g =
     Check.define_ind g ~name:"Opt"
       ~ctors:
@@ -210,7 +219,8 @@ let match_nat_pred : Term.t =
   Term.Match
     {
       scrut = nsucc (nsucc nzero);
-      motive = Some ("_m", nat);
+      scrut_q = qw;
+      motive = Some (m2_motive "_m" nat);
       branches = [ ("zero", [], nzero); ("succ", [ (qw, "n") ], Term.Var 0) ];
     }
 
@@ -220,7 +230,8 @@ let match_opt_payload : Term.t =
   Term.Match
     {
       scrut = Term.App (qw, Term.App (qw, Term.Global "some", nat), nsucc nzero);
-      motive = Some ("_o", nat);
+      scrut_q = qw;
+      motive = Some (m2_motive "_o" nat);
       branches = [ ("none", [], nzero); ("some", [ (qw, "x") ], Term.Var 0) ];
     }
 
@@ -234,15 +245,17 @@ let dep_motive_term : Term.t =
   Term.Match
     {
       scrut = nsucc nzero;
+      scrut_q = qw;
       motive =
         Some
-          ( "n",
-            Term.Match
-              {
-                scrut = Term.Var 0;
-                motive = Some ("_", ty0);
-                branches = [ ("zero", [], nat); ("succ", [ (qw, "p") ], opt_nat) ];
-              } );
+          (m2_motive "n"
+             (Term.Match
+                {
+                  scrut = Term.Var 0;
+                  scrut_q = qw;
+                  motive = Some (m2_motive "_" ty0);
+                  branches = [ ("zero", [], nat); ("succ", [ (qw, "p") ], opt_nat) ];
+                }));
       branches =
         [
           ("zero", [], nzero);
@@ -272,7 +285,7 @@ let case_dependent_motive (globals : Global.t) () : (unit, string) result =
 
 let nat_match_with (branches : (string * (Quantity.t * string) list * Term.t) list) :
     Term.t =
-  Term.Match { scrut = nzero; motive = Some ("_m", nat); branches }
+  Term.Match { scrut = nzero; scrut_q = qw; motive = Some (m2_motive "_m" nat); branches }
 
 let case_branch_shape (globals : Global.t) () : (unit, string) result =
   let* () =
@@ -291,7 +304,7 @@ let case_branch_shape (globals : Global.t) () : (unit, string) result =
 
 let case_positivity (globals : Global.t) () : (unit, string) result =
   let attempt =
-    let* g = Check.declare_ind globals ~name:"BadPos" ~params:[] ~level:Level.zero in
+    let* g = Check.declare_ind globals ~name:"BadPos" ~params:[] ~indices:[] ~level:Level.zero in
     Check.define_ind g ~name:"BadPos"
       ~ctors:
         [
@@ -312,7 +325,7 @@ let case_positivity (globals : Global.t) () : (unit, string) result =
 
 let case_universe (globals : Global.t) () : (unit, string) result =
   let attempt =
-    let* g = Check.declare_ind globals ~name:"BadUniv" ~params:[] ~level:Level.zero in
+    let* g = Check.declare_ind globals ~name:"BadUniv" ~params:[] ~indices:[] ~level:Level.zero in
     Check.define_ind g ~name:"BadUniv"
       ~ctors:[ ("mkU", Term.Pi (qw, "t", ty0, Term.Global "BadUniv")) ]
   in
@@ -344,7 +357,8 @@ let stuck_match_over (zero_body : Term.t) : Term.t =
   Term.Match
     {
       scrut = Term.Global "x_opaque";
-      motive = Some ("_m", nat);
+      scrut_q = qw;
+      motive = Some (m2_motive "_m" nat);
       branches = [ ("zero", [], zero_body); ("succ", [ (qw, "n") ], Term.Var 0) ];
     }
 
@@ -364,7 +378,7 @@ let case_stuck_match_conv (globals : Global.t) () : (unit, string) result =
    [define_ind] time, never reaching eval's exhaustiveness backstop). *)
 let case_ind_incomplete (globals : Global.t) () : (unit, string) result =
   let attempt =
-    let* g = Check.declare_ind globals ~name:"Pin" ~params:[] ~level:Level.zero in
+    let* g = Check.declare_ind globals ~name:"Pin" ~params:[] ~indices:[] ~level:Level.zero in
     Check.define_ind g ~name:"Pin"
       ~ctors:
         [
@@ -374,7 +388,12 @@ let case_ind_incomplete (globals : Global.t) () : (unit, string) result =
               ( qw,
                 "_",
                 Term.Match
-                  { scrut = Term.Global "pa"; motive = Some ("_", ty0); branches = [] },
+                  {
+                    scrut = Term.Global "pa";
+                    scrut_q = qw;
+                    motive = Some (m2_motive "_" ty0);
+                    branches = [];
+                  },
                 Term.Global "Pin" ) );
         ]
   in
@@ -391,7 +410,7 @@ let case_ind_incomplete (globals : Global.t) () : (unit, string) result =
    ctor_names. *)
 let case_ind_redefined (globals : Global.t) () : (unit, string) result =
   let attempt =
-    let* g = Check.declare_ind globals ~name:"Bit" ~params:[] ~level:Level.zero in
+    let* g = Check.declare_ind globals ~name:"Bit" ~params:[] ~indices:[] ~level:Level.zero in
     let* g = Check.define_ind g ~name:"Bit" ~ctors:[ ("bzero", Term.Global "Bit") ] in
     Check.define_ind g ~name:"Bit" ~ctors:[ ("bone", Term.Global "Bit") ]
   in
@@ -421,7 +440,7 @@ let case_ind_redefined (globals : Global.t) () : (unit, string) result =
 let case_match_scrut_precedence (globals : Global.t) () : (unit, string) result =
   let attempt =
     let* g =
-      Check.declare_ind globals ~name:"Pin3" ~params:[ (q0, "A", ty0) ] ~level:Level.zero
+      Check.declare_ind globals ~name:"Pin3" ~params:[ (q0, "A", ty0) ] ~indices:[] ~level:Level.zero
     in
     let g' =
       Global.add "bad_scrut"
@@ -437,7 +456,12 @@ let case_match_scrut_precedence (globals : Global.t) () : (unit, string) result 
     in
     Check.infer g' Check.empty_ctx Quantity.Many
       (Term.Match
-         { scrut = Term.Global "bad_scrut"; motive = Some ("_", ty0); branches = [] })
+         {
+           scrut = Term.Global "bad_scrut";
+           scrut_q = qw;
+           motive = Some (m2_motive "_" ty0);
+           branches = [];
+         })
   in
   attempt
   |> Result.fold
@@ -481,7 +505,8 @@ let arity_mismatch_match : Term.t =
   Term.Match
     {
       scrut = nsucc nzero;
-      motive = Some ("_m", nat);
+      scrut_q = qw;
+      motive = Some (m2_motive "_m" nat);
       branches = [ ("zero", [], nzero); ("succ", [ (qw, "n"); (qw, "extra") ], Term.Var 0) ];
     }
 
@@ -505,6 +530,7 @@ let not_body_no_motive : Term.t =
   Term.Match
     {
       scrut = Term.Var 0;
+      scrut_q = qw;
       motive = None;
       branches = [ ("true", [], Term.Global "false"); ("false", [], Term.Global "true") ];
     }
@@ -513,7 +539,8 @@ let not_body_explicit_motive : Term.t =
   Term.Match
     {
       scrut = Term.Var 0;
-      motive = Some ("x", bool_ty);
+      scrut_q = qw;
+      motive = Some (m2_motive "x" bool_ty);
       branches = [ ("true", [], Term.Global "false"); ("false", [], Term.Global "true") ];
     }
 
@@ -521,7 +548,7 @@ let not_ty : Term.t = Term.Pi (qw, "b", bool_ty, bool_ty)
 
 let case_uniform_motive (globals : Global.t) () : (unit, string) result =
   let attempt =
-    let* g = Check.declare_ind globals ~name:"Bool" ~params:[] ~level:Level.zero in
+    let* g = Check.declare_ind globals ~name:"Bool" ~params:[] ~indices:[] ~level:Level.zero in
     let* g =
       Check.define_ind g ~name:"Bool" ~ctors:[ ("true", bool_ty); ("false", bool_ty) ]
     in
@@ -580,6 +607,7 @@ let ghost_def : Term.t =
                   Term.Match
                     {
                       scrut = Term.Var 1;
+                      scrut_q = qw;
                       motive = None;
                       branches =
                         [
@@ -591,21 +619,6 @@ let ghost_def : Term.t =
                         ];
                     } ),
               Term.Var 0 ) ) )
-
-(* Total, exhaustive walk over every [Eterm.t] arm: does [name] occur
-   anywhere in [e]? *)
-let rec eterm_mentions (name : string) (e : Eterm.t) : bool =
-  match e with
-  | Eterm.EVar _ -> false
-  | Eterm.ELam (_x, body) -> eterm_mentions name body
-  | Eterm.EApp (f, a) -> eterm_mentions name f || eterm_mentions name a
-  | Eterm.ELet (_x, def, body) -> eterm_mentions name def || eterm_mentions name body
-  | Eterm.EGlobal g -> String.equal g name
-  | Eterm.ELit _ -> false
-  | Eterm.EErased -> false
-  | Eterm.EMatch (scrut, branches) ->
-      eterm_mentions name scrut
-      || List.exists (fun (_c, _binders, body) -> eterm_mentions name body) branches
 
 let case_erased_guard_no_self_ref (globals : Global.t) () : (unit, string) result =
   let attempt =
@@ -624,7 +637,10 @@ let case_erased_guard_no_self_ref (globals : Global.t) () : (unit, string) resul
   attempt
   |> Result.fold
        ~ok:(fun erased ->
-         if eterm_mentions "ghost" erased then
+         (* M4 Stage C, C2: calls the PROMOTED [Eterm.mentions] instead
+            of a test-private copy, so this test proves the promotion
+            rather than merely asserting the two walks agree. *)
+         if Eterm.mentions "ghost" erased then
            Error
              (Printf.sprintf "erased-guard-no-self-ref: self-reference survived erasure: %s"
                 (Pp.eterm [] erased))
@@ -659,7 +675,7 @@ let cnat_variant_many : Term.t =
 (** A hand-seeded globals holding only a declared-only [String] Ind
     (declared, never [define_ind]'d, so nothing can eliminate it). *)
 let string_globals : (Global.t, Error.t) result =
-  Check.declare_ind Global.empty ~name:"String" ~params:[] ~level:Level.zero
+  Check.declare_ind Global.empty ~name:"String" ~params:[] ~indices:[] ~level:Level.zero
 
 (* A1: a string literal infers String against a globals that declares
    it; pin the printed type. *)
@@ -754,7 +770,13 @@ let case_prim_opacity () : (unit, string) result =
    purpose: a match whose scrutinee is a VLit is Not_inductive. *)
 let case_lit_match_backstop (globals : Global.t) () : (unit, string) result =
   Eval.eval globals []
-    (Term.Match { scrut = Term.Lit (Literal.LString "x"); motive = Some ("_", ty0); branches = [] })
+    (Term.Match
+       {
+         scrut = Term.Lit (Literal.LString "x");
+         scrut_q = qw;
+         motive = Some (m2_motive "_" ty0);
+         branches = [];
+       })
   |> Result.fold
        ~ok:(fun _v -> Error "lit-match-backstop: match on a VLit scrutinee wrongly succeeded")
        ~error:(fun e ->
@@ -1044,6 +1066,7 @@ let countdown_body : Term.t =
       Term.Match
         {
           scrut = Term.App (qw, Term.App (qw, Term.Global "intEq", Term.Var 0), Term.Lit (Literal.LInt 0));
+          scrut_q = qw;
           motive = None;
           branches =
             [
@@ -1114,7 +1137,7 @@ let case_json_positivity_kernel () : (unit, string) result =
   |> Result.fold ~error:(fun msg -> Error msg) ~ok:(fun bst ->
          let g = bst.Tot_surface.Run.globals in
          let good =
-           let* g1 = Check.declare_ind g ~name:"JsonK" ~params:[] ~level:Level.zero in
+           let* g1 = Check.declare_ind g ~name:"JsonK" ~params:[] ~indices:[] ~level:Level.zero in
            Check.define_ind g1 ~name:"JsonK"
              ~ctors:
                [
@@ -1130,7 +1153,7 @@ let case_json_positivity_kernel () : (unit, string) result =
               ~error:(fun e -> Error ("json-positivity-kernel: self-recursive ctor REJECTED: " ^ Error.to_string e))
               ~ok:(fun _ ->
                 let bad =
-                  let* g2 = Check.declare_ind g ~name:"JsonBadK" ~params:[] ~level:Level.zero in
+                  let* g2 = Check.declare_ind g ~name:"JsonBadK" ~params:[] ~indices:[] ~level:Level.zero in
                   Check.define_ind g2 ~name:"JsonBadK"
                     ~ctors:
                       [
@@ -1148,6 +1171,1218 @@ let case_json_positivity_kernel () : (unit, string) result =
                        Printf.printf "  expected error (Bad_ctor): %s\n" (Error.to_string e);
                        if String.equal (Error.tag e) "Bad_ctor" then Ok ()
                        else Error ("json-positivity-kernel: wrong error: " ^ Error.to_string e))))
+
+(* --- M4 Stage A: indexed inductive families, subsingleton elimination,
+   positivity --- *)
+
+(* M4 Stage A: total substring scan (no loop keyword), for error-message
+   reason-string assertions where only a SUBSTRING is pinned (the
+   Fording positivity/result-head reasons). *)
+let rec contains_substring_from (hay : string) (needle : string) (i : int) : bool =
+  let hlen = String.length hay in
+  let nlen = String.length needle in
+  match () with
+  | () when i + nlen > hlen -> false
+  | () when String.equal (String.sub hay i nlen (* @total-accessor: i + nlen <= hlen guarded above *)) needle -> true
+  | () -> contains_substring_from hay needle (i + 1)
+
+let contains_substring (hay : string) (needle : string) : bool =
+  if Int.equal (String.length needle) 0 then true else contains_substring_from hay needle 0
+
+(* A1: an indexed family declares, defines, and reports its arity. *)
+let a1_vec_params : Global.telescope = [ (q0, "A", ty0) ]
+let a1_vec_indices : Global.telescope = [ (q0, "n", nat) ]
+let a1_vnil_ty : Term.t = Term.App (qw, Term.App (qw, Term.Global "A1Vec", Term.Var 0), nzero)
+
+let a1_vcons_ty : Term.t =
+  Term.Pi
+    ( q0, "n", nat,
+      Term.Pi
+        ( qw, "elem", Term.Var 1,
+          Term.Pi
+            ( qw, "sub",
+              Term.App (qw, Term.App (qw, Term.Global "A1Vec", Term.Var 2), Term.Var 1),
+              Term.App (qw, Term.App (qw, Term.Global "A1Vec", Term.Var 3), nsucc (Term.Var 2)) )
+        ) )
+
+let a1_declare_vec (g : Global.t) : (Global.t, Error.t) result =
+  let* g =
+    Check.declare_ind g ~name:"A1Vec" ~params:a1_vec_params ~indices:a1_vec_indices
+      ~level:Level.zero
+  in
+  Check.define_ind g ~name:"A1Vec" ~ctors:[ ("a1vnil", a1_vnil_ty); ("a1vcons", a1_vcons_ty) ]
+
+let case_indexed_family_arity (globals : Global.t) () : (unit, string) result =
+  let attempt =
+    let* g = a1_declare_vec globals in
+    let* arity =
+      Global.find_ind_arity "A1Vec" g |> Option.to_result ~none:(Error.Unbound_global "A1Vec")
+    in
+    let* ctor =
+      Global.find_ctor "a1vcons" g |> Option.to_result ~none:(Error.Unbound_global "a1vcons")
+    in
+    Ok (arity, ctor)
+  in
+  attempt
+  |> Result.fold
+       ~ok:(fun ((n_params, n_indices), (ctor : Global.ctor_entry)) ->
+         match () with
+         | () when not (Int.equal n_params 1 && Int.equal n_indices 1) ->
+             Error (Printf.sprintf "A1: arity got (%d, %d), want (1, 1)" n_params n_indices)
+         | () when not (Int.equal ctor.Global.full_arity 4) ->
+             Error (Printf.sprintf "A1: full_arity got %d, want 4" ctor.Global.full_arity)
+         | () when not ctor.Global.self_rec -> Error "A1: self_rec got false, want true"
+         | () when not (Int.equal (List.length ctor.Global.res_idx) 1) ->
+             Error
+               (Printf.sprintf "A1: res_idx length got %d, want 1"
+                  (List.length ctor.Global.res_idx))
+         | () -> Ok ())
+       ~error:(fun e -> Error ("A1: " ^ Error.to_string e))
+
+(* A2: an index binder marked w is Index_not_zero. *)
+let case_index_not_zero (globals : Global.t) () : (unit, string) result =
+  Check.declare_ind globals ~name:"A2BadIdxQ" ~params:[] ~indices:[ (qw, "n", nat) ]
+    ~level:Level.zero
+  |> Result.fold
+       ~ok:(fun _g -> Error "A2: an index binder marked w was accepted")
+       ~error:(fun e ->
+         Printf.printf "  expected error (Index_not_zero): %s\n" (Error.to_string e);
+         if String.equal (Error.tag e) "Index_not_zero" then Ok ()
+         else Error ("A2: wrong error: " ^ Error.to_string e))
+
+(* A3: an index type above the declared universe is Index_above_universe. *)
+let case_index_above_universe (globals : Global.t) () : (unit, string) result =
+  Check.declare_ind globals ~name:"A3BadIdxU" ~params:[] ~indices:[ (q0, "T", ty0) ]
+    ~level:Level.zero
+  |> Result.fold
+       ~ok:(fun _g -> Error "A3: an index type above the declared universe was accepted")
+       ~error:(fun e ->
+         Printf.printf "  expected error (Index_above_universe): %s\n" (Error.to_string e);
+         if String.equal (Error.tag e) "Index_above_universe" then Ok ()
+         else Error ("A3: wrong error: " ^ Error.to_string e))
+
+(* A4: a constructor with the wrong index count is Bad_ctor. *)
+let case_bad_ctor_wrong_index_count (globals : Global.t) () : (unit, string) result =
+  let attempt =
+    let* g =
+      Check.declare_ind globals ~name:"A4VecB" ~params:[ (q0, "A", ty0) ]
+        ~indices:[ (q0, "n", nat) ] ~level:Level.zero
+    in
+    Check.define_ind g ~name:"A4VecB"
+      ~ctors:[ ("a4vbnil", Term.App (qw, Term.Global "A4VecB", Term.Var 0)) ]
+  in
+  attempt
+  |> Result.fold
+       ~ok:(fun _g -> Error "A4: a wrong-index-count constructor was accepted")
+       ~error:(fun e ->
+         Printf.printf "  expected error (Bad_ctor): %s\n" (Error.to_string e);
+         if String.equal (Error.tag e) "Bad_ctor" then Ok ()
+         else Error ("A4: wrong error: " ^ Error.to_string e))
+
+(* A5: the Fording route stays blocked. VecP1 isolates the result-head
+   rule (vpnil alone); VecP2 isolates strict positivity (vpcons alone,
+   with a uniform result codomain "VecP2 A n" so the result-head rule
+   passes and only the "sub : VecP2 A m" argument's non-uniform "m" in
+   place of the parameter "n" trips positivity). *)
+let a5_vecp_params : Global.telescope = [ (q0, "A", ty0); (q0, "n", nat) ]
+
+let case_fording_blocked (globals : Global.t) () : (unit, string) result =
+  let attempt1 =
+    let* g =
+      Check.declare_ind globals ~name:"A5VecP1" ~params:a5_vecp_params ~indices:[]
+        ~level:Level.zero
+    in
+    Check.define_ind g ~name:"A5VecP1"
+      ~ctors:[ ("a5vpnil", Term.App (qw, Term.App (qw, Term.Global "A5VecP1", Term.Var 1), nzero)) ]
+  in
+  let r1 =
+    attempt1
+    |> Result.fold
+         ~ok:(fun _g -> Error "A5: vpnil (Fording result head) was wrongly accepted")
+         ~error:(fun e ->
+           Printf.printf "  expected error (Bad_ctor, result head): %s\n" (Error.to_string e);
+           if not (String.equal (Error.tag e) "Bad_ctor") then
+             Error ("A5: wrong error tag: " ^ Error.to_string e)
+           else if contains_substring (Error.to_string e) "applied to its parameters" then Ok ()
+           else Error ("A5: wrong reason: " ^ Error.to_string e))
+  in
+  let* () = r1 in
+  let attempt2 =
+    let* g =
+      Check.declare_ind globals ~name:"A5VecP2" ~params:a5_vecp_params ~indices:[]
+        ~level:Level.zero
+    in
+    Check.define_ind g ~name:"A5VecP2"
+      ~ctors:
+        [
+          ( "a5vpcons",
+            Term.Pi
+              ( q0, "m", nat,
+                Term.Pi
+                  ( qw, "elem", Term.Var 2,
+                    Term.Pi
+                      ( qw, "sub",
+                        Term.App (qw, Term.App (qw, Term.Global "A5VecP2", Term.Var 3), Term.Var 1),
+                        Term.App (qw, Term.App (qw, Term.Global "A5VecP2", Term.Var 4), Term.Var 3)
+                      ) ) ) );
+        ]
+  in
+  attempt2
+  |> Result.fold
+       ~ok:(fun _g -> Error "A5: vpcons (Fording positivity) was wrongly accepted")
+       ~error:(fun e ->
+         Printf.printf "  expected error (Bad_ctor, positivity): %s\n" (Error.to_string e);
+         if not (String.equal (Error.tag e) "Bad_ctor") then
+           Error ("A5: wrong error tag: " ^ Error.to_string e)
+         else if contains_substring (Error.to_string e) "negative or non-uniform occurrence of"
+         then Ok ()
+         else Error ("A5: wrong reason: " ^ Error.to_string e))
+
+(* A6: index_expr_clean rejects an index expression mentioning its own
+   family. A UNIT test on purpose: the check is a total backstop that no
+   source fixture can witness (see its own doc comment in lib/check.ml). *)
+let case_index_expr_clean_unit () : (unit, string) result =
+  let mentions_self =
+    Check.index_expr_clean "I6" (Term.App (qw, Term.Global "I6", Term.Var 0))
+  in
+  let clean_var = Check.index_expr_clean "I6" (Term.Var 0) in
+  match () with
+  | () when mentions_self ->
+      Error "A6: index_expr_clean accepted an expression mentioning its own family"
+  | () when not clean_var -> Error "A6: index_expr_clean rejected a clean Var expression"
+  | () -> Ok ()
+
+(* A6b (M4 fixes round 1, audit F3): the index-cleanliness ban is not
+   skippable through [auto]. [index_expr_clean] must answer FALSE for an
+   unresolved [Term.Auto], bare or nested, because it runs on the RAW
+   pre-elaboration constructor type where [auto] stands for a spine the
+   resolver has not produced yet and that spine may mention the family.
+   The staged Stage A code accepted [Auto] unconditionally, which let
+   `data AI : Nat -> Type 0 := | ai : AI auto` past the ban entirely. *)
+let case_index_expr_clean_rejects_auto () : (unit, string) result =
+  let bare_auto = Check.index_expr_clean "I6b" Term.Auto in
+  let nested_auto =
+    Check.index_expr_clean "I6b" (Term.App (qw, Term.Global "succ", Term.Auto))
+  in
+  let clean_global =
+    Check.index_expr_clean "I6b" (Term.App (qw, Term.Global "succ", Term.Global "zero"))
+  in
+  match () with
+  | () when bare_auto -> Error "A6b: index_expr_clean accepted a bare auto index expression"
+  | () when nested_auto -> Error "A6b: index_expr_clean accepted an auto nested under an App"
+  | () when not clean_global ->
+      Error "A6b: index_expr_clean rejected an auto-free index expression"
+  | () -> Ok ()
+
+(* A6c (M4 fixes round 1, ctxcat id 8): [strip_ann] removes exactly the
+   node [infer] itself deletes, so the RAW result-head check sees what
+   the stamped one would. Nested annotations collapse; every other head
+   is returned unchanged, including one whose ARGUMENT is annotated
+   (stripping is a head walk, not a deep rewrite). *)
+let case_strip_ann_head () : (unit, string) result =
+  let univ = Term.Univ Level.zero in
+  let inner = Term.App (qw, Term.Global "F", Term.Var 0) in
+  let doubly = Term.Ann (Term.Ann (inner, univ), univ) in
+  let arg_annotated = Term.App (qw, Term.Global "F", Term.Ann (Term.Var 0, univ)) in
+  let shown (t : Term.t) : string = Pp.term [] t in
+  match () with
+  | () when not (String.equal (shown (Check.strip_ann doubly)) (shown inner)) ->
+      Error
+        ("A6c: strip_ann did not collapse nested Ann wrappers to the head term: "
+       ^ shown (Check.strip_ann doubly))
+  | () when not (String.equal (shown (Check.strip_ann inner)) (shown inner)) ->
+      Error "A6c: strip_ann changed an unannotated term"
+  | () when not (String.equal (shown (Check.strip_ann arg_annotated)) (shown arg_annotated)) ->
+      Error "A6c: strip_ann rewrote an annotated ARGUMENT (it must only strip the head)"
+  | () -> Ok ()
+
+(* A7: the subsingleton criterion, all four shapes. The SX row is the
+   fence: false because self_rec is true, NOT because of a quantity. *)
+let case_zero_eliminable_shapes (globals : Global.t) () : (unit, string) result =
+  let attempt =
+    let* g = Check.declare_ind globals ~name:"A7Empty" ~params:[] ~indices:[] ~level:Level.zero in
+    let* g = Check.define_ind g ~name:"A7Empty" ~ctors:[] in
+    let* empty_ind =
+      Global.find_ind "A7Empty" g |> Option.to_result ~none:(Error.Unbound_global "A7Empty")
+    in
+    let* g = Check.declare_ind g ~name:"A7Sing" ~params:[] ~indices:[] ~level:Level.zero in
+    let* g =
+      Check.define_ind g ~name:"A7Sing"
+        ~ctors:[ ("a7mkSing", Term.Pi (q0, "x", nat, Term.Global "A7Sing")) ]
+    in
+    let* sing_ind =
+      Global.find_ind "A7Sing" g |> Option.to_result ~none:(Error.Unbound_global "A7Sing")
+    in
+    let* g = Check.declare_ind g ~name:"A7Box" ~params:[] ~indices:[] ~level:Level.zero in
+    let* g =
+      Check.define_ind g ~name:"A7Box"
+        ~ctors:[ ("a7mkBox", Term.Pi (qw, "x", nat, Term.Global "A7Box")) ]
+    in
+    let* box_ind =
+      Global.find_ind "A7Box" g |> Option.to_result ~none:(Error.Unbound_global "A7Box")
+    in
+    let* g = Check.declare_ind g ~name:"A7SX" ~params:[] ~indices:[] ~level:Level.zero in
+    let* g =
+      Check.define_ind g ~name:"A7SX"
+        ~ctors:[ ("a7wrap", Term.Pi (q0, "s", Term.Global "A7SX", Term.Global "A7SX")) ]
+    in
+    let* sx_ind =
+      Global.find_ind "A7SX" g |> Option.to_result ~none:(Error.Unbound_global "A7SX")
+    in
+    let* sx_ctor =
+      Global.find_ctor "a7wrap" g |> Option.to_result ~none:(Error.Unbound_global "a7wrap")
+    in
+    Ok (g, empty_ind, sing_ind, box_ind, sx_ind, sx_ctor)
+  in
+  attempt
+  |> Result.fold
+       ~ok:(fun (g, empty_ind, sing_ind, box_ind, sx_ind, (sx_ctor : Global.ctor_entry)) ->
+         match () with
+         | () when not (Check.zero_eliminable g empty_ind) ->
+             Error "A7: Empty should be zero_eliminable"
+         | () when not (Check.zero_eliminable g sing_ind) ->
+             Error "A7: Sing should be zero_eliminable"
+         | () when Check.zero_eliminable g box_ind -> Error "A7: Box should NOT be zero_eliminable"
+         | () when Check.zero_eliminable g sx_ind -> Error "A7: SX should NOT be zero_eliminable"
+         | () when not sx_ctor.Global.self_rec ->
+             Error "A7: SX's wrap ctor should have self_rec = true"
+         | () -> Ok ())
+       ~error:(fun e -> Error ("A7: " ^ Error.to_string e))
+
+(* A8: subst-shaped erasure is the identity. *)
+let a8_sing_params : Global.telescope = [ (q0, "A", ty0) ]
+
+let a8_declare_sing (g : Global.t) : (Global.t, Error.t) result =
+  let* g = Check.declare_ind g ~name:"A8Sing" ~params:a8_sing_params ~indices:[] ~level:Level.zero in
+  Check.define_ind g ~name:"A8Sing"
+    ~ctors:[ ("a8mk", Term.App (qw, Term.Global "A8Sing", Term.Var 0)) ]
+
+let a8_elim_ty : Term.t =
+  Term.Pi
+    ( q0, "A", ty0,
+      Term.Pi
+        (q0, "s", Term.App (qw, Term.Global "A8Sing", Term.Var 0), Term.Pi (qw, "px", nat, nat))
+    )
+
+let a8_elim_def : Term.t =
+  Term.Lam
+    ( q0, "A",
+      Term.Lam
+        ( q0, "s",
+          Term.Lam
+            ( qw, "px",
+              Term.Match
+                {
+                  scrut = Term.Var 1;
+                  scrut_q = qw;
+                  motive = None;
+                  branches = [ ("a8mk", [], Term.Var 0) ];
+                } ) ) )
+
+let case_subst_shaped_erasure_identity (globals : Global.t) () : (unit, string) result =
+  let attempt =
+    let* g = a8_declare_sing globals in
+    let* ty_v = Eval.eval g [] a8_elim_ty in
+    let* def' = Check.check g Check.empty_ctx Quantity.Many a8_elim_def ty_v in
+    Erase.closed def'
+  in
+  attempt
+  |> Result.fold
+       ~ok:(fun e ->
+         let got = Pp.eterm [] e in
+         if String.equal got "fun px => px" then Ok ()
+         else Error (Printf.sprintf "A8: got %s, want \"fun px => px\"" got))
+       ~error:(fun e -> Error ("A8: " ^ Error.to_string e))
+
+(* A9: a zero-branch subsingleton match erases to the erased residue.
+   Both the scrutinee's OWN binder and the whole match are erased away
+   (scrut_q = Zero, zero branches), so the pretty-printed result is
+   exactly whatever Pp.eterm prints for EErased -- read from pp.ml, not
+   guessed. *)
+let a9_declare_empty (g : Global.t) : (Global.t, Error.t) result =
+  let* g = Check.declare_ind g ~name:"A9Empty" ~params:[] ~indices:[] ~level:Level.zero in
+  Check.define_ind g ~name:"A9Empty" ~ctors:[]
+
+let a9_elim_ty : Term.t = Term.Pi (q0, "e", Term.Global "A9Empty", nat)
+
+let a9_elim_def : Term.t =
+  Term.Lam
+    (q0, "e", Term.Match { scrut = Term.Var 0; scrut_q = qw; motive = None; branches = [] })
+
+let case_zero_branch_erasure_residue (globals : Global.t) () : (unit, string) result =
+  let attempt =
+    let* g = a9_declare_empty globals in
+    let* ty_v = Eval.eval g [] a9_elim_ty in
+    let* def' = Check.check g Check.empty_ctx Quantity.Many a9_elim_def ty_v in
+    Erase.closed def'
+  in
+  attempt
+  |> Result.fold
+       ~ok:(fun e ->
+         let got = Pp.eterm [] e in
+         if String.equal got "<erased>" then Ok ()
+         else Error (Printf.sprintf "A9: got %s, want \"<erased>\"" got))
+       ~error:(fun e -> Error ("A9: " ^ Error.to_string e))
+
+(* A10: additivity, a materialized constant motive still converts. This
+   is the M2 fixes materialization test (F6, "case_uniform_motive" above)
+   re-run against the motive RECORD: Term.t's motive changed shape under
+   it, and F6 still passes, so this is that same assertion given its own
+   Stage A label per the plan's kernel test list. *)
+
+(* A11: Term.Auto is rejected by every kernel pass. *)
+let case_auto_rejected_everywhere (globals : Global.t) () : (unit, string) result =
+  let check_one : 'a. string -> ('a, Error.t) result -> (unit, string) result =
+   fun label r ->
+    r
+    |> Result.fold
+         ~ok:(fun _ -> Error (Printf.sprintf "A11: %s accepted Term.Auto" label))
+         ~error:(fun e ->
+           Printf.printf "  expected error (Cannot_infer, %s): %s\n" label (Error.to_string e);
+           if String.equal (Error.tag e) "Cannot_infer" then Ok ()
+           else Error (Printf.sprintf "A11: %s wrong error: %s" label (Error.to_string e)))
+  in
+  let* () = check_one "Eval.eval" (Eval.eval globals [] Term.Auto) in
+  let* () = check_one "Erase.closed" (Erase.closed Term.Auto) in
+  check_one "Check.infer" (Check.infer globals Check.empty_ctx Quantity.Many Term.Auto)
+
+(* A12: a builtin type former reports Builtin_not_eliminable; a
+   Provisional inductive still reports Ind_incomplete, in the same case,
+   so the split is shown to be a split. *)
+let a12_opaque_of_type (name : string) (ty_name : string) (g : Global.t) : Global.t =
+  Global.add name
+    (Global.Def
+       {
+         Global.ty = Term.Global ty_name;
+         def = Term.Univ Level.zero;
+         reducible = false;
+         rec_arg = None;
+         partial = false;
+       })
+    g
+
+let a12_match_on (scrut_name : string) : Term.t =
+  Term.Match { scrut = Term.Global scrut_name; scrut_q = qw; motive = None; branches = [] }
+
+let case_builtin_vs_provisional (globals : Global.t) () : (unit, string) result =
+  let attempt =
+    let* g = Check.declare_builtin globals ~name:"A12String" ~params:[] in
+    let* g =
+      Check.declare_ind g ~name:"A12Prov" ~params:[] ~indices:[] ~level:Level.zero
+    in
+    let g = a12_opaque_of_type "a12sbad" "A12String" g in
+    let g = a12_opaque_of_type "a12pbad" "A12Prov" g in
+    Ok g
+  in
+  attempt
+  |> Result.fold
+       ~ok:(fun g ->
+         let builtin_result = Check.infer g Check.empty_ctx Quantity.Many (a12_match_on "a12sbad") in
+         let prov_result = Check.infer g Check.empty_ctx Quantity.Many (a12_match_on "a12pbad") in
+         builtin_result
+         |> Result.fold
+              ~ok:(fun _ -> Error "A12: match on a builtin-typed neutral was accepted")
+              ~error:(fun e1 ->
+                Printf.printf "  expected error (Builtin_not_eliminable): %s\n" (Error.to_string e1);
+                if not (String.equal (Error.tag e1) "Builtin_not_eliminable") then
+                  Error ("A12: builtin case wrong error: " ^ Error.to_string e1)
+                else
+                  prov_result
+                  |> Result.fold
+                       ~ok:(fun _ -> Error "A12: match on a provisional-typed neutral was accepted")
+                       ~error:(fun e2 ->
+                         Printf.printf "  expected error (Ind_incomplete): %s\n"
+                           (Error.to_string e2);
+                         if String.equal (Error.tag e2) "Ind_incomplete" then Ok ()
+                         else Error ("A12: provisional case wrong error: " ^ Error.to_string e2))))
+       ~error:(fun e -> Error ("A12: " ^ Error.to_string e))
+
+(* M4 Stage B: the axiom entry kind. *)
+
+(* B1: define_axiom installs an opaque global: it evaluates to a bare
+   neutral over its own name (no [def] to unfold to, exactly like a
+   Prim), and is not convertible with an unrelated canonical value. *)
+let case_define_axiom_opaque (globals : Global.t) () : (unit, string) result =
+  let* g = Check.define_axiom globals ~name:"ax_b1" ~ty:nat |> Result.map_error Error.to_string in
+  let* v = Eval.eval g [] (Term.Global "ax_b1") |> Result.map_error Error.to_string in
+  let* zv = Eval.eval g [] nzero |> Result.map_error Error.to_string in
+  let* conv_to_zero = Eval.conv g 0 v zv |> Result.map_error Error.to_string in
+  match v with
+  | Value.VNeutral (Value.HGlobal "ax_b1", []) ->
+      if conv_to_zero then Error "B1: ax_b1 is wrongly convertible with zero" else Ok ()
+  | Value.VNeutral (_, _) -> Error "B1: ax_b1 evaluated to the wrong neutral shape"
+  | Value.VUniv _ | Value.VPi (_, _, _, _) | Value.VLam (_, _) | Value.VInd (_, _)
+  | Value.VCtor (_, _) | Value.VLit _ ->
+      Error "B1: define_axiom did not install an opaque neutral global"
+
+(* B2: an axiom used at quantity mode w is Axiom_runtime_use; the same
+   global at mode 0 succeeds, with its stored type. *)
+let case_axiom_runtime_use (globals : Global.t) () : (unit, string) result =
+  let* g = Check.define_axiom globals ~name:"ax_b2" ~ty:nat |> Result.map_error Error.to_string in
+  let* () =
+    Check.infer g Check.empty_ctx Quantity.Many (Term.Global "ax_b2")
+    |> Result.fold
+         ~ok:(fun _ -> Error "B2: axiom accepted at quantity Many")
+         ~error:(fun e ->
+           Printf.printf "  expected error (Axiom_runtime_use): %s\n" (Error.to_string e);
+           if String.equal (Error.tag e) "Axiom_runtime_use" then Ok ()
+           else Error ("B2: wrong error: " ^ Error.to_string e))
+  in
+  let* _tm, ty_v =
+    Check.infer g Check.empty_ctx Quantity.Zero (Term.Global "ax_b2")
+    |> Result.map_error Error.to_string
+  in
+  let* want_v = Eval.eval g [] nat |> Result.map_error Error.to_string in
+  let* ok = Eval.conv g 0 ty_v want_v |> Result.map_error Error.to_string in
+  if ok then Ok () else Error "B2: axiom's stored type at mode 0 is not Nat"
+
+(* B3: define_axiom rejects a duplicate name, exactly like [define]. *)
+let case_axiom_duplicate (globals : Global.t) () : (unit, string) result =
+  Check.define_axiom globals ~name:"Nat" ~ty:ty0
+  |> Result.fold
+       ~ok:(fun _g -> Error "B3: define_axiom accepted a duplicate name (Nat)")
+       ~error:(fun e ->
+         if String.equal (Error.tag e) "Duplicate_global" then Ok ()
+         else Error ("B3: wrong error: " ^ Error.to_string e))
+
+(* B4: an axiom is not a def, an ind, a ctor, or a prim; [entry_ty]
+   still returns its stored type. *)
+let case_axiom_not_other_kinds (globals : Global.t) () : (unit, string) result =
+  let* g = Check.define_axiom globals ~name:"ax_b4" ~ty:nat |> Result.map_error Error.to_string in
+  let* entry =
+    Global.find "ax_b4" g |> Option.to_result ~none:"B4: ax_b4 not found after define_axiom"
+  in
+  let* () =
+    if Option.is_some (Global.def_of entry) then Error "B4: def_of returned Some for an axiom"
+    else Ok ()
+  in
+  let* () =
+    if Option.is_some (Global.ind_of entry) then Error "B4: ind_of returned Some for an axiom"
+    else Ok ()
+  in
+  let* () =
+    if Option.is_some (Global.ctor_of entry) then Error "B4: ctor_of returned Some for an axiom"
+    else Ok ()
+  in
+  let* () =
+    if Option.is_some (Global.prim_of entry) then Error "B4: prim_of returned Some for an axiom"
+    else Ok ()
+  in
+  let* got_ty = Eval.eval g [] (Global.entry_ty entry) |> Result.map_error Error.to_string in
+  let* want_ty = Eval.eval g [] nat |> Result.map_error Error.to_string in
+  let* ok = Eval.conv g 0 got_ty want_ty |> Result.map_error Error.to_string in
+  if ok then Ok () else Error "B4: entry_ty did not return the stored type"
+
+(* --- M4 Stage C: the executable erasure backstop --- *)
+
+(* C1: [Eterm.mentions] is exhaustive and correct. A single probe shape
+   buries an [EGlobal] under [ELam], [EApp], [ELet] and an [EMatch]
+   branch; asserting [true] on the buried name and [false] on a
+   different name of the same shape rules out both a missed arm and a
+   name-blind walk. *)
+let case_eterm_mentions_exhaustive () : (unit, string) result =
+  let probe (target : string) : Eterm.t =
+    Eterm.ELam
+      ( "x",
+        Eterm.EApp
+          ( Eterm.EErased,
+            Eterm.ELet
+              ( "y",
+                Eterm.EVar 0,
+                Eterm.EMatch (Eterm.EVar 0, [ ("ctorA", [ "p" ], Eterm.EGlobal target) ]) ) ) )
+  in
+  match () with
+  | () when not (Eterm.mentions "needle" (probe "needle")) ->
+      Error "C1: Eterm.mentions missed an EGlobal buried under ELam/EApp/ELet/EMatch"
+  | () when Eterm.mentions "needle" (probe "other") ->
+      Error "C1: Eterm.mentions false-matched a differently named EGlobal"
+  | () -> Ok ()
+
+(* C3: a [Frozen] global stays neutral under application, and does not
+   even try to force its body. [loopy]'s stored body is
+   [EApp (EGlobal "loopy", EGlobal "loopy")]: forcing it would recurse
+   through [exec]'s [EGlobal] arm onto the SAME still-[GDeferred] cell
+   before ever writing back a memoized value, diverging. Seeding it with
+   [~guard:Interp.Frozen] means [exec]'s [EGlobal] arm never calls
+   [force] at all (see [Interp.exec]'s three-way match), so applying the
+   resulting neutral to a canonical constructor value cannot loop; this
+   case's own assertion is simply that it RETURNS the exact frozen
+   spine, not a hang the suite's gate-level watchdog would have to
+   catch. *)
+let case_frozen_stays_neutral () : (unit, string) result =
+  let loopy_body : Eterm.t = Eterm.EApp (Eterm.EGlobal "loopy", Eterm.EGlobal "loopy") in
+  let eglobals_with_ctor = Interp.add_ctor Interp.empty_globals ~name:"unit0" ~arity:0 in
+  let eglobals = Interp.define eglobals_with_ctor ~name:"loopy" ~guard:Interp.Frozen loopy_body in
+  let attempt =
+    let* v = Interp.exec eglobals [] (Eterm.EApp (Eterm.EGlobal "loopy", Eterm.EGlobal "unit0")) in
+    Interp.quote eglobals 0 v
+  in
+  attempt
+  |> Result.fold
+       ~ok:(fun e ->
+         let got = Pp.eterm [] e in
+         if String.equal got "(loopy unit0)" then Ok ()
+         else Error (Printf.sprintf "C3: got %s, want (loopy unit0)" got))
+       ~error:(fun e -> Error ("C3: " ^ Error.to_string e))
+
+(* --- M4 Stage D: deterministic type classes --- *)
+
+(* A single-parameter class [Cls] over a nullary key [Key], hand-built
+   exactly like [Nat]/[Opt] above: [Cls : (0 A : Type 0) -> Type 0] with
+   sole constructor [mkCls : (x : A) -> Cls A], and [Key : Type 0] with
+   sole constructor [mkKey : Key]. *)
+let d_cls_ctor_ty : Term.t =
+  Term.Pi (qw, "x", Term.Var 0, Term.App (qw, Term.Global "Cls", Term.Var 1))
+
+let d_build_cls_key (g : Global.t) : (Global.t, Error.t) result =
+  let* g =
+    Check.declare_ind g ~name:"Cls" ~params:[ (q0, "A", ty0) ] ~indices:[] ~level:Level.zero
+  in
+  let* g = Check.define_ind g ~name:"Cls" ~ctors:[ ("mkCls", d_cls_ctor_ty) ] in
+  let* g = Check.declare_ind g ~name:"Key" ~params:[] ~indices:[] ~level:Level.zero in
+  Check.define_ind g ~name:"Key" ~ctors:[ ("mkKey", Term.Global "Key") ]
+
+let d_inst_ty : Term.t = Term.App (qw, Term.Global "Cls", Term.Global "Key")
+let d_inst_def : Term.t = Term.App (qw, Term.App (qw, Term.Global "mkCls", Term.Global "Key"), Term.Global "mkKey")
+
+let d_build_inst_cls_key (g : Global.t) : (Global.t, Error.t) result =
+  let* g = d_build_cls_key g in
+  Check.define g ~name:"inst$Cls$Key" ~reducible:true ~ty:d_inst_ty ~def:d_inst_def
+
+let d_build_wrap (g : Global.t) : (Global.t, Error.t) result =
+  Check.declare_ind g ~name:"Wrap" ~params:[ (q0, "A", ty0) ] ~indices:[] ~level:Level.zero
+
+(* D1: Auto resolves from the expected type: the resolved term prints as
+   exactly the mangled instance global, no App wrapping (the instance is
+   ground, its own type has no leading Pi). *)
+let case_auto_resolves_from_expected (globals : Global.t) () : (unit, string) result =
+  let* g = d_build_inst_cls_key globals |> Result.map_error Error.to_string in
+  let expected_v = Value.VInd ("Cls", [ Value.VInd ("Key", []) ]) in
+  let* tm =
+    Check.check g Check.empty_ctx qw Term.Auto expected_v |> Result.map_error Error.to_string
+  in
+  let got = Pp.term [] tm in
+  if String.equal got "inst$Cls$Key" then Ok ()
+  else Error (Printf.sprintf "D1: got %s, want inst$Cls$Key" got)
+
+(* D2: Auto against a non-class expected type is Inst_unresolved. *)
+let case_auto_non_class_unresolved (globals : Global.t) () : (unit, string) result =
+  let* g = d_build_inst_cls_key globals |> Result.map_error Error.to_string in
+  Check.check g Check.empty_ctx qw Term.Auto (Value.VUniv Level.zero)
+  |> Result.fold
+       ~ok:(fun _ -> Error "D2: Auto against Type 0 unexpectedly resolved")
+       ~error:(fun e ->
+         Printf.printf "  expected error (Inst_unresolved): %s\n" (Error.to_string e);
+         if String.equal (Error.tag e) "Inst_unresolved" then Ok ()
+         else Error ("D2: wrong error: " ^ Error.to_string e))
+
+(* D3: Auto against a class applied to a variable is Inst_unresolved:
+   there is no instance for a type VARIABLE, only for a concrete head. *)
+let case_auto_class_var_unresolved (globals : Global.t) () : (unit, string) result =
+  let* g = d_build_inst_cls_key globals |> Result.map_error Error.to_string in
+  let ctx = Check.bind "x" q0 (Value.VUniv Level.zero) Check.empty_ctx in
+  let expected_v = Value.VInd ("Cls", [ Value.VNeutral (Value.HVar 0, []) ]) in
+  Check.check g ctx qw Term.Auto expected_v
+  |> Result.fold
+       ~ok:(fun _ -> Error "D3: Auto against (Cls x) unexpectedly resolved")
+       ~error:(fun e ->
+         Printf.printf "  expected error (Inst_unresolved): %s\n" (Error.to_string e);
+         if String.equal (Error.tag e) "Inst_unresolved" then Ok ()
+         else Error ("D3: wrong error: " ^ Error.to_string e))
+
+(* D4: a missing instance (Cls and Key both exist, but no inst$Cls$Key)
+   is Inst_unresolved. *)
+let case_auto_missing_instance_unresolved (globals : Global.t) () : (unit, string) result =
+  let* g = d_build_cls_key globals |> Result.map_error Error.to_string in
+  let expected_v = Value.VInd ("Cls", [ Value.VInd ("Key", []) ]) in
+  Check.check g Check.empty_ctx qw Term.Auto expected_v
+  |> Result.fold
+       ~ok:(fun _ -> Error "D4: Auto against a missing instance unexpectedly resolved")
+       ~error:(fun e ->
+         Printf.printf "  expected error (Inst_unresolved): %s\n" (Error.to_string e);
+         if String.equal (Error.tag e) "Inst_unresolved" then Ok ()
+         else Error ("D4: wrong error: " ^ Error.to_string e))
+
+(* D5: a duplicate instance key is Duplicate_global, with "inst$" in the
+   message. *)
+let case_duplicate_instance_is_duplicate_global (globals : Global.t) () : (unit, string) result =
+  let* g = d_build_cls_key globals |> Result.map_error Error.to_string in
+  let* g2 =
+    Check.define_instance g ~name:"inst$Cls$Key" ~ty:d_inst_ty ~def:d_inst_def
+    |> Result.map_error Error.to_string
+  in
+  Check.define_instance g2 ~name:"inst$Cls$Key" ~ty:d_inst_ty ~def:d_inst_def
+  |> Result.fold
+       ~ok:(fun _ -> Error "D5: a duplicate instance key unexpectedly registered")
+       ~error:(fun e ->
+         Printf.printf "  expected error (Duplicate_global): %s\n" (Error.to_string e);
+         if String.equal (Error.tag e) "Duplicate_global" && contains_substring (Error.to_string e) "inst$"
+         then Ok ()
+         else Error ("D5: wrong error: " ^ Error.to_string e))
+
+(* D6: a ground instance at an applied key (Cls (Wrap Key), no type
+   binder) is Inst_bad_shape: [Wrap] declared (params known, no ctors
+   needed for a TYPE-level check) so [Cls (Wrap Key)] kind-checks, but
+   the key is applied to one argument against zero recorded type
+   binders. *)
+let case_ground_applied_key_is_bad_shape (globals : Global.t) () : (unit, string) result =
+  let* g = d_build_cls_key globals |> Result.map_error Error.to_string in
+  let* g = d_build_wrap g |> Result.map_error Error.to_string in
+  let ty =
+    Term.App (qw, Term.Global "Cls", Term.App (qw, Term.Global "Wrap", Term.Global "Key"))
+  in
+  Check.define_instance g ~name:"inst$Cls$Wrap" ~ty ~def:(Term.Global "Key")
+  |> Result.fold
+       ~ok:(fun _ -> Error "D6: a ground instance at an applied key unexpectedly registered")
+       ~error:(fun e ->
+         Printf.printf "  expected error (Inst_bad_shape): %s\n" (Error.to_string e);
+         if String.equal (Error.tag e) "Inst_bad_shape" then Ok ()
+         else Error ("D6: wrong error: " ^ Error.to_string e))
+
+(* D7: instance resolution is fuel bounded: [build_instance] called
+   directly with fuel 0 is Inst_depth, whatever [ity] is. M4 fixes
+   round 3 (opus R3-1): the bare fuel int is now an [inst_state] (fuel
+   plus the memo plus the goal the error names), so the call spells
+   [Check.inst_start 0 ity]. The assertion is unchanged: fuel 0 is
+   Inst_depth, and the memo starts EMPTY so it cannot answer instead. *)
+let case_instance_resolution_fuel_bounded (globals : Global.t) () : (unit, string) result =
+  let* g = d_build_inst_cls_key globals |> Result.map_error Error.to_string in
+  let ity = Value.VInd ("Cls", [ Value.VInd ("Key", []) ]) in
+  Check.build_instance g Check.empty_ctx (Check.inst_start 0 ity) ity []
+    (Term.Global "inst$Cls$Key")
+  |> Result.fold
+       ~ok:(fun _ -> Error "D7: build_instance with fuel 0 unexpectedly resolved")
+       ~error:(fun e ->
+         Printf.printf "  expected error (Inst_depth): %s\n" (Error.to_string e);
+         if String.equal (Error.tag e) "Inst_depth" then Ok ()
+         else Error ("D7: wrong error: " ^ Error.to_string e))
+
+(* D7b: M4 fixes round 3 (opus R3-6). [Inst_depth]'s payload names the
+   ORIGINAL query, not the partially peeled instance type the call
+   happens to be holding when the budget runs out. Round 2 rendered
+   [ity], so a query at nesting 20 was reported as a four-level Pi
+   telescope naming neither the user's goal nor an unresolvable one.
+   Built the same way the failure reaches it: [goal] is a class
+   application, [ity] is a Pi, and they are DIFFERENT values, so the
+   message can only be right for one reason. *)
+let case_inst_depth_names_the_query (globals : Global.t) () : (unit, string) result =
+  let* g = d_build_inst_cls_key globals |> Result.map_error Error.to_string in
+  let* g = d_build_wrap g |> Result.map_error Error.to_string in
+  let cls_key = Term.App (qw, Term.Global "Cls", Term.Global "Key") in
+  let* ity =
+    Eval.eval g [] (Term.Pi (qw, "_", cls_key, cls_key)) |> Result.map_error Error.to_string
+  in
+  let goal = Value.VInd ("Cls", [ Value.VInd ("Wrap", [ Value.VInd ("Key", []) ]) ]) in
+  Check.build_instance g Check.empty_ctx (Check.inst_start 0 goal) ity []
+    (Term.Global "inst$Cls$Wrap")
+  |> Result.fold
+       ~ok:(fun _ -> Error "D7b: build_instance with fuel 0 unexpectedly resolved")
+       ~error:(fun e ->
+         let msg = Error.to_string e in
+         Printf.printf "  expected error (Inst_depth): %s\n" msg;
+         let names_goal = contains_substring msg "(Cls (Wrap Key))" in
+         let names_ity = contains_substring msg "->" in
+         match () with
+         | () when not (String.equal (Error.tag e) "Inst_depth") ->
+             Error ("D7b: wrong error: " ^ msg)
+         | () when not names_goal -> Error ("D7b: message does not name the query: " ^ msg)
+         | () when names_ity -> Error ("D7b: message still names the peeled Pi: " ^ msg)
+         | () -> Ok ())
+
+(* D8: checker output never contains Auto. A small exhaustive [Term.t]
+   walk, written fresh here (not reused from [lib/check.ml]) so the test
+   is an independent witness. *)
+let rec d_contains_auto (t : Term.t) : bool =
+  match t with
+  | Term.Auto -> true
+  | Term.Var _ | Term.Univ _ | Term.Lit _ | Term.Global _ -> false
+  | Term.Pi (_, _, dom, cod) -> d_contains_auto dom || d_contains_auto cod
+  | Term.Lam (_, _, body) -> d_contains_auto body
+  | Term.App (_, f, a) -> d_contains_auto f || d_contains_auto a
+  | Term.Let (_, ty, def, body) ->
+      d_contains_auto ty || d_contains_auto def || d_contains_auto body
+  | Term.Ann (tm, ty) -> d_contains_auto tm || d_contains_auto ty
+  | Term.Match { scrut; scrut_q = _; motive; branches } ->
+      d_contains_auto scrut
+      || (motive
+         |> Option.fold ~none:false ~some:(fun (mo : Term.motive) -> d_contains_auto mo.Term.m_body))
+      || List.exists (fun (_c, _bs, b) -> d_contains_auto b) branches
+
+let case_checker_output_never_contains_auto (globals : Global.t) () : (unit, string) result =
+  let* g = d_build_inst_cls_key globals |> Result.map_error Error.to_string in
+  let expected_v = Value.VInd ("Cls", [ Value.VInd ("Key", []) ]) in
+  let* tm =
+    Check.check g Check.empty_ctx qw Term.Auto expected_v |> Result.map_error Error.to_string
+  in
+  if d_contains_auto tm then
+    Error (Printf.sprintf "D8: checker output still contains Auto: %s" (Pp.term [] tm))
+  else Ok ()
+
+(* A13: M4 fixes round 4 (ctxcat r4 id 0). The motive's index binders on
+   a family with TWO indices, which is the smallest family that can tell
+   the two candidate conventions apart (Vec has one, and one index is
+   symmetric under any reordering). The convention, stated once on
+   [Term.motive]: [m_idx] is in DECLARATION order (outermost first),
+   while inside [m_body] de Bruijn 0 is [m_self], de Bruijn 1 is the LAST
+   element of [m_idx] and de Bruijn [m] is its FIRST. Both halves are
+   asserted here, and each of the three modules that reads the field is
+   on the hook for one of them:
+
+   - Check.infer BINDS them, and it binds by list order, so with
+     [m_idx = ["i"; "c"]] and indices declared [Nat] then [Bool] the
+     motive body [Var 1] is [c], the SECOND index, whose value at this
+     scrutinee is [Bool]. The branch body is [true], so the whole match
+     type-checks only under that reading: reverse the order anywhere in
+     the binding walk and [Var 1] becomes [Nat], which [true] fails.
+   - Eval.quote round-trips it: evaluating and quoting the checked term
+     must reproduce the same motive, indices included.
+   - Pp.term prints the "in" clause in LIST order, so the round-tripped
+     term must read "in A13Tw i c", not "in A13Tw c i".
+
+   The finding that prompted this read the eval.ml comment's "index" as
+   a position in [m_idx] rather than a de Bruijn index and concluded the
+   three comments contradicted each other. They did not; the comments
+   are now explicit about which axis they mean, and this case is the
+   executable statement of the convention.
+
+   M4 fixes round 5 (opus R5-1): round 4's version of this case pinned
+   NEITHER of the two mechanisms [Term.motive]'s comment names. Executed
+   in a scratch copy, both of these mutations kept the whole battery at
+   274 PASS / 0 FAIL:
+
+   - lib/pp.ml, [mo.Term.m_self :: List.rev mo.Term.m_idx @ names]
+     with the [List.rev] DROPPED. The printed motive body silently
+     flipped from the second index to the first, and every assertion
+     here read the "in" clause, which the mutation does not touch.
+   - lib/eval.ml, [List.init m (fun i -> Value.var (size + m - 1 - i))]
+     replaced by [size + i]. [Eval.quote] copies [m_idx] verbatim, so
+     the "in" clause survives any level arithmetic; only [m_body]
+     moves, and round 4 never asserted the round-tripped body.
+
+   Both are pinned now, on the two axes independently:
+
+   - the motive BODY is [a13snd i c], which names BOTH index binders in
+     ORDER, on a family whose two indices are DIFFERENT types at this
+     scrutinee ([Nat] and [Bool]). So the printed checked term reads
+     "return ((a13snd i) c)" and a dropped [List.rev] prints
+     "((a13snd c) i)" instead: a textual FAIL, not a silent flip.
+   - the ROUND-TRIPPED motive body is asserted STRUCTURALLY, as
+     [Term.Var 1], which is [Pp]-independent, so a skewed level in
+     [Eval.quote] ([Term.Var 2], the FIRST index) fails here even if
+     the printer is broken in the same run.
+   - the inferred TYPE is still asserted exactly ("Bool"), which is the
+     evaluated result and the pin on [Check.infer]'s binding walk:
+     [a13snd] is reducible and returns its SECOND argument, so a flip
+     anywhere in the binding walk makes the motive [Nat] and the
+     branch body [true] stops checking. *)
+
+(* [a13snd a b = b], reducible, so the motive body [a13snd i c] both
+   NAMES the two index binders in order (for the printed pin) and
+   REDUCES to the second one (for the type pin). An opaque selector
+   would leave the motive a neutral type that [true] cannot check
+   against. *)
+let a13_snd (g : Global.t) : Global.t =
+  Global.add "a13snd"
+    (Global.Def
+       {
+         Global.ty = Term.Pi (qw, "a", ty0, Term.Pi (qw, "b", ty0, ty0));
+         def = Term.Lam (qw, "a", Term.Lam (qw, "b", Term.Var 0));
+         reducible = true;
+         rec_arg = None;
+         partial = false;
+       })
+    g
+
+(* The motive of an already-quoted term, or [None] for every shape
+   [Eval.quote]'s FMatch arm cannot have produced. [None] is a FAIL at
+   the call site, never a silently skipped assertion. *)
+let a13_motive_of (tm : Term.t) : Term.motive option =
+  match tm with
+  | Term.Match { scrut = _; scrut_q = _; motive; branches = _ } -> motive
+  | Term.Var _ | Term.Univ _
+  | Term.Pi (_, _, _, _)
+  | Term.Lam (_, _, _)
+  | Term.App (_, _, _)
+  | Term.Let (_, _, _, _)
+  | Term.Ann (_, _)
+  | Term.Global _ | Term.Lit _ | Term.Auto ->
+      None
+
+(* De Bruijn 1 inside [m_body] is the LAST element of [m_idx], which is
+   [c], the Bool index. Read structurally so this assertion survives a
+   broken printer. *)
+let a13_body_is_second_index (mo : Term.motive) : bool =
+  match mo.Term.m_body with
+  | Term.Var 1 -> true
+  | Term.Var _ | Term.Univ _
+  | Term.Pi (_, _, _, _)
+  | Term.Lam (_, _, _)
+  | Term.App (_, _, _)
+  | Term.Let (_, _, _, _)
+  | Term.Ann (_, _)
+  | Term.Global _ | Term.Lit _ | Term.Auto | Term.Match _ ->
+      false
+
+let a13_declare (g : Global.t) : (Global.t, Error.t) result =
+  (* [Bool] is not in the shared kernel globals (the M0 fixture set is
+     Church-encoded), so this case declares its own, exactly as the
+     uniform-motive case above does. *)
+  let* g = Check.declare_ind g ~name:"Bool" ~params:[] ~indices:[] ~level:Level.zero in
+  let* g = Check.define_ind g ~name:"Bool" ~ctors:[ ("true", bool_ty); ("false", bool_ty) ] in
+  let* g =
+    Check.declare_ind g ~name:"A13Tw" ~params:[]
+      ~indices:[ (q0, "p", ty0); (q0, "q", ty0) ]
+      ~level:Level.one
+  in
+  Check.define_ind g ~name:"A13Tw"
+    ~ctors:[ ("a13tw", Term.App (qw, Term.App (qw, Term.Global "A13Tw", nat), bool_ty)) ]
+
+(* [m_body] is [a13snd i c]: de Bruijn 2 is [i] (the FIRST element of
+   [m_idx]) and de Bruijn 1 is [c] (the LAST), so the body names both
+   binders in declaration order and reduces to [c]. *)
+let a13_motive : Term.motive =
+  {
+    Term.m_ind = Some "A13Tw";
+    m_idx = [ "i"; "c" ];
+    m_self = "x";
+    m_body = Term.App (qw, Term.App (qw, Term.Global "a13snd", Term.Var 2), Term.Var 1);
+  }
+
+(* The scrutinee is an OPAQUE neutral of type [A13Tw Nat Bool], not the
+   constructor: a canonical scrutinee makes the match REDUCE, and a
+   reduced term has no motive left for [Eval.quote]'s FMatch arm (the
+   arm this case exists to exercise) to round-trip. *)
+let a13_opaque (g : Global.t) : Global.t =
+  Global.add "a13op"
+    (Global.Def
+       {
+         Global.ty = Term.App (qw, Term.App (qw, Term.Global "A13Tw", nat), bool_ty);
+         def = Term.Global "a13tw";
+         reducible = false;
+         rec_arg = None;
+         partial = false;
+       })
+    g
+
+let a13_match : Term.t =
+  Term.Match
+    {
+      scrut = Term.Global "a13op";
+      scrut_q = qw;
+      motive = Some a13_motive;
+      branches = [ ("a13tw", [], Term.Global "true") ];
+    }
+
+let case_motive_index_binder_order (globals : Global.t) () : (unit, string) result =
+  let attempt =
+    let* g = a13_declare globals in
+    let g = a13_opaque g in
+    let g = a13_snd g in
+    let* tm, ty = Check.infer g Check.empty_ctx qw a13_match in
+    let* ty_t = Eval.quote g 0 ty in
+    let* tm_v = Eval.eval g [] tm in
+    let* tm_rt = Eval.quote g 0 tm_v in
+    Ok (Pp.term [] tm, Pp.term [] ty_t, Pp.term [] tm_rt, a13_motive_of tm_rt)
+  in
+  attempt
+  |> Result.fold
+       ~ok:(fun (printed, ty_s, round_tripped, rt_motive) ->
+         Printf.printf "  A13 motive: %s\n" printed;
+         Printf.printf "  A13 round trip: %s\n" round_tripped;
+         let rt_body_ok =
+           rt_motive |> Option.fold ~none:false ~some:a13_body_is_second_index
+         in
+         match () with
+         | () when not (String.equal ty_s "Bool") ->
+             Error (Printf.sprintf "A13: result type got %s, want Bool (de Bruijn 1 is the LAST index)" ty_s)
+         | () when not (contains_substring printed "in A13Tw i c") ->
+             Error (Printf.sprintf "A13: printed motive is not in list order: %s" printed)
+         | () when contains_substring printed "in A13Tw c i" ->
+             Error (Printf.sprintf "A13: printed motive is reversed: %s" printed)
+         (* M4 fixes round 5 (opus R5-1): the printed BODY, not only the
+            "in" clause. Dropping [Pp.term]'s [List.rev m_idx] leaves the
+            "in" clause untouched and flips exactly this. *)
+         | () when not (contains_substring printed "return ((a13snd i) c)") ->
+             Error (Printf.sprintf "A13: printed motive body is not in de Bruijn order: %s" printed)
+         | () when contains_substring printed "((a13snd c) i)" ->
+             Error (Printf.sprintf "A13: printed motive body is reversed: %s" printed)
+         | () when not (contains_substring round_tripped "in A13Tw i c") ->
+             Error (Printf.sprintf "A13: quote lost the index order: %s" round_tripped)
+         (* M4 fixes round 5 (opus R5-1): [Eval.quote] copies [m_idx]
+            verbatim, so the "in" clause above cannot see its level
+            arithmetic. The round-tripped BODY can, and is read
+            STRUCTURALLY so a broken printer cannot mask it. *)
+         | () when not rt_body_ok ->
+             Error
+               (Printf.sprintf
+                  "A13: round-tripped motive body is not de Bruijn 1 (the LAST index): %s"
+                  round_tripped)
+         | () when not (contains_substring round_tripped "return c with") ->
+             Error (Printf.sprintf "A13: round-tripped motive body prints wrong: %s" round_tripped)
+         | () -> Ok ())
+       ~error:(fun e -> Error ("A13: " ^ Error.to_string e))
+
+(* D7c: M4 fixes round 4 (opus R4-5). [Inst_depth]'s payload is ELIDED,
+   so the one stderr line the driver contract promises is a BOUNDED
+   line. Round 3 made the payload name the original query, which is the
+   right payload, but [pp_value] then rendered the whole query on the
+   failure path: measured on a wide query, one line of 31,748 bytes. The
+   goal here is a deep [Wrap] nest whose printed form is far past the
+   cap, so the assertion is on the LENGTH: the message must stay under a
+   bound that does not move with the input. D7b above pins that a SHORT
+   goal is still named in full, so the cap cannot be satisfied by
+   dropping the payload. *)
+let rec d7c_nest (n : int) (v : Value.t) : Value.t =
+  match () with
+  | () when n <= 0 -> v
+  | () -> d7c_nest (n - 1) (Value.VInd ("Wrap", [ v ]))
+
+let case_inst_depth_message_is_bounded (globals : Global.t) () : (unit, string) result =
+  let* g = d_build_inst_cls_key globals |> Result.map_error Error.to_string in
+  let* g = d_build_wrap g |> Result.map_error Error.to_string in
+  let cls_key = Term.App (qw, Term.Global "Cls", Term.Global "Key") in
+  let* ity =
+    Eval.eval g [] (Term.Pi (qw, "_", cls_key, cls_key)) |> Result.map_error Error.to_string
+  in
+  let goal = Value.VInd ("Cls", [ d7c_nest 400 (Value.VInd ("Key", [])) ]) in
+  Check.build_instance g Check.empty_ctx (Check.inst_start 0 goal) ity []
+    (Term.Global "inst$Cls$Wrap")
+  |> Result.fold
+       ~ok:(fun _ -> Error "D7c: build_instance with fuel 0 unexpectedly resolved")
+       ~error:(fun e ->
+         let msg = Error.to_string e in
+         let n = String.length msg in
+         Printf.printf "  expected error (Inst_depth), %d bytes\n" n;
+         let bare = Error.to_string (Error.Inst_depth "") in
+         let budget = String.length bare + Check.goal_print_cap + 3 in
+         match () with
+         | () when not (String.equal (Error.tag e) "Inst_depth") ->
+             Error ("D7c: wrong error: " ^ Error.to_string e)
+         | () when n > budget ->
+             Error (Printf.sprintf "D7c: message is %d bytes, budget %d" n budget)
+         | () when not (contains_substring msg "...") ->
+             Error "D7c: an over-cap goal was not marked elided"
+         | () -> Ok ())
+
+(* D7d: M4 fixes round 5 (opus R5-5, ctxcat r5 id 15). D7c pins ONE
+   constructor; the payload is shared by a FAMILY. Measured on the
+   round-4 binary, worst single stderr line per file: Inst_depth 503
+   bytes (capped), Inst_unresolved 32,122, Mismatch 800,162 (two
+   uncapped payloads). [Inst_unresolved] is also the far more reachable
+   of the two instance errors: it fires on any missing or misspelled
+   instance, while [Inst_depth] is documented as a backstop that must
+   not fire on legitimate input.
+
+   The strongest available oracle is INDEPENDENCE, not a constant: the
+   same shape is built at two very different sizes and the two messages
+   must have the SAME length. That is the property the cap exists to
+   deliver ("a diagnostic's size is a property of the DIAGNOSTIC and
+   never of the input"), and unlike a magic number it cannot be
+   satisfied by moving [goal_print_cap]. The short-message half is
+   asserted too, so the cap cannot be met by dropping the payload. *)
+let d7d_nest_t (n : int) (t : Term.t) : Term.t =
+  List.fold_left (fun acc _i -> Term.App (qw, Term.Global "Wrap", acc)) t (List.init n Fun.id)
+
+let d7d_opaque (name : string) (ty : Term.t) (g : Global.t) : Global.t =
+  Global.add name
+    (Global.Def { Global.ty; def = Term.Global "mkKey"; reducible = false; rec_arg = None; partial = false })
+    g
+
+(* The [Mismatch] message for a [Wrap^n Key]-typed global checked against
+   [Wrap^(n + 1) Key]: BOTH payloads are printed types. *)
+let d7d_mismatch_msg (g : Global.t) (n : int) : (string, string) result =
+  let g = d7d_opaque (Printf.sprintf "d7dA%d" n) (d7d_nest_t n (Term.Global "Key")) g in
+  let* expected_v =
+    Eval.eval g [] (d7d_nest_t (n + 1) (Term.Global "Key")) |> Result.map_error Error.to_string
+  in
+  Check.check g Check.empty_ctx qw (Term.Global (Printf.sprintf "d7dA%d" n)) expected_v
+  |> Result.fold
+       ~ok:(fun _ -> Error (Printf.sprintf "D7d: Wrap^%d checked against Wrap^%d" n (n + 1)))
+       ~error:(fun e ->
+         if String.equal (Error.tag e) "Mismatch" then Ok (Error.to_string e)
+         else Error ("D7d: wrong error: " ^ Error.to_string e))
+
+let case_error_payloads_are_bounded (globals : Global.t) () : (unit, string) result =
+  let* g = d_build_inst_cls_key globals |> Result.map_error Error.to_string in
+  let* g = d_build_wrap g |> Result.map_error Error.to_string in
+  let* small = d7d_mismatch_msg g 300 in
+  let* large = d7d_mismatch_msg g 900 in
+  let* short_msg = d7d_mismatch_msg g 1 in
+  (* [Cls] has an instance for [Key] only, so a [Wrap] nest under it is
+     Inst_unresolved on the ORDINARY path, with the whole query printed. *)
+  let unres_goal (n : int) : Value.t = Value.VInd ("Cls", [ d7c_nest n (Value.VInd ("Wrap", [])) ]) in
+  let unres (n : int) : (string, string) result =
+    Check.check g Check.empty_ctx qw Term.Auto (unres_goal n)
+    |> Result.fold
+         ~ok:(fun _ -> Error (Printf.sprintf "D7d: a Wrap^%d query unexpectedly resolved" n))
+         ~error:(fun e ->
+           if String.equal (Error.tag e) "Inst_unresolved" then Ok (Error.to_string e)
+           else Error ("D7d: wrong error: " ^ Error.to_string e))
+  in
+  let* u_small = unres 300 in
+  let* u_large = unres 900 in
+  Printf.printf "  D7d Mismatch %d/%d bytes at 300/900, Inst_unresolved %d/%d\n"
+    (String.length small) (String.length large) (String.length u_small) (String.length u_large);
+  match () with
+  | () when not (Int.equal (String.length small) (String.length large)) ->
+      Error
+        (Printf.sprintf "D7d: Mismatch length tracks the input (%d at 300, %d at 900)"
+           (String.length small) (String.length large))
+  | () when not (contains_substring small "...") ->
+      Error "D7d: an over-cap Mismatch payload was not marked elided"
+  | () when not (Int.equal (String.length u_small) (String.length u_large)) ->
+      Error
+        (Printf.sprintf "D7d: Inst_unresolved length tracks the input (%d at 300, %d at 900)"
+           (String.length u_small) (String.length u_large))
+  | () when not (contains_substring u_small "...") ->
+      Error "D7d: an over-cap Inst_unresolved payload was not marked elided"
+  (* the short half: a small Mismatch still prints BOTH types in full,
+     so the bound cannot be met by dropping the payload. *)
+  (* M4 fixes round 5 (opus R5-6a): the cut lands on a CHARACTER
+     boundary. [ascii] is exactly at the cap and keeps every byte;
+     [straddle] puts the two-byte U+00E9 across it, so a raw byte cut
+     would keep a lone 0xC3 (executed on the round-4 binary: a UTF-8
+     decode of the stderr line fails at that byte) and the boundary cut
+     drops it. Asserted on [Check.elide] directly, because the exact cut
+     offset is the property, not the message that carries it. *)
+  | () when
+      not
+        (String.equal
+           (Check.elide (String.make Check.goal_print_cap 'x'))
+           (String.make Check.goal_print_cap 'x')) ->
+      Error "D7d: a string exactly at the cap was elided"
+  | () when
+      not
+        (String.equal
+           (Check.elide (String.make (Check.goal_print_cap - 1) 'x' ^ "\xc3\xa9\xc3\xa9"))
+           (String.make (Check.goal_print_cap - 1) 'x' ^ "..."))
+    ->
+      Error "D7d: the cut did not back up to a UTF-8 character boundary"
+  | () when contains_substring short_msg "..." ->
+      Error ("D7d: a short Mismatch was elided: " ^ short_msg)
+  | () when not (String.equal short_msg "type mismatch: expected (Wrap (Wrap Key)), found (Wrap Key)")
+    ->
+      Error ("D7d: short Mismatch text changed: " ^ short_msg)
+  | () -> Ok ()
+
+(* D9f: M4 fixes round 5 (ctxcat r5 id 16). The PER-KEY-COST dimension of
+   [Check.inst_fuel]. Round 4 took the MAX of a depth-scaled term and a
+   width-scaled term while the walk charges their PRODUCT, so the width
+   term (8 * term_size, with no per-key factor) was calibrated for the
+   shipped two-type-binder two-dictionary-binder instance alone.
+
+   ctxcat 16's construction exactly: three classes and an EIGHT-binder
+   instance per class ([(0 A) (0 B) -> C A -> C B -> D A -> D B ->
+   E A -> E B -> C (WPair A B)], which [validate_instance_shape]
+   accepts), against a balanced [D9fWPair] tree over 256 pairwise
+   distinct leaf types. Each internal key charges 2 for the type
+   binders plus 12 for the six dictionary binders, and there are three
+   classes over 255 internal nodes, so the walk charges about
+   42 (L - 1) = 10710 while the round-4 bound sat at its flat 10000
+   floor (its width term, 8 * term_size = 8184 here, carried no per-key
+   factor, and its depth term is 16 * 9 * 18 = 2592). A finite, well
+   formed, resolvable query therefore reported Inst_depth, which is
+   exactly what this number's own contract forbids. Executed as a
+   DIFFERENTIAL: with [inst_fuel] reverted to the round-4 MAX this case
+   FAILS.
+
+   Sized deliberately. The charge must clear 10000 with THIS instance
+   shape, which fixes L at 240 or more, and [Eval.eval] re-walks each
+   resolved dictionary once per occurrence (six per level, two
+   distinct), so the cost is 6^depth and L must stay at 256 or below to
+   keep the depth at 8. 256 is the only value that satisfies both, so
+   the margin over the round-4 bound is 7 percent: a hard boolean for a
+   fixed formula, but a number to re-measure if the charge accounting
+   in [build_instance] ever changes.
+
+   Kernel-level on purpose. The same shape as a surface fixture also
+   pays the mandatory candidate re-check, which walks the resolved
+   dictionary as a TREE ([Term.t] has no sharing): measured, 15 to 20s
+   for L = 256 and 47s for L = 320, an M5 hash-consing debt that has
+   nothing to do with the fuel bound under test here. *)
+let d9f_leaves : int = 256
+let d9f_classes : string list = [ "D9fPA"; "D9fPB"; "D9fPC" ]
+
+let rec d9f_tree (lo : int) (hi : int) : Value.t =
+  match () with
+  | () when hi - lo <= 1 -> Value.VInd (Printf.sprintf "D9fW%d" lo, [])
+  | () ->
+      let mid = (lo + hi) / 2 in
+      Value.VInd ("D9fWPair", [ d9f_tree lo mid; d9f_tree mid hi ])
+
+(* [(0 A : Type 0) -> (0 B : Type 0) -> D9fPA A -> D9fPA B -> D9fPB A ->
+   D9fPB B -> D9fPC A -> D9fPC B -> C (D9fWPair A B)]. Under [k] dictionary
+   binders the type binder [A] is de Bruijn [k + 1] and [B] is [k]. *)
+let d9f_pair_ty (c : string) : Term.t =
+  let doms = List.concat_map (fun cls -> [ (cls, 1); (cls, 0) ]) d9f_classes in
+  let n = List.length doms in
+  let cod =
+    Term.App
+      ( qw,
+        Term.Global c,
+        Term.App (qw, Term.App (qw, Term.Global "D9fWPair", Term.Var (n + 1)), Term.Var n) )
+  in
+  let wrap, _k =
+    List.fold_left
+      (fun ((acc : Term.t -> Term.t), (k : int)) ((cls : string), (which : int)) ->
+        ( (fun inner ->
+            acc (Term.Pi (qw, "_", Term.App (qw, Term.Global cls, Term.Var (which + k)), inner))),
+          k + 1 ))
+      ((fun inner -> inner), 0) doms
+  in
+  Term.Pi (q0, "A", ty0, Term.Pi (q0, "B", ty0, wrap cod))
+
+let d9f_build (g : Global.t) : (Global.t, Error.t) result =
+  let* g =
+    List.fold_left
+      (fun acc c ->
+        let* g = acc in
+        Check.declare_ind g ~name:c ~params:[ (q0, "A", ty0) ] ~indices:[] ~level:Level.zero)
+      (Ok g) d9f_classes
+  in
+  let* g =
+    Check.declare_ind g ~name:"D9fWPair"
+      ~params:[ (q0, "A", ty0); (q0, "B", ty0) ]
+      ~indices:[] ~level:Level.zero
+  in
+  let* g =
+    List.fold_left
+      (fun acc i ->
+        let* g = acc in
+        Check.declare_ind g ~name:(Printf.sprintf "D9fW%d" i) ~params:[] ~indices:[]
+          ~level:Level.zero)
+      (Ok g)
+      (List.init d9f_leaves Fun.id)
+  in
+  let leaf_insts =
+    List.concat_map
+      (fun c -> List.init d9f_leaves (fun i -> (c, Printf.sprintf "D9fW%d" i)))
+      d9f_classes
+  in
+  let g =
+    List.fold_left
+      (fun g (c, w) ->
+        d7d_opaque ("inst$" ^ c ^ "$" ^ w) (Term.App (qw, Term.Global c, Term.Global w)) g)
+      g leaf_insts
+  in
+  Ok
+    (List.fold_left
+       (fun g c -> d7d_opaque ("inst$" ^ c ^ "$D9fWPair") (d9f_pair_ty c) g)
+       g d9f_classes)
+
+let case_wide_query_with_wide_instance_resolves (globals : Global.t) () : (unit, string) result =
+  let* g = d9f_build globals |> Result.map_error Error.to_string in
+  let goal = Value.VInd ("D9fPA", [ d9f_tree 0 d9f_leaves ]) in
+  let* goal_t = Eval.quote g 0 goal |> Result.map_error Error.to_string in
+  let fuel = Check.inst_fuel g goal_t in
+  Printf.printf "  D9f term_size=%d fuel=%d\n" (Check.term_size goal_t) fuel;
+  Check.check g Check.empty_ctx qw Term.Auto goal
+  |> Result.fold
+       ~ok:(fun _tm -> Ok ())
+       ~error:(fun e ->
+         Error
+           (Printf.sprintf "D9f: an 8-binder instance over %d leaves did not resolve (fuel %d): %s"
+              d9f_leaves fuel (Error.to_string e)))
 
 let cases (globals : Global.t) : (string * (unit -> (unit, string) result)) list =
   [
@@ -1204,7 +2439,7 @@ let cases (globals : Global.t) : (string * (unit -> (unit, string) result)) list
     ("branch order, count, arity pinned", case_branch_shape globals);
     ( "match on a non-inductive",
       expect_infer_err globals "not-inductive" "Not_inductive"
-        (Term.Match { scrut = ty0; motive = Some ("_m", nat); branches = [] }) );
+        (Term.Match { scrut = ty0; scrut_q = qw; motive = Some (m2_motive "_m" nat); branches = [] }) );
     ("positivity rejected", case_positivity globals);
     ("ctor universe bound rejected", case_universe globals);
     ( "rec global unfolds on canonical arg",
@@ -1249,6 +2484,48 @@ let cases (globals : Global.t) : (string * (unit -> (unit, string) result)) list
       case_partial_guard_skip );
     ( "C4: Json-shaped self-recursive ctors pass positivity; List T -> T nesting is Bad_ctor",
       case_json_positivity_kernel );
+    ("A1: an indexed family declares, defines, and reports its arity", case_indexed_family_arity globals);
+    ("A2: an index binder marked w is Index_not_zero", case_index_not_zero globals);
+    ("A3: an index type above the declared universe is Index_above_universe", case_index_above_universe globals);
+    ("A4: a constructor with the wrong index count is Bad_ctor", case_bad_ctor_wrong_index_count globals);
+    ("A5: the Fording route stays blocked (result head, then positivity)", case_fording_blocked globals);
+    ("A6: index_expr_clean rejects an index expression mentioning its own family", case_index_expr_clean_unit);
+    ("A6b: index_expr_clean rejects auto in an index position (bare and nested)", case_index_expr_clean_rejects_auto);
+    ("A6c: strip_ann collapses head annotations and touches nothing else", case_strip_ann_head);
+    ("A7: the subsingleton criterion, all four shapes", case_zero_eliminable_shapes globals);
+    ("A8: subst-shaped erasure is the identity", case_subst_shaped_erasure_identity globals);
+    ("A9: a zero-branch subsingleton match erases to the erased residue", case_zero_branch_erasure_residue globals);
+    ("A10: additivity, a materialized constant motive still converts (motive record)", case_uniform_motive globals);
+    ("A11: Term.Auto is rejected by every kernel pass", case_auto_rejected_everywhere globals);
+    ("A12: a builtin type former reports Builtin_not_eliminable, split from Ind_incomplete", case_builtin_vs_provisional globals);
+    ("B1: define_axiom installs an opaque global", case_define_axiom_opaque globals);
+    ("B2: an axiom at mode w is Axiom_runtime_use, mode 0 succeeds", case_axiom_runtime_use globals);
+    ("B3: define_axiom rejects a duplicate name", case_axiom_duplicate globals);
+    ("B4: an axiom is not a def, an ind, a ctor, or a prim", case_axiom_not_other_kinds globals);
+    ("C1: Eterm.mentions is exhaustive and correct", case_eterm_mentions_exhaustive);
+    ("C3: a Frozen global stays neutral under application", case_frozen_stays_neutral);
+    ("D1: Auto resolves from the expected type", case_auto_resolves_from_expected globals);
+    ( "D2: Auto against a non-class expected type is Inst_unresolved",
+      case_auto_non_class_unresolved globals );
+    ( "D3: Auto against a class applied to a variable is Inst_unresolved",
+      case_auto_class_var_unresolved globals );
+    ("D4: a missing instance is Inst_unresolved", case_auto_missing_instance_unresolved globals);
+    ( "D5: a duplicate instance key is Duplicate_global",
+      case_duplicate_instance_is_duplicate_global globals );
+    ( "D6: a ground instance at an applied key is Inst_bad_shape",
+      case_ground_applied_key_is_bad_shape globals );
+    ("D7: instance resolution is fuel bounded", case_instance_resolution_fuel_bounded globals);
+    ( "D7b: Inst_depth names the query, not the peeled Pi",
+      case_inst_depth_names_the_query globals );
+    ( "D7c: Inst_depth's message is bounded, whatever the query's size",
+      case_inst_depth_message_is_bounded globals );
+    ( "A13: the motive's two index binders keep declaration order",
+      case_motive_index_binder_order globals );
+    ( "D7d: every printed-type error payload is bounded, not just Inst_depth",
+      case_error_payloads_are_bounded globals );
+    ( "D9f: a wide query against an 8-binder instance resolves",
+      case_wide_query_with_wide_instance_resolves globals );
+    ("D8: checker output never contains Auto", case_checker_output_never_contains_auto globals);
   ]
 
 let () =

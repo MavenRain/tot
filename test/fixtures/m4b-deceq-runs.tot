@@ -1,0 +1,6 @@
+def sameArity : Bool :=
+  match natDecEq (succ zero) (succ zero) with
+  | yes p => true
+  | no np => false
+  end
+eval sameArity

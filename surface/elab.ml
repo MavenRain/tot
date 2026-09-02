@@ -53,6 +53,15 @@ let rec term (globals : Global.t) (scope : string list) (s : Syntax.t) :
       Ok (Term.Ann (tm_t, ty_t))
   | Syntax.SStr (_loc, s) -> Ok (Term.Lit (Literal.LString s))
   | Syntax.SInt (_loc, n) -> Ok (Term.Lit (Literal.LInt n))
+  | Syntax.SAuto _loc -> Ok Term.Auto
+  | Syntax.SInst (_loc, c, t) ->
+      (* M4 Stage D (D3): the whole implementation.  An annotated [Auto]
+         IS the escape hatch: [Ann] steers checking and is dropped from
+         checker output, and [Check.check]'s existing [Ann] path already
+         routes to [check ... Auto ty_v]. *)
+      let* c_t = term globals scope c in
+      let* t_t = term globals scope t in
+      Ok (Term.Ann (Term.Auto, Term.App (Quantity.Many, c_t, t_t)))
   | Syntax.SLetStar (_loc, is_div, ty_a, ty_b, x, rhs, body) ->
       (* M3 Stage C, C3: purely syntactic desugar to
          [bindIO A B e (fun x => body)] / [bindDiv A B e (fun x =>
@@ -75,14 +84,51 @@ let rec term (globals : Global.t) (scope : string list) (s : Syntax.t) :
         (app
            (app (app (app (Term.Global bind_name) ty_a_t) ty_b_t) rhs_t)
            (Term.Lam (Quantity.Many, x, body_t)))
-  | Syntax.SMatch (_loc, scrut, motive, branches) ->
+  | Syntax.SMatch (loc, scrut, motive, branches) ->
       (* the ctor name in a pattern is NOT resolved here: the kernel
          checks it against the inductive's declared constructors *)
       let* scrut_t = term globals scope scrut in
+      (* M4 Stage A, the G2 arity check: [Elab.term] already receives
+         [globals], so the motive's "in I .." index-arity check lives
+         here rather than duplicating a family lookup in [Check]. *)
       let* motive_t =
         motive
-        |> Option.fold ~none:(Ok None) ~some:(fun (x, mot) ->
-               term globals (x :: scope) mot |> Result.map (fun m -> Some (x, m)))
+        |> Option.fold ~none:(Ok None) ~some:(fun (sm : Syntax.smotive) ->
+               let* () =
+                 sm.Syntax.sm_ind
+                 |> Option.fold ~none:(Ok ()) ~some:(fun iname ->
+                        let* ind =
+                          Global.find_ind iname globals
+                          |> Option.to_result ~none:(Serror.Unknown_name { loc; name = iname })
+                        in
+                        let m = List.length ind.Global.indices in
+                        if Int.equal m (List.length sm.Syntax.sm_idx) then Ok ()
+                        else
+                          Error
+                            (Serror.Kernel
+                               {
+                                 loc;
+                                 err =
+                                   Error.Motive_index_arity
+                                     {
+                                       ind = iname;
+                                       expected = m;
+                                       found = List.length sm.Syntax.sm_idx;
+                                     };
+                               }))
+               in
+               let scope' =
+                 sm.Syntax.sm_self :: List.fold_left (fun s y -> y :: s) scope sm.Syntax.sm_idx
+               in
+               let* body_t = term globals scope' sm.Syntax.sm_body in
+               Ok
+                 (Some
+                    {
+                      Term.m_ind = sm.Syntax.sm_ind;
+                      m_idx = sm.Syntax.sm_idx;
+                      m_self = sm.Syntax.sm_self;
+                      m_body = body_t;
+                    }))
       in
       let* rev_branches =
         List.fold_left
@@ -95,4 +141,9 @@ let rec term (globals : Global.t) (scope : string list) (s : Syntax.t) :
       in
       Ok
         (Term.Match
-           { scrut = scrut_t; motive = motive_t; branches = List.rev rev_branches })
+           {
+             scrut = scrut_t;
+             scrut_q = Quantity.Many;
+             motive = motive_t;
+             branches = List.rev rev_branches;
+           })

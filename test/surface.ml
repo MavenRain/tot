@@ -109,6 +109,12 @@ let f1_witness_fixture : string = Filename.concat repo_root "test/fixtures/f1-wi
 let s0_erased_guard_fixture : string =
   Filename.concat repo_root "test/fixtures/s0-erased-guard.tot"
 
+(* M4 Stage B, B6: drives the SAME fixture the gate script pins under
+   PASS-M4B-SUBST, through the real CLI binary with the prelude
+   auto-loaded (no --no-prelude). *)
+let m4b_subst_erases_fixture : string =
+  Filename.concat repo_root "test/fixtures/m4b-subst-erases.tot"
+
 (* S2 fix (M2-fixes Round 3): GNU coreutils' `timeout` ships under the
    name `gtimeout` on stock macOS (Homebrew installs it prefixed to
    avoid shadowing BSD's own tools); probe `timeout` first, then
@@ -155,37 +161,292 @@ let () =
    with "--no-prelude" (decision 14): [bin/tot.ml] now auto-loads the
    prelude by default, and the prelude's own "Nat" would otherwise
    collide (Duplicate_global). *)
-let expect_cli_run_lines (path : string) (want : string list) () : (unit, string) result =
+(* M4 Stage B, B6: [?(no_prelude = true)] keeps both pre-existing
+   callers (F1's witness fixture, T0's erased-guard fixture, each
+   declaring its OWN "data Nat" from scratch) unchanged, while letting
+   B6 pass [~no_prelude:false] to exercise a fixture that uses the
+   Stage B prelude's own Eq/subst0/Nat through the REAL CLI binary
+   (bin/tot.ml auto-loads the prelude by default, M3 Stage D D1). *)
+(* M4 fixes round 1 (ctxcat id 4): a scratch path whose removal rides
+   [Fun.protect]'s finaliser, so an I/O failure anywhere inside [k]
+   still cleans up instead of stranding the file. The finaliser itself
+   cannot raise (the one raising call is guarded right there), so it can
+   never turn a test failure into a [Finally_raised]. *)
+let with_temp_file (prefix : string) (suffix : string) (k : string -> 'a) : 'a =
+  let path = Filename.temp_file prefix suffix in
+  Fun.protect
+    ~finally:(fun () -> match Sys.remove path with exception Sys_error _ -> () | () -> ())
+    (fun () -> k path)
+
+let no_watchdog_error (what : string) : (int * string list * string list, string) result =
+  Error
+    (Printf.sprintf
+       "no watchdog binary on PATH: neither `timeout` nor `gtimeout` was found (install GNU \
+        coreutils, e.g. `brew install coreutils` on macOS, for `gtimeout`); refusing to run \
+        the %s CLI regression unguarded rather than risk a silent hang"
+       what)
+
+(* M4 fixes round 1 (ctxcat id 5): ONE spawn helper for every CLI
+   regression in this file. Runs `tot ARGV_TAIL` under the external
+   watchdog and returns (exit code, stdout lines, stderr lines) with the
+   two channels captured SEPARATELY, which the M4 fixes round 1 driver-
+   channel cases (audit F2) need and which the merged capture the two
+   older helpers each built for themselves could not give. *)
+let run_cli ~(what : string) (argv_tail : string) :
+    (int * string list * string list, string) result =
   watchdog
-  |> Option.fold
-       ~none:
-         (Error
-            "no watchdog binary on PATH: neither `timeout` nor `gtimeout` was found (install \
-             GNU coreutils, e.g. `brew install coreutils` on macOS, for `gtimeout`); refusing \
-             to run the F1 CLI regression unguarded rather than risk a silent hang")
-       ~some:(fun watchdog_cmd ->
-         let out_path = Filename.temp_file "tot-cli-witness" ".out" in
-         let cmd =
-           Printf.sprintf "%s 10 %s run --no-prelude %s > %s 2>&1" watchdog_cmd
-             (Filename.quote tot_exe) (Filename.quote path) (Filename.quote out_path)
-         in
-         let code = Sys.command cmd in
-         (* if reading [out_path] here raises, the [Sys.remove] below is
-            skipped and the scratch file leaks; accepted for a test harness,
-            not restructured. *)
-         let got = In_channel.with_open_text out_path In_channel.input_lines in
-         Sys.remove out_path;
-         match () with
-         | () when Int.equal code 124 ->
-             Error
-               (Printf.sprintf
-                  "regression: %s hit the external 10s timeout (exit 124), got so far [%s]" path
-                  (show_lines got))
-         | () when Int.equal code 0 ->
-             if List.equal String.equal got want then Ok ()
-             else
-               Error (Printf.sprintf "got  [%s]\n  want [%s]" (show_lines got) (show_lines want))
-         | () -> Error (Printf.sprintf "tot run %s exited %d: [%s]" path code (show_lines got)))
+  |> Option.fold ~none:(no_watchdog_error what) ~some:(fun watchdog_cmd ->
+         with_temp_file "tot-cli" ".out" (fun out_path ->
+             with_temp_file "tot-cli" ".err" (fun err_path ->
+                 let cmd =
+                   Printf.sprintf "%s 10 %s %s > %s 2> %s" watchdog_cmd (Filename.quote tot_exe)
+                     argv_tail (Filename.quote out_path) (Filename.quote err_path)
+                 in
+                 let code = Sys.command cmd in
+                 let out = In_channel.with_open_text out_path In_channel.input_lines in
+                 let err = In_channel.with_open_text err_path In_channel.input_lines in
+                 Ok (code, out, err))))
+
+(* M4 fixes round 2 (ctxcat id 3): [~what] is the CALLER's own label,
+   not the literal "F1". This helper drives F1's witness fixture, T0's
+   erased-guard fixture and B6's subst fixture alike, so a hardcoded
+   "F1" made [no_watchdog_error]'s "refusing to run the F1 CLI
+   regression unguarded" name the wrong regression for two of the
+   three. *)
+let expect_cli_run_lines ~(what : string) ?(no_prelude = true) (path : string)
+    (want : string list) () : (unit, string) result =
+  let no_prelude_flag = if no_prelude then " --no-prelude" else "" in
+  (* M4 fixes round 5 (ctxcat r5 id 14): [let*], not [Result.fold] with
+     a passthrough [~error:(fun e -> Error e)].  This file's own binder
+     already does exactly that, and the spelled-out passthrough hid the
+     shape from the reader at three call sites. *)
+  let* code, out, err =
+    run_cli ~what (Printf.sprintf "run%s %s" no_prelude_flag (Filename.quote path))
+  in
+  let got = out @ err in
+  match () with
+  | () when Int.equal code 124 ->
+      Error
+        (Printf.sprintf "regression: %s hit the external 10s timeout (exit 124), got so far [%s]"
+           path (show_lines got))
+  | () when Int.equal code 0 ->
+      if List.equal String.equal got want then Ok ()
+      else Error (Printf.sprintf "got  [%s]\n  want [%s]" (show_lines got) (show_lines want))
+  | () -> Error (Printf.sprintf "tot run %s exited %d: [%s]" path code (show_lines got))
+
+(* M4 Stage D (D5.1): drives the actual CLI binary, not [Run.script]
+   in-process, since [--serror-exit] is a [bin/tot.ml]-only flag with no
+   library-level equivalent. Writes [src] to a scratch file, runs
+   `tot check --no-prelude EXTRA_FLAGS FILE` under the watchdog, and
+   pins the exit code alone (the message text is [Serror.to_string]'s
+   own concern, already exercised by the in-process tests above). *)
+let expect_cli_exit ~(extra_flags : string) (src : string) (want_exit : int) () :
+    (unit, string) result =
+  with_temp_file "tot-cli-serror" ".tot" (fun src_path ->
+      let () =
+        Out_channel.with_open_text src_path (fun oc -> Out_channel.output_string oc src)
+      in
+      let* code, out, err =
+        run_cli ~what:"D5.1"
+          (Printf.sprintf "check --no-prelude%s %s" extra_flags (Filename.quote src_path))
+      in
+      if Int.equal code want_exit then Ok ()
+      else
+        Error
+          (Printf.sprintf "tot check %s exited %d, want %d: [%s]" extra_flags code want_exit
+             (show_lines (out @ err))))
+
+(* M4 fixes round 1 (audit F2): every DRIVER error (a missing script
+   file, an unknown flag, a malformed invocation) belongs on stderr,
+   because stdout is the hook protocol's decision channel. A missing
+   file is additionally an error exit REGARDLESS of --serror-exit: a
+   fail-open install (--serror-exit 0) must not turn a renamed guard
+   script into a silent exit 0 carrying a junk line on the channel the
+   hook parses. Both halves pin the exact stdout (empty), the exact
+   stderr line, and the exit code, so the pre-fix behaviour (the line on
+   stdout, exit 0 under --serror-exit 0) fails all three ways. *)
+let expect_driver_error ~(what : string) (argv_tail : string) ~(want_exit : int)
+    ~(want_err : string list) () : (unit, string) result =
+  let* code, out, err = run_cli ~what argv_tail in
+  match () with
+  | () when not (Int.equal code want_exit) ->
+      Error
+        (Printf.sprintf "tot %s exited %d, want %d (stdout [%s], stderr [%s])" argv_tail code
+           want_exit (show_lines out) (show_lines err))
+  | () when not (List.equal String.equal out []) ->
+      Error
+        (Printf.sprintf "tot %s wrote to the DECISION channel (stdout): [%s]" argv_tail
+           (show_lines out))
+  | () when not (List.equal String.equal err want_err) ->
+      Error
+        (Printf.sprintf "tot %s stderr [%s], want [%s]" argv_tail (show_lines err)
+           (show_lines want_err))
+  | () -> Ok ()
+
+let case_missing_file_channel () : (unit, string) result =
+  let missing = Filename.concat (Filename.get_temp_dir_name ()) "tot-no-such-file-4c1f.tot" in
+  let want_err = [ missing ^ ": no such file" ] in
+  let* () =
+    expect_driver_error ~what:"F2-missing"
+      (Printf.sprintf "check %s" (Filename.quote missing))
+      ~want_exit:1 ~want_err ()
+  in
+  (* the flag must not reach this branch at all *)
+  expect_driver_error ~what:"F2-missing-serror0"
+    (Printf.sprintf "check --serror-exit 0 %s" (Filename.quote missing))
+    ~want_exit:1 ~want_err ()
+
+(* M4 fixes round 2 (opus R2): the three SIBLING paths round 1's
+   [Sys.file_exists] guard let through. A directory, a FIFO and a
+   regular file with no read permission all satisfy that guard, so
+   control reached [In_channel.with_open_text]: the directory and the
+   unreadable file printed an OCaml crash dump and exited 2 (the code
+   the driver reserves for USAGE errors, so a hook could not tell "you
+   called me wrong" from "your script is unreadable"), --serror-exit was
+   never consulted, and the FIFO did not exit at all -- the open blocked
+   on a writer that never came. Each is now the missing-file contract
+   exactly: stdout EMPTY, one driver line on stderr, the literal exit 1,
+   outside the --serror-exit mapping. [run_cli]'s own external watchdog
+   makes the FIFO half a HANG assertion too: a re-blocking open comes
+   back as exit 124, which fails the exit-code check loudly. *)
+let with_scratch_dir (k : string -> (unit, string) result) : (unit, string) result =
+  (* [Filename.temp_file] reserves a unique NAME by creating a file;
+     drop the file and take the name for the directory. *)
+  let dir = Filename.temp_file "tot-unusable" ".d" in
+  let () = match Sys.remove dir with exception Sys_error _ -> () | () -> () in
+  match Sys.mkdir dir 0o700 with
+  | exception Sys_error e -> Error ("could not create the scratch directory: " ^ e)
+  | () ->
+      Fun.protect
+        ~finally:(fun () ->
+          let clean (p : string) : unit =
+            match Sys.remove p with exception Sys_error _ -> () | () -> ()
+          in
+          (* M4 fixes round 4 (ctxcat r4 id 1): the nested "adir" was
+             never removed, so [Sys.rmdir dir] raised "Directory not
+             empty", the guard below swallowed it, and every run of the
+             battery left a temp directory (and its adir) behind. It is
+             removed FIRST, with its own guard, because it is the only
+             entry [case_unusable_file_channel] creates that is itself a
+             directory. *)
+          let clean_dir (p : string) : unit =
+            match Sys.rmdir p with exception Sys_error _ -> () | () -> ()
+          in
+          let () = clean (Filename.concat dir "unreadable.tot") in
+          let () = clean (Filename.concat dir "pipe.tot") in
+          let () = clean_dir (Filename.concat dir "adir") in
+          clean_dir dir)
+        (fun () -> k dir)
+
+let case_unusable_file_channel () : (unit, string) result =
+  with_scratch_dir (fun dir ->
+      let subdir = Filename.concat dir "adir" in
+      let unreadable = Filename.concat dir "unreadable.tot" in
+      let fifo = Filename.concat dir "pipe.tot" in
+      let () =
+        Out_channel.with_open_text unreadable (fun oc ->
+            Out_channel.output_string oc "def x : Bool := true\n")
+      in
+      let* () =
+        match Sys.mkdir subdir 0o700 with
+        | exception Sys_error e -> Error ("could not create the nested directory: " ^ e)
+        | () -> Ok ()
+      in
+      let* () =
+        match Unix.mkfifo fifo 0o600 with
+        | exception Unix.Unix_error (_, _, _) -> Error "could not create the FIFO"
+        | () -> Ok ()
+      in
+      let* () =
+        match Unix.chmod unreadable 0o000 with
+        | exception Unix.Unix_error (_, _, _) -> Error "could not clear the read bit"
+        | () -> Ok ()
+      in
+      (* M4 fixes round 3 (ctxcat r3 id 4): the UNREADABLE sub-case rests
+         on [chmod 000], and the kernel does not enforce permission bits
+         against uid 0. Run as root (a common CI/container shape) the
+         open would SUCCEED, the probe would observe a different exit and
+         stderr, and this case would either fail for a reason unrelated
+         to the code or coincide and pass without ever reaching the
+         [Unreadable] branch. Under root it is SKIPPED with an explicit
+         printed line, so a privileged run says so out loud instead of
+         claiming coverage it does not have; an ordinary unprivileged run
+         is unchanged and keeps all six probes. The directory and FIFO
+         sub-cases need no guard: they are classified by a stat, which
+         root does not bypass. *)
+      let as_root = Int.equal (Unix.geteuid ()) 0 in
+      let probe ~(what : string) (path : string) (msg : string) (flags : string) :
+          (unit, string) result =
+        expect_driver_error ~what
+          (Printf.sprintf "check%s %s" flags (Filename.quote path))
+          ~want_exit:1
+          ~want_err:[ path ^ ": " ^ msg ]
+          ()
+      in
+      let restore () =
+        match Unix.chmod unreadable 0o600 with
+        | exception Unix.Unix_error (_, _, _) -> ()
+        | () -> ()
+      in
+      Fun.protect ~finally:restore (fun () ->
+          let* () = probe ~what:"R2-dir" subdir "not a regular file" "" in
+          let* () = probe ~what:"R2-dir-serror0" subdir "not a regular file" " --serror-exit 0" in
+          let* () = probe ~what:"R2-fifo" fifo "not a regular file" "" in
+          let* () = probe ~what:"R2-fifo-serror0" fifo "not a regular file" " --serror-exit 0" in
+          match () with
+          | () when as_root ->
+              print_endline
+                "  SKIP R2-unreadable: running as root, chmod 000 does not deny root";
+              Ok ()
+          | () ->
+              let* () = probe ~what:"R2-unreadable" unreadable "cannot be read" "" in
+              probe ~what:"R2-unreadable-serror0" unreadable "cannot be read" " --serror-exit 0"))
+
+let case_usage_channel () : (unit, string) result =
+  let usage_line =
+    "usage: tot (check|run) [--no-prelude] [--no-axioms] [--serror-exit N] [--require-main] \
+     FILE | tot prims"
+  in
+  let* () =
+    expect_driver_error ~what:"F2-flag" "check --bogus-flag /dev/null" ~want_exit:2
+      ~want_err:[ "unknown flag: --bogus-flag" ] ()
+  in
+  expect_driver_error ~what:"F2-usage" "check" ~want_exit:2 ~want_err:[ usage_line ] ()
+
+(* M4 Stage D (D5.1): a one-line type error through the real CLI, run
+   TWICE: bare (the default, exit 1) and with [--serror-exit 3] (exit
+   3). Both halves in one case (D5.1's own instruction: the flag's
+   whole point is the difference between them). *)
+let case_serror_exit_changes_the_exit_code () : (unit, string) result =
+  let* () = expect_cli_exit ~extra_flags:"" "check zzz" 1 () in
+  expect_cli_exit ~extra_flags:" --serror-exit 3" "check zzz" 3 ()
+
+(* M4 Stage D (D5.2): [--require-main] is a [Run.policy] field, so this
+   one is exercised entirely in-process. A mainless script under the
+   strict policy is [Missing_main]; the SAME script under the default
+   policy still runs clean with no exit code (no main at all). *)
+let case_require_main_rejects_mainless () : (unit, string) result =
+  let src = "check Type 0" in
+  let strict_policy : Tot_surface.Run.policy =
+    { Tot_surface.Run.no_axioms = false; require_main = true }
+  in
+  Tot_surface.Run.script ~policy:strict_policy ~exec:true src
+  |> Result.fold
+       ~ok:(fun (lines, _exit_code) ->
+         Error
+           (Printf.sprintf "expected Missing_main, but the script ran: [%s]" (show_lines lines)))
+       ~error:(fun e ->
+         let tag = Tot_surface.Serror.tag e in
+         Printf.printf "  expected error (Missing_main): %s\n" (Tot_surface.Serror.to_string e);
+         if String.equal tag "Missing_main" then
+           Tot_surface.Run.script ~exec:true src
+           |> Result.fold
+                ~ok:(fun (_lines, exit_code) ->
+                  if Option.is_none exit_code then Ok ()
+                  else Error "unflagged mainless script unexpectedly set an exit code")
+                ~error:(fun e2 ->
+                  Error ("unflagged run unexpectedly failed: " ^ Tot_surface.Serror.to_string e2))
+         else Error (Printf.sprintf "expected Missing_main, got %s" tag))
 
 let prelude : string =
   String.concat "\n"
@@ -264,6 +525,78 @@ let map_def : string =
    B f xs => match xs with | nil => nil B | cons h t => cons B (f h) (map A B f t) end"
 
 let with_lines (items : string list) : string = String.concat "\n" items
+
+(* M4 Stage C: folds a script's items into a final [Run.state]
+   in-process, skipping [main_epilogue] (neither C4 nor C5 below runs a
+   fixture that declares a [main]). Mirrors [Run.script]'s own fold,
+   minus the epilogue and the accumulated print lines, since both
+   callers below want the STATE (to inspect a def's kernel entry and its
+   erasure), not the printed output. *)
+let script_items (src : string) : (Tot_surface.Run.state, Tot_surface.Serror.t) result =
+  let* tokens = Tot_surface.Lexer.lex src in
+  let* items = Tot_surface.Parser.parse tokens in
+  List.fold_left
+    (fun acc it ->
+      let* st = acc in
+      Tot_surface.Run.item ~exec:true ~policy:Tot_surface.Run.default_policy st it)
+    (Ok Tot_surface.Run.initial) items
+
+(* C4: subst0's own erased body has no self-reference, and its exact
+   printed form pins the claim rather than merely gesturing at it. [Eq]
+   is Stage A's one-constructor no-argument case, so the match on the
+   erased hypothesis [h] inside subst0's body drops out ENTIRELY under
+   erasure (lib/erase.ml's [scrut_q = Zero] arm), leaving the identity
+   function on the sole kept argument [px]. *)
+let case_subst0_erases_to_identity (bst : Tot_surface.Run.state) () : (unit, string) result =
+  let open Tot_kernel in
+  let attempt =
+    let* dentry =
+      Global.find_def "subst0" bst.Tot_surface.Run.globals
+      |> Option.to_result ~none:"C4: subst0 not found in the bootstrapped prelude"
+    in
+    Erase.closed dentry.Global.def |> Result.map_error Error.to_string
+  in
+  attempt
+  |> Result.fold
+       ~ok:(fun erased ->
+         let printed = Pp.eterm [] erased in
+         match () with
+         | () when Eterm.mentions "subst0" erased ->
+             Error (Printf.sprintf "C4: subst0 mentions itself after erasure: %s" printed)
+         | () when not (String.equal printed "fun px => px") ->
+             Error (Printf.sprintf "C4: subst0 erased to %s, want fun px => px" printed)
+         | () -> Ok ())
+       ~error:(fun e -> Error e)
+
+(* C5: the existing s0-erased-guard.tot case (T0, above) already proves
+   the fixture still RUNS and computes the right value; this pins the
+   underlying claim it rests on directly, by folding the fixture
+   in-process and asking [Run.compute_guard] what guard it computed for
+   [ghost]'s def. "Unguarded" is the M2 fixes Round 4 behavior and, per
+   [compute_guard]'s own doc comment, the only LIVE case; this makes
+   that claim falsifiable rather than merely asserted. *)
+let case_ghost_guard_is_unguarded () : (unit, string) result =
+  let open Tot_kernel in
+  let attempt =
+    let* final =
+      script_items (In_channel.with_open_text s0_erased_guard_fixture In_channel.input_all)
+      |> Result.map_error Tot_surface.Serror.to_string
+    in
+    let* dentry =
+      Global.find_def "ghost" final.Tot_surface.Run.globals
+      |> Option.to_result ~none:"C5: ghost not found in the fixture's final globals"
+    in
+    let* def_e = Erase.closed dentry.Global.def |> Result.map_error Error.to_string in
+    Ok (Tot_surface.Run.compute_guard ~name:"ghost" dentry.Global.def dentry.Global.rec_arg def_e)
+  in
+  attempt
+  |> Result.fold
+       ~ok:(fun guard ->
+         match guard with
+         | Interp.Unguarded -> Ok ()
+         | Interp.GuardedAt k -> Error (Printf.sprintf "C5: expected Unguarded, got GuardedAt %d" k)
+         | Interp.Frozen -> Error "C5: expected Unguarded, got Frozen")
+       ~error:(fun e -> Error e)
 
 let cases (bst : Tot_surface.Run.state) : (string * (unit -> (unit, string) result)) list =
   [
@@ -458,7 +791,7 @@ let cases (bst : Tot_surface.Run.state) : (string * (unit -> (unit, string) resu
     ( "F1: bare eval of a rec global terminates, reading back as the \
        frozen global (previously diverged: quote re-executed frozen \
        match branches one binder deeper per level)",
-      expect_cli_run_lines f1_witness_fixture (nat_lines @ [ add_line; "add" ]) );
+      expect_cli_run_lines ~what:"F1" f1_witness_fixture (nat_lines @ [ add_line; "add" ]) );
     ( "F1: a rec global applied to canonical (closed) data still computes \
        exactly as before the guard",
       expect_lines
@@ -544,7 +877,7 @@ let cases (bst : Tot_surface.Run.state) : (string * (unit -> (unit, string) resu
        path still fails red (watchdog timeout), not hangs. *)
     ( "T0: rec def guarded on an erased formal eagerly unfolds to the \
        correct value, both bare and applied",
-      expect_cli_run_lines s0_erased_guard_fixture
+      expect_cli_run_lines ~what:"T0" s0_erased_guard_fixture
         (nat_lines
         @ [
             "def dropErased : (0 j : Nat) -> (w _ : Nat) -> Nat";
@@ -565,9 +898,15 @@ let cases (bst : Tot_surface.Run.state) : (string * (unit -> (unit, string) resu
       expect_lines ~st:bst "eval stringConcat \"a\"" [ "(stringConcat \"a\")" ] );
     ( "A13: literal type mismatch is a kernel error",
       expect_err_printed ~st:bst "def x : String := 3" "Kernel.Mismatch" );
-    ( "A14: match on a String scrutinee cannot eliminate (declared-only ind)",
+    (* M4 Stage A: String is now installed via [Check.declare_builtin]
+       (A6.2), so a match on it is the more precise
+       [Builtin_not_eliminable], not [Ind_incomplete] ([Ind_incomplete]
+       is reserved for the [Provisional] mid-declaration window; see
+       kernel test A12). Pre-Stage-A this pinned [Kernel.Ind_incomplete]
+       since builtins had no status of their own. *)
+    ( "A14: match on a String scrutinee cannot eliminate (builtin former)",
       expect_err_printed ~st:bst "def f : String -> String := fun s => match s with end"
-        "Kernel.Ind_incomplete" );
+        "Kernel.Builtin_not_eliminable" );
     (* M3 Stage B: the ladder end to end. [bst] carries Div/IO and the
        nine new prims (B1-B7 above cover the kernel-level half; B8-B10,
        the OS-observed half, live in dev/gates.sh via this binary's
@@ -964,6 +1303,212 @@ let cases (bst : Tot_surface.Run.state) : (string * (unit -> (unit, string) resu
         let* after = fd_count () in
         if Int.equal before after then Ok ()
         else Error (Printf.sprintf "descriptor growth: %d before, %d after" before after) );
+    (* --- M4 Stage A: indexed inductive families, subsingleton
+       elimination, positivity --- *)
+    ( "A13: Vec declares and its constructors print",
+      expect_lines_check ~st:bst
+        "data Vec (0 A : Type 0) : Nat -> Type 0 :=\n\
+        \  | vnil : Vec A zero\n\
+        \  | vcons : (0 n : Nat) -> A -> Vec A n -> Vec A (succ n)"
+        [
+          "data Vec : (0 A : Type 0) -> (0 _ : Nat) -> Type 0";
+          "ctor vnil : (0 A : Type 0) -> ((Vec A) zero)";
+          "ctor vcons : (0 A : Type 0) -> (0 n : Nat) -> (w _ : A) -> (w _ : ((Vec A) n)) -> \
+           ((Vec A) (succ n))";
+        ] );
+    ( "A14: Fin declares",
+      expect_lines_check ~st:bst
+        "data Fin : Nat -> Type 0 :=\n\
+        \  | fzero : (0 n : Nat) -> Fin (succ n)\n\
+        \  | fsucc : (0 n : Nat) -> Fin n -> Fin (succ n)"
+        [
+          "data Fin : (0 _ : Nat) -> Type 0";
+          "ctor fzero : (0 n : Nat) -> (Fin (succ n))";
+          "ctor fsucc : (0 n : Nat) -> (w _ : (Fin n)) -> (Fin (succ n))";
+        ] );
+    ( "A15: a vector value builds and runs",
+      expect_lines ~st:bst
+        "data Vec (0 A : Type 0) : Nat -> Type 0 :=\n\
+        \  | vnil : Vec A zero\n\
+        \  | vcons : (0 n : Nat) -> A -> Vec A n -> Vec A (succ n)\n\
+         eval vcons Nat zero (succ zero) (vnil Nat)"
+        [
+          "data Vec : (0 A : Type 0) -> (0 _ : Nat) -> Type 0";
+          "ctor vnil : (0 A : Type 0) -> ((Vec A) zero)";
+          "ctor vcons : (0 A : Type 0) -> (0 n : Nat) -> (w _ : A) -> (w _ : ((Vec A) n)) -> \
+           ((Vec A) (succ n))";
+          "((vcons (succ zero)) vnil)";
+        ] );
+    ( "A16: an index binder marked w is a parse error",
+      expect_err ~st:bst "data B : (w n : Nat) -> Type 0 :=" "Parse" );
+    ( "A17: a motive naming the wrong family is Motive_wrong_ind",
+      expect_err_printed ~st:bst
+        "data Vec (0 A : Type 0) : Nat -> Type 0 :=\n\
+        \  | vnil : Vec A zero\n\
+        \  | vcons : (0 n : Nat) -> A -> Vec A n -> Vec A (succ n)\n\
+         data Fin : Nat -> Type 0 :=\n\
+        \  | fzero : (0 n : Nat) -> Fin (succ n)\n\
+        \  | fsucc : (0 n : Nat) -> Fin n -> Fin (succ n)\n\
+         def bad : (v : Vec Nat zero) -> Nat :=\n\
+        \  fun v => match v as x in Fin y return Nat with | vnil => zero | vcons n a s => zero \
+         end"
+        "Kernel.Motive_wrong_ind" );
+    ( "A18: a motive with the wrong index arity is Motive_index_arity",
+      expect_err_printed ~st:bst
+        "data Vec (0 A : Type 0) : Nat -> Type 0 :=\n\
+        \  | vnil : Vec A zero\n\
+        \  | vcons : (0 n : Nat) -> A -> Vec A n -> Vec A (succ n)\n\
+         def bad2 : (v : Vec Nat zero) -> Nat :=\n\
+        \  fun v => match v as x in Vec return Nat with | vnil => zero | vcons n a s => zero end"
+        "Kernel.Motive_index_arity" );
+    ( "A19: the ESE negative, a two-constructor family stays Erased_use",
+      expect_err_printed ~st:bst
+        "def eseNeg : (0 b : Bool) -> Nat := fun b => match b with | true => zero | false => \
+         zero end"
+        "Kernel.Erased_use" );
+    ( "A20: the Box negative, a w-carrying single constructor stays Erased_use",
+      expect_err_printed ~st:bst
+        "data Box : Type 0 := | mkBox : (w x : Nat) -> Box\n\
+         def unbox : (0 b : Box) -> Nat := fun b => match b with | mkBox x => x end"
+        "Kernel.Erased_use" );
+    ( "A21: the SX negative, a self-recursive erased singleton stays Erased_use",
+      expect_err_printed ~st:bst
+        "data SX : Type 0 := | wrap : (0 s : SX) -> SX\n\
+         def rec sxLoop : (0 s : SX) -> Nat := fun s => match s with | wrap s2 => sxLoop s2 end"
+        "Kernel.Erased_use" );
+    ( "A22: a one-constructor erased family now eliminates",
+      expect_lines_check ~st:bst
+        "data U1 : Type 0 := | u1 : U1\n\
+         def useU1 : (0 u : U1) -> Nat := fun u => match u with | u1 => zero end"
+        [ "data U1 : Type 0"; "ctor u1 : U1"; "def useU1 : (0 u : U1) -> Nat" ] );
+    (* M4 Stage B interaction, recorded in dev/M4-BUILD-LOG.md: the
+       prelude itself now declares "Empty" and "exfalso" (B1's equality
+       layer needs Empty for Dec's "no" case), so this Stage A test's
+       OWN local declarations are renamed to avoid Duplicate_global
+       against bst; the assertion (a zero-constructor family eliminates)
+       is unchanged, only the two names are. *)
+    ( "A23: an empty family now eliminates",
+      expect_lines_check ~st:bst
+        "data EmptyA23 : Type 0 :=\n\
+         def exfalsoA23 : (0 A : Type 0) -> (0 e : EmptyA23) -> A := fun A e => match e with end"
+        [ "data EmptyA23 : Type 0"; "def exfalsoA23 : (0 A : Type 0) -> (0 e : EmptyA23) -> A" ] );
+    (* M4 Stage B: propositional equality, the proof prelude, and
+       axioms. Every pinned line below was READ from the built binary
+       via gate-check/gate-run/the CLI (see dev/M4-BUILD-LOG.md), never
+       guessed: [Pp.term]'s [Term.App] arm wraps EVERY application in
+       its own parens regardless of nesting depth, so "Eq A a b" prints
+       as "(((Eq A) a) b)", not the schematic "(Eq A a b)". *)
+    ( "B5: the Eq layer checks under the bootstrapped prelude",
+      expect_lines_check ~st:bst "check subst0\ncheck trans0"
+        [
+          "subst0 : (0 A : Type 0) -> (0 a : A) -> (0 b : A) -> (0 P : (w _ : A) -> Type 0) -> \
+           (0 h : (((Eq A) a) b)) -> (w _ : (P a)) -> (P b)";
+          "trans0 : (0 A : Type 0) -> (0 a : A) -> (0 b : A) -> (0 c : A) -> \
+           (0 h1 : (((Eq A) a) b)) -> (0 h2 : (((Eq A) b) c)) -> (((Eq A) a) c)";
+        ] );
+    ( "B6: subst0-shaped defs check end to end through the real CLI, prelude auto-loaded",
+      expect_cli_run_lines ~what:"B6" ~no_prelude:false m4b_subst_erases_fixture
+        [
+          "def symNat : (0 m : Nat) -> (0 n : Nat) -> (0 h : (((Eq Nat) m) n)) -> \
+           (((Eq Nat) n) m)";
+          "symNat : (0 m : Nat) -> (0 n : Nat) -> (0 h : (((Eq Nat) m) n)) -> (((Eq Nat) n) m)";
+          "def castNat : (0 P : (w _ : Nat) -> Type 0) -> (0 a : Nat) -> (0 b : Nat) -> \
+           (0 h : (((Eq Nat) a) b)) -> (w _ : (P a)) -> (P b)";
+          "castNat : (0 P : (w _ : Nat) -> Type 0) -> (0 a : Nat) -> (0 b : Nat) -> \
+           (0 h : (((Eq Nat) a) b)) -> (w _ : (P a)) -> (P b)";
+        ] );
+    ( "B7: natDecEq computes both a yes and a no",
+      fun () ->
+        let* () =
+          expect_lines ~st:bst "eval natDecEq (succ (succ zero)) (succ (succ zero))" [ "yes" ] ()
+        in
+        expect_lines ~st:bst "eval natDecEq (succ zero) (succ (succ zero))" [ "no" ] () );
+    ( "B8: a Dec scrutinee drives a Bool",
+      expect_lines ~st:bst
+        "def sameArity : Bool :=\n\
+        \  match natDecEq (succ zero) (succ zero) with\n\
+        \  | yes p => true\n\
+        \  | no np => false\n\
+        \  end\n\
+         eval sameArity"
+        [ "def sameArity : Bool"; "true" ] );
+    ( "B9: an axiom item echoes and never enters the runtime",
+      fun () ->
+        let* () =
+          expect_lines_check ~st:bst "axiom myAx : Eq Nat zero zero\ncheck myAx"
+            [ "axiom myAx : (((Eq Nat) zero) zero)"; "myAx : (((Eq Nat) zero) zero)" ] ()
+        in
+        expect_err ~st:bst "axiom myAx : Eq Nat zero zero\neval myAx" "Kernel.Axiom_runtime_use"
+          () );
+    ( "B10: an axiom under --no-axioms is Axioms_disabled",
+      fun () ->
+        Tot_surface.Run.script ~st:bst
+          ~policy:{ Tot_surface.Run.no_axioms = true; require_main = false }
+          ~exec:true
+          "axiom bogus : Eq Nat zero (succ zero)\ncheck bogus"
+        |> Result.fold
+             ~ok:(fun (lines, _exit_code) ->
+               Error
+                 (Printf.sprintf "expected Axioms_disabled, but the script ran: [%s]"
+                    (show_lines lines)))
+             ~error:(fun e ->
+               let tag = Tot_surface.Serror.tag e in
+               Printf.printf "  expected error (Axioms_disabled): %s\n"
+                 (Tot_surface.Serror.to_string e);
+               if String.equal tag "Axioms_disabled" then Ok ()
+               else Error ("wrong error: " ^ Tot_surface.Serror.to_string e)) );
+    ( "B11: trans0 must not regress to the single-match shape",
+      expect_err_printed ~st:bst
+        "def transBad : (0 A : Type 0) -> (0 a : A) -> (0 b : A) -> (0 c : A) -> \
+         (0 h1 : Eq A a b) -> (0 h2 : Eq A b c) -> Eq A a c := \
+         fun A a b c h1 h2 => subst0 A b c (fun z => Eq A a z) h2 h1"
+        "Kernel.Erased_use" );
+    ("C4: subst0 erases to the identity and mentions nothing", case_subst0_erases_to_identity bst);
+    ("C5: the s0-erased-guard fixture still runs Unguarded", case_ghost_guard_is_unguarded);
+    ( "D9: the class sugar expands",
+      expect_lines_check ~st:bst "class C1 (0 A : Type 0) := { m1 : A -> Bool }"
+        [
+          "data C1 : (0 A : Type 0) -> Type 0";
+          "ctor mkC1 : (0 A : Type 0) -> (w _ : (w _ : A) -> Bool) -> (C1 A)";
+          "def m1 : (0 A : Type 0) -> (w d : (C1 A)) -> (w _ : A) -> Bool";
+        ] );
+    ( "D10: an instance registers under its mangled name",
+      expect_lines_check ~st:bst
+        "class C1 (0 A : Type 0) := { m1 : A -> Bool }\n\
+         instance : C1 Bool := mkC1 Bool (fun x => x)"
+        [
+          "data C1 : (0 A : Type 0) -> Type 0";
+          "ctor mkC1 : (0 A : Type 0) -> (w _ : (w _ : A) -> Bool) -> (C1 A)";
+          "def m1 : (0 A : Type 0) -> (w d : (C1 A)) -> (w _ : A) -> Bool";
+          "def inst$C1$Bool : (C1 Bool)";
+        ] );
+    ( "D11: auto resolves at a call site",
+      expect_lines ~st:bst
+        "def flagged : List String := cons String \"grep\" (cons String \"sed\" (nil String))\n\
+         eval member String auto \"sed\" flagged"
+        [ "def flagged : (List String)"; "true" ] );
+    ( "D12: inst C T resolves the same way",
+      expect_lines ~st:bst
+        "def flagged : List String := cons String \"grep\" (cons String \"sed\" (nil String))\n\
+         eval member String (inst EqD String) \"sed\" flagged"
+        [ "def flagged : (List String)"; "true" ] );
+    ( "D13: a second instance at the same key is Duplicate_global",
+      expect_err_printed ~st:bst
+        "instance : EqD Bool := mkEqD Bool boolEq\ninstance : EqD Bool := mkEqD Bool boolEq"
+        "Kernel.Duplicate_global" );
+    ( "D14: --serror-exit changes the exit code; the default stays 1",
+      case_serror_exit_changes_the_exit_code );
+    ( "D15: --require-main rejects a mainless script; the default still exits clean",
+      case_require_main_rejects_mainless );
+    ( "D16: defkind admits no illegal state (def partial without rec is still the parse error)",
+      expect_err ~st:bst "def partial f : Nat := zero" "Parse" );
+    ( "R1-F2a: a missing script file reports on STDERR and exits 1 even under --serror-exit 0",
+      case_missing_file_channel );
+    ( "R1-F2b: a bad flag and a malformed invocation report on STDERR and exit 2",
+      case_usage_channel );
+    ( "R2-F2c: a directory, a FIFO and an unreadable file report on STDERR and exit 1 \
+       even under --serror-exit 0",
+      case_unusable_file_channel );
   ]
 
 (** The ordinary in-process suite: bootstrap once, run every [cases]

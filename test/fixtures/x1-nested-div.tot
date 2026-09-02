@@ -1,0 +1,12 @@
+-- M3 fixes, A1 (O1 CRITICAL + C14): the exact round-1 repro of a Div
+-- computation nested under a PURE type head.  `boom`'s stamped type
+-- head is `Option`, not `Div`, so the M3 Stage B deferral rule (keyed
+-- on the head alone) did NOT defer it, and `tot check` executed
+-- `spin zero`, which diverges: pre-fix, `timeout 5 tot check` on this
+-- file exits 124 (recorded in dev/M3-FIXES-LOG.md).  Post-fix, check
+-- mode builds NO runtime environment for the user file (Interp.define
+-- is never called for user-file defs), so this file must check in a
+-- fraction of a second: dev/gates.sh's PASS-CHECK-NESTED-DIV asserts
+-- exit 0 under `timeout 5` and treats 124 as FAIL.
+def rec partial spin : Nat -> Div Nat := fun n => spin n
+def boom : Option (Div Nat) := some (Div Nat) (spin zero)

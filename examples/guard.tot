@@ -1,0 +1,100 @@
+#!/usr/bin/env -S tot run
+-- M3 Stage D, D5: a real port of the house rule "use rg instead of
+-- grep and sd instead of sed" (the user's own global CLAUDE.md).
+-- Reads a JSON PreToolUse payload on stdin, returns a Verdict. Run
+-- through this file's OWN shebang, `tot`'s prelude auto-load (D1) and
+-- elaboration cache (D2) are both on the tested path, not just
+-- `dune exec`.
+--
+-- Surface note: the bounded hole pass (M3 Stage C, C3) did not ship
+-- this milestone, so every let* below names its two type arguments
+-- explicitly (the pre-approved fallback shape); a compound type needs
+-- parens, e.g. "(Option Json)".
+
+-- Matches on the first non-empty token under shell IFS tokenization,
+-- never a substring: "ripgrep foo" is allowed. The guard is honest
+-- about exactly what it detects. M3 fixes round 3 (ctxcat id 3):
+-- splitting on " " keeps EMPTY tokens, so a leading or doubled space
+-- used to hide the binary behind an empty first token, and a
+-- path-qualified "/usr/bin/grep" never equalled "grep"; the
+-- comparison now takes the first NON-EMPTY token and strips
+-- everything through its LAST '/' (both bypasses recorded in
+-- dev/M3-FIXES-LOG.md; gate PASS-D-GUARD-DENY-PATH pins the combined
+-- form). M3 fixes round 4 (sign-off finding): splitting on the SPACE
+-- alone let TAB, NEWLINE, and CARRIAGE RETURN hide the binary the
+-- same way sh's own word splitting would not; the tokenizer now
+-- splits on all four shell IFS whitespace characters. NBSP (U+00A0)
+-- is NOT shell IFS whitespace and stays out of scope by design (gate
+-- PASS-D-GUARD-DENY-TAB pins the IFS forms).
+def rec firstNonEmpty : List String -> String :=
+  fun ts =>
+    match ts with
+    | nil => ""
+    | cons h t => match stringEq h "" with | true => firstNonEmpty t | false => h end
+    end
+
+def rec lastOr : String -> List String -> String :=
+  fun d xs =>
+    match xs with
+    | nil => d
+    | cons h t => match t with | nil => h | cons h2 t2 => lastOr d t end
+    end
+
+-- Split every fragment again on one more separator, concatenating
+-- the piece lists in order (fold of stringSplit over the fragments).
+def rec splitEach : String -> List String -> List String :=
+  fun sep xs =>
+    match xs with
+    | nil => nil String
+    | cons h t => append String (stringSplit h sep) (splitEach sep t)
+    end
+
+-- Tokenize on the four shell IFS whitespace characters: space, tab,
+-- newline, carriage return.
+def firstToken : String -> String :=
+  fun cmd =>
+    firstNonEmpty (splitEach "\r" (splitEach "\n" (splitEach "\t" (stringSplit cmd " "))))
+
+-- everything through the LAST '/', so "/usr/bin/grep" and "grep"
+-- compare equal ("grep/" basenames to "", which is never banned)
+def baseName : String -> String :=
+  fun tok => lastOr "" (stringSplit tok "/")
+
+def usesBanned : String -> Bool :=
+  fun cmd =>
+    orb (stringEq (baseName (firstToken cmd)) "grep")
+        (stringEq (baseName (firstToken cmd)) "sed")
+
+def decide : Json -> Verdict :=
+  fun payload =>
+    match jsonGetString payload "tool_name" with
+    | none => allow
+    | some name =>
+        match stringEq name "Bash" with
+        | true =>
+            match jsonGet payload "tool_input" with
+            | none => allow
+            | some ti =>
+                match usesBanned (jsonGetStringOr ti "command" "") with
+                | true => deny "house rule: use rg instead of grep and sd instead of sed"
+                | false => allow
+                end
+            end
+        | false => allow
+        end
+    end
+
+-- A malformed payload (jsonParse returns none) allows: fail-open BY
+-- DESIGN (M3 Stage D, D5; SPEC.md's M3 record runs this guard end to
+-- end against a garbage fixture expecting exit 0, and dev/gates.sh
+-- pins that in PASS-D-GUARD-OTHER), the same fail-open posture the
+-- live PreToolUse hooks already take on a decode error: a guard must
+-- never convert its own parse failure into a deny. The same posture
+-- applies inside decide when tool_name or tool_input is missing.
+def main : IO Verdict :=
+  let* String Verdict raw := readStdin in
+  let* (Option Json) Verdict parsed := liftIO (Option Json) (jsonParse raw) in
+  match parsed with
+  | none => pureIO Verdict allow
+  | some payload => pureIO Verdict (decide payload)
+  end

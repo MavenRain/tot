@@ -1,0 +1,23 @@
+-- M3 fixes, A2 (C17): memoized deferred forcing.  A chain of 8
+-- Div-headed defs, each body referencing the previous def TWICE
+-- (once as bindDiv's action, once inside its continuation), over a
+-- base def whose body is a modest pathological regexTest call
+-- (measured ~0.6s alone on the build machine; the same "(a+)+b vs
+-- all-a's" shape as c-regex-pathological.tot, shrunk from 35 to 24
+-- 'a's).  Unmemoized forcing re-executes d0 once per REFERENCE:
+-- 2^8 = 256 executions, ~150s (pre-fix run recorded in
+-- dev/M3-FIXES-LOG.md as the mutation confirmation).  Memoized, d0
+-- executes ONCE and every later force returns the stored value, so
+-- `tot run` on this file completes well under dev/gates.sh's coarse
+-- 5s PASS-B-DIV-MEMO bound and prints exactly `false` (the pattern
+-- never matches: no trailing 'b').
+def d0 : Div Bool := regexTest "\\(a+\\)+b" "aaaaaaaaaaaaaaaaaaaaaaaa"
+def d1 : Div Bool := bindDiv Bool Bool d0 (fun b => d0)
+def d2 : Div Bool := bindDiv Bool Bool d1 (fun b => d1)
+def d3 : Div Bool := bindDiv Bool Bool d2 (fun b => d2)
+def d4 : Div Bool := bindDiv Bool Bool d3 (fun b => d3)
+def d5 : Div Bool := bindDiv Bool Bool d4 (fun b => d4)
+def d6 : Div Bool := bindDiv Bool Bool d5 (fun b => d5)
+def d7 : Div Bool := bindDiv Bool Bool d6 (fun b => d6)
+def d8 : Div Bool := bindDiv Bool Bool d7 (fun b => d7)
+eval d8

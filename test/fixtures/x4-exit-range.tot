@@ -1,0 +1,6 @@
+-- M3 fixes, B4 (C10): exitWith accepts 0..255 only.  Out of range is
+-- a runtime script error through the standard error channel (message
+-- on stderr, process exit 1), never a silent OS-level wrap.  Pre-fix
+-- this script exited 44 (300 mod 256), recorded in
+-- dev/M3-FIXES-LOG.md as the mutation confirmation.
+def main : IO Unit := exitWith 300

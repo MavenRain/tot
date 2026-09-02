@@ -1,0 +1,12 @@
+-- M3 fixes round 2, R2: dead code must not abort a guard.  `deadcode`
+-- is never referenced by `main`; its stamped type head is `Option`
+-- (pure), so the round-1 rule executed its body at definition time in
+-- run mode and the malformed regex pattern aborted the whole script:
+-- pre-fix, `tot run` on this file exits 1 (= ask; recorded in
+-- dev/M3-FIXES-LOG.md as the mutation confirmation) while `tot check`
+-- reports it clean.  Post-fix every user def is a lazy memoized thunk
+-- in run mode, `deadcode` is never forced, and `tot run` exits 0 with
+-- an empty stdout envelope (allow prints nothing): dev/gates.sh's
+-- PASS-RUN-DEADCODE-ABORT.
+def deadcode : Option (Div Bool) := some (Div Bool) (regexTest "a\\(" "aaa")
+def main : IO Verdict := pureIO Verdict allow

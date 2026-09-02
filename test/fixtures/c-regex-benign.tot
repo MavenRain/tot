@@ -1,0 +1,27 @@
+-- M3 Stage C, Gate C (iv): regexMatch on a benign fixture, pinned
+-- captures (the whole match plus its two groups). regexTest/regexMatch
+-- are Div: typing gives provenance and a composition discipline, not
+-- an operational termination proof (see lib/interp.ml's own
+-- regex-engine comment); this fixture is the ORDINARY, fast case.
+def main : IO Unit :=
+  let* (Option (List String)) Unit m :=
+    liftIO (Option (List String)) (regexMatch "\\([a-z]+\\)@\\([a-z]+\\)" "user@host") in
+  match m with
+  | none => printLine "NO-MATCH"
+  | some caps =>
+      match caps with
+      | nil => printLine "EMPTY"
+      | cons whole rest =>
+          match rest with
+          | nil => printLine whole
+          | cons g1 rest2 =>
+              match rest2 with
+              | nil => printLine (stringConcat whole g1)
+              | cons g2 rest3 =>
+                  let* Unit Unit u1 := printLine whole in
+                  let* Unit Unit u2 := printLine g1 in
+                  printLine g2
+              end
+          end
+      end
+  end

@@ -5,6 +5,7 @@ data Option (0 A : Type 0) : Type 0 := | none : Option A | some : A -> Option A
 data Result (0 A : Type 0) (0 E : Type 0) : Type 0 := | ok : A -> Result A E | err : E -> Result A E
 data List (0 A : Type 0) : Type 0 := | nil : List A | cons : A -> List A -> List A
 data Pair (0 A : Type 0) (0 B : Type 0) : Type 0 := | pair : A -> B -> Pair A B
+data Unit : Type 0 := | unit : Unit
 def not : Bool -> Bool := fun b => match b with | true => false | false => true end
 def andb : Bool -> Bool -> Bool := fun a b => match a as x return Bool with | true => b | false => false end
 def orb : Bool -> Bool -> Bool := fun a b => match a as x return Bool with | true => true | false => b end
@@ -15,3 +16,34 @@ def fromOption : (0 A : Type 0) -> A -> Option A -> A := fun A d o => match o wi
 def rec append : (0 A : Type 0) -> List A -> List A -> List A := fun A xs ys => match xs with | nil => ys | cons h t => cons A h (append A t ys) end
 def rec map : (0 A : Type 0) -> (0 B : Type 0) -> (A -> B) -> List A -> List B := fun A B f xs => match xs with | nil => nil B | cons h t => cons B (f h) (map A B f t) end
 def rec foldNat : (0 A : Type 0) -> A -> (A -> A) -> Nat -> A := fun A z s n => match n with | zero => z | succ p => s (foldNat A z s p) end
+-- M3 Stage C: stdlib breadth (full prim catalog, self-recursive Json).
+data Ordering : Type 0 := | lt : Ordering | eq : Ordering | gt : Ordering
+data Verdict : Type 0 := | allow : Verdict | ask : String -> Verdict | deny : String -> Verdict
+data ProcessResult : Type 0 := | mkProcessResult : Int -> String -> String -> ProcessResult
+-- Every constructor argument mentions Json only as Json (never as
+-- "List Json"), so M2 positivity accepts it unchanged and no nested-
+-- inductive kernel work is needed (M3 design verdict decision 2). The
+-- price is duplicated array/object combinators plus the jsonToList
+-- bridge into the generic List combinators below (List Json is legal
+-- as a RETURN type, which is why the bridge works). M4 migrates to
+-- "jarr : List Json -> Json" behind the same accessor names.
+data Json : Type 0 :=
+  | jnull : Json
+  | jbool : Bool -> Json
+  | jnum : Int -> Json
+  | jstr : String -> Json
+  | jarrNil : Json
+  | jarrCons : Json -> Json -> Json
+  | jobjNil : Json
+  | jobjCons : String -> Json -> Json -> Json
+def headOr : (0 A : Type 0) -> A -> List A -> A := fun A d xs => match xs with | nil => d | cons h t => h end
+-- walks the jobjCons spine; rec_arg = 0 (the tail binder t, bound by
+-- matching j, is structurally smaller)
+def rec jsonGet : Json -> String -> Option Json := fun j k => match j with | jnull => none Json | jbool b => none Json | jnum n => none Json | jstr s => none Json | jarrNil => none Json | jarrCons h t => none Json | jobjNil => none Json | jobjCons k2 v tail => match stringEq k2 k with | true => some Json v | false => jsonGet tail k end end
+def jsonAsString : Json -> Option String := fun j => match j with | jnull => none String | jbool b => none String | jnum n => none String | jstr s => some String s | jarrNil => none String | jarrCons h t => none String | jobjNil => none String | jobjCons k v t => none String end
+def jsonAsInt : Json -> Option Int := fun j => match j with | jnull => none Int | jbool b => none Int | jnum n => some Int n | jstr s => none Int | jarrNil => none Int | jarrCons h t => none Int | jobjNil => none Int | jobjCons k v t => none Int end
+def jsonGetString : Json -> String -> Option String := fun j k => match jsonGet j k with | none => none String | some v => jsonAsString v end
+def jsonGetStringOr : Json -> String -> String -> String := fun j k d => match jsonGetString j k with | none => d | some s => s end
+-- walks the jarrCons spine; rec_arg = 0 (the tail binder t, bound by
+-- matching j, is structurally smaller)
+def rec jsonToList : Json -> List Json := fun j => match j with | jnull => nil Json | jbool b => nil Json | jnum n => nil Json | jstr s => nil Json | jarrNil => nil Json | jarrCons h t => cons Json h (jsonToList t) | jobjNil => nil Json | jobjCons k v t => nil Json end

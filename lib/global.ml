@@ -19,6 +19,16 @@ type def_entry = {
   rec_arg : int option;
       (** [Some k]: a rec def; evaluation unfolds it only when argument
           [k] is a canonical constructor value (guarded unfolding) *)
+  partial : bool;
+      (** M3 Stage C: [true] for a [def rec partial] that skipped
+          [Totality.guard] (decision 10 of the M3 design verdict): its
+          codomain is Div-headed and it is forced [reducible = false],
+          [rec_arg = None] (never a Check.define-internal error to see
+          [partial = true] with a non-None [rec_arg]; [Check.define]
+          never builds one). Consulted only for record-keeping /
+          tooling; runtime and conversion behavior are fully
+          determined by [reducible] and [rec_arg] alone, exactly as
+          for any other opaque non-rec-guarded def. *)
 }
 
 (** An inductive type constructor. *)
@@ -39,10 +49,23 @@ type ctor_entry = {
   args : telescope;  (** scoped under params + earlier args *)
 }
 
+(** A native primitive operation (M3 Stage A). No [def] field and no
+    [reducible] field: this is exactly what makes conversion unable to
+    ever step into it (decision 1/2 of the M3 design verdict). *)
+type prim_entry = {
+  prim_ty : Term.t;  (** closed *)
+  prim : Prim.t;  (** which native operation *)
+}
+
+(** Marshal-format checklist (M3 Stage D): [surface/cache.ml] marshals a
+    whole [Global.t] (this type, keyed by name), so any change to
+    [entry] or to any entry-payload record above it bumps
+    [Cache.format_version]. *)
 type entry =
   | Def of def_entry
   | Ind of ind_entry
   | Ctor of ctor_entry
+  | Prim of prim_entry
 
 type t = entry StringMap.t
 
@@ -56,22 +79,28 @@ let entry_ty (e : entry) : Term.t =
   | Def d -> d.ty
   | Ind i -> i.ind_ty
   | Ctor c -> c.ctor_ty
+  | Prim p -> p.prim_ty
 
 (** Payload views; Option-returning so callers stay total. *)
 let def_of (e : entry) : def_entry option =
   match e with
   | Def d -> Some d
-  | Ind _ | Ctor _ -> None
+  | Ind _ | Ctor _ | Prim _ -> None
 
 let ind_of (e : entry) : ind_entry option =
   match e with
   | Ind i -> Some i
-  | Def _ | Ctor _ -> None
+  | Def _ | Ctor _ | Prim _ -> None
 
 let ctor_of (e : entry) : ctor_entry option =
   match e with
   | Ctor c -> Some c
-  | Def _ | Ind _ -> None
+  | Def _ | Ind _ | Prim _ -> None
+
+let prim_of (e : entry) : prim_entry option =
+  match e with
+  | Prim p -> Some p
+  | Def _ | Ind _ | Ctor _ -> None
 
 let find_def (name : string) (globals : t) : def_entry option =
   Option.bind (find name globals) def_of
@@ -81,3 +110,6 @@ let find_ind (name : string) (globals : t) : ind_entry option =
 
 let find_ctor (name : string) (globals : t) : ctor_entry option =
   Option.bind (find name globals) ctor_of
+
+let find_prim (name : string) (globals : t) : prim_entry option =
+  Option.bind (find name globals) prim_of

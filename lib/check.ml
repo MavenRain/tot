@@ -27,6 +27,51 @@ let pp_value (globals : Global.t) (size : int) (v : Value.t) : string =
   Eval.quote globals size v
   |> Result.fold ~ok:(Pp.term []) ~error:(fun _e -> "<unprintable>")
 
+(** M3 Stage B: the head name of an already-evaluated type value, peeling
+    nothing else. [None] for every shape that is not an applied (or
+    bare) inductive type constructor. *)
+let ind_head_name (ty_v : Value.t) : string option =
+  match ty_v with
+  | Value.VInd (n, _) -> Some n
+  | Value.VUniv _ | Value.VPi (_, _, _, _) | Value.VLam (_, _) | Value.VCtor (_, _)
+  | Value.VNeutral (_, _) | Value.VLit _ ->
+      None
+
+(** [true] iff [ty_v]'s head is the [Div] or [IO] type former (M3 Stage
+    B decisions 9 and 11): both are declared-only inductives, so a hit
+    is exactly [Value.VInd ("Div", _)] or [Value.VInd ("IO", _)],
+    peeling nothing else. A def of type [String -> IO Unit] has head
+    [VPi], so it is unaffected: building a function that RETURNS an
+    action is inert. Shared by [define]'s [reducible] refusal and
+    [surface/run.ml]'s deferred-definition-time-execution decision. *)
+let is_effect_headed (ty_v : Value.t) : bool =
+  ind_head_name ty_v
+  |> Option.fold ~none:false ~some:(fun n -> String.equal n "Div" || String.equal n "IO")
+
+(** [true] iff [ty_v]'s head is exactly the [Div] type former (M3 Stage
+    C, decision 10). Shared by [define]'s [partial] codomain check. *)
+let is_div_headed (ty_v : Value.t) : bool =
+  ind_head_name ty_v |> Option.fold ~none:false ~some:(String.equal "Div")
+
+(** M3 Stage C: peel [t]'s leading [Term.Pi] binders and evaluate the
+    codomain under an env of one fresh neutral variable per peeled
+    binder, so a codomain that depends on an earlier binder (e.g.
+    [(0 A : Type 0) -> Div A]) evaluates correctly. Mirrors
+    [Totality.peel]'s shape but keeps binder TYPES (it must call
+    [Eval.eval], not just count them). Used only by [define]'s
+    [partial] codomain check. *)
+let rec peel_codomain (globals : Global.t) (env : Value.t list) (size : int) (t : Term.t) :
+    (Value.t, Error.t) result =
+  match t with
+  | Term.Pi (_q, _x, _dom, cod) -> peel_codomain globals (Value.var size :: env) (size + 1) cod
+  | Term.Var _ | Term.Univ _ | Term.Lit _
+  | Term.Lam (_, _, _)
+  | Term.App (_, _, _)
+  | Term.Let (_, _, _, _)
+  | Term.Ann (_, _)
+  | Term.Global _ | Term.Match _ ->
+      Eval.eval globals env t
+
 let rec infer (globals : Global.t) (ctx : ctx) (mode : Quantity.t) (tm : Term.t) :
     (Term.t * Value.t, Error.t) result =
   match tm with
@@ -39,6 +84,12 @@ let rec infer (globals : Global.t) (ctx : ctx) (mode : Quantity.t) (tm : Term.t)
       | () when Quantity.equal q Quantity.Many -> Ok (Term.Var ix, ty)
       | () -> Error (Error.Erased_use x))
   | Term.Univ l -> Ok (tm, Value.VUniv (Level.succ l))
+  | Term.Lit (Literal.LString _) ->
+      let* string_ty = Eval.eval globals [] (Term.Global "String") in
+      Ok (tm, string_ty)
+  | Term.Lit (Literal.LInt _) ->
+      let* int_ty = Eval.eval globals [] (Term.Global "Int") in
+      Ok (tm, int_ty)
   | Term.Pi (q, x, dom, cod) ->
       let* dom', dom_l = infer_univ globals ctx dom in
       let* dom_v = Eval.eval globals ctx.env dom' in
@@ -60,7 +111,8 @@ let rec infer (globals : Global.t) (ctx : ctx) (mode : Quantity.t) (tm : Term.t)
       | Value.VLam (_, _)
       | Value.VInd (_, _)
       | Value.VCtor (_, _)
-      | Value.VNeutral (_, _) ->
+      | Value.VNeutral (_, _)
+      | Value.VLit _ ->
           Error (Error.Not_a_function (pp_value globals ctx.size f_ty)))
   | Term.Let (x, ty, def, body) ->
       let* ty', _ty_l = infer_univ globals ctx ty in
@@ -108,7 +160,8 @@ and infer_univ (globals : Global.t) (ctx : ctx) (tm : Term.t) :
   | Value.VLam (_, _)
   | Value.VInd (_, _)
   | Value.VCtor (_, _)
-  | Value.VNeutral (_, _) ->
+  | Value.VNeutral (_, _)
+  | Value.VLit _ ->
       Error (Error.Not_a_universe (pp_value globals ctx.size ty))
 
 and check (globals : Global.t) (ctx : ctx) (mode : Quantity.t) (tm : Term.t)
@@ -124,7 +177,8 @@ and check (globals : Global.t) (ctx : ctx) (mode : Quantity.t) (tm : Term.t)
       | Value.VLam (_, _)
       | Value.VInd (_, _)
       | Value.VCtor (_, _)
-      | Value.VNeutral (_, _) ) ) ->
+      | Value.VNeutral (_, _)
+      | Value.VLit _ ) ) ->
       Error
         (Error.Mismatch
            { expected = pp_value globals ctx.size expected; actual = "a function" })
@@ -162,7 +216,7 @@ and check (globals : Global.t) (ctx : ctx) (mode : Quantity.t) (tm : Term.t)
           Ok (Term.Match { scrut = scrut'; motive = Some ("_", motive_t); branches = branches' })
       )
   | ( (Term.Var _ | Term.Univ _ | Term.Pi (_, _, _, _) | Term.App (_, _, _)
-      | Term.Ann (_, _) | Term.Global _),
+      | Term.Ann (_, _) | Term.Global _ | Term.Lit _),
       expected_v ) ->
       check_via_infer globals ctx mode tm expected_v
 
@@ -211,7 +265,8 @@ and match_scrut (globals : Global.t) (ctx : ctx) (mode : Quantity.t) (scrut : Te
   | Value.VPi (_, _, _, _)
   | Value.VLam (_, _)
   | Value.VCtor (_, _)
-  | Value.VNeutral (_, _) ->
+  | Value.VNeutral (_, _)
+  | Value.VLit _ ->
       Error (Error.Not_inductive (pp_value globals ctx.size s_ty))
 
 (** Walk the declared ctor names and the user's branches together, in
@@ -268,72 +323,135 @@ and walk_telescope (globals : Global.t) (bctx : ctx) (cname : string)
       walk_telescope globals (bind u q ty_v bctx) cname (fresh :: tele_env)
         (fresh :: rev_fresh) ((q, u) :: rev_binders) tele' pats'
 
-let define ?(rec_ = false) (globals : Global.t) ~(name : string) ~(reducible : bool)
-    ~(ty : Term.t) ~(def : Term.t) : (Global.t, Error.t) result =
-  match Option.to_list (Global.find name globals) with
-  | _entry :: _ -> Error (Error.Duplicate_global name)
-  | [] ->
-      let* ty', _ty_l = infer_univ globals empty_ctx ty in
-      let* ty_v = Eval.eval globals [] ty' in
-      if rec_ then
-        (* the recursive global is opaque while its own body is checked:
-           the provisional entry never unfolds, so recursive calls stay
-           neutral during checking *)
-        let provisional =
-          Global.add name
-            (Global.Def
-               { Global.ty = ty'; def = Term.Global name; reducible = false; rec_arg = None })
-            globals
-        in
-        let* def' = check provisional empty_ctx Quantity.Many def ty_v in
-        (* a body with NO occurrence of its own name is not recursive at
-           all: skip the structural guard entirely (it would otherwise
-           be vacuously satisfied at the first formal, k = 0) and behave
-           exactly like a plain def *)
-        let* rec_arg =
-          if Totality.mentions name def' then
-            Result.map Option.some (Totality.guard ~recname:name def')
-          else Ok None
-        in
-        Ok
-          (Global.add name
-             (Global.Def { Global.ty = ty'; def = def'; reducible; rec_arg })
-             globals)
-      else
-        let* def' = check globals empty_ctx Quantity.Many def ty_v in
-        (* the entry stores the STAMPED type and definition *)
-        Ok
-          (Global.add name
-             (Global.Def { Global.ty = ty'; def = def'; reducible; rec_arg = None })
-             globals)
+(** The one [Duplicate_global] fence, shared by [define], [define_prim],
+    [declare_ind] and [define_ind]'s ctor loop (M3 fixes round 3,
+    ctxcat id 4: previously four verbatim copies of the same lookup
+    match). *)
+let ensure_fresh (globals : Global.t) (name : string) : (unit, Error.t) result =
+  Global.find name globals
+  |> Option.fold ~none:(Ok ()) ~some:(fun _entry -> Error (Error.Duplicate_global name))
+
+let define ?(rec_ = false) ?(partial = false) (globals : Global.t) ~(name : string)
+    ~(reducible : bool) ~(ty : Term.t) ~(def : Term.t) : (Global.t, Error.t) result =
+  let* () = ensure_fresh globals name in
+  (* M3 Stage C: [partial] is always opaque to conversion, so it can
+     never also be [reducible] (decision 10 of the M3 design
+     verdict); checked before touching [ty] at all. *)
+  let* () =
+    if partial && reducible then Error (Error.Partial_reducible_conflict name) else Ok ()
+  in
+  let* ty', _ty_l = infer_univ globals empty_ctx ty in
+  let* ty_v = Eval.eval globals [] ty' in
+  let* () =
+    if reducible && is_effect_headed ty_v then Error (Error.Effect_def_reducible name)
+    else Ok ()
+  in
+  (* M3 Stage C: a [partial] def's codomain (after peeling its
+     leading Pi telescope) must have head [Div]; [partial] is the
+     one sanctioned way to reach [Div] from tot source (decision
+     10).  M3 fixes, C4' (C2, 2026-09-01): when the type has NO
+     leading Pi (a non-function partial def, whole type [Div A]),
+     [peel_codomain]'s base case would just repeat the [Eval.eval]
+     that produced [ty_v] above; reuse [ty_v] instead. *)
+  let* () =
+    if partial then
+      let* codomain_v =
+        match ty' with
+        | Term.Pi (_, _, _, _) -> peel_codomain globals [] 0 ty'
+        | Term.Var _ | Term.Univ _ | Term.Lit _
+        | Term.Lam (_, _, _)
+        | Term.App (_, _, _)
+        | Term.Let (_, _, _, _)
+        | Term.Ann (_, _)
+        | Term.Global _ | Term.Match _ -> Ok ty_v
+      in
+      if is_div_headed codomain_v then Ok () else Error (Error.Partial_not_div name)
+    else Ok ()
+  in
+  if rec_ then
+    (* the recursive global is opaque while its own body is checked:
+       the provisional entry never unfolds, so recursive calls stay
+       neutral during checking. [reducible = false] and [rec_arg =
+       None] stay deliberately conservative placeholders; [partial]
+       carries the def's REAL flag (M3 fixes round 2, ctxcat id 6:
+       no current consumer reads [partial] off a global during body
+       checking -- [Eval.eval] consults only [rec_arg]/[reducible]/
+       [def] -- but a future one must never see a wrong value). *)
+    let provisional =
+      Global.add name
+        (Global.Def
+           {
+             Global.ty = ty';
+             def = Term.Global name;
+             reducible = false;
+             rec_arg = None;
+             partial;
+           })
+        globals
+    in
+    let* def' = check provisional empty_ctx Quantity.Many def ty_v in
+    (* a body with NO occurrence of its own name is not recursive at
+       all: skip the structural guard entirely (it would otherwise
+       be vacuously satisfied at the first formal, k = 0) and behave
+       exactly like a plain def. [partial] skips the guard
+       unconditionally instead (M3 Stage C, decision 10): its
+       self-reference stays unguarded at both conversion time
+       (never reducible, so never unfolded during checking) and
+       runtime (ordinary, potentially-non-terminating recursion,
+       exactly matching its [Div]-headed codomain). *)
+    let* rec_arg =
+      if partial then Ok None
+      else if Totality.mentions name def' then
+        Result.map Option.some (Totality.guard ~recname:name def')
+      else Ok None
+    in
+    Ok
+      (Global.add name
+         (Global.Def { Global.ty = ty'; def = def'; reducible; rec_arg; partial })
+         globals)
+  else
+    let* def' = check globals empty_ctx Quantity.Many def ty_v in
+    (* the entry stores the STAMPED type and definition *)
+    Ok
+      (Global.add name
+         (Global.Def { Global.ty = ty'; def = def'; reducible; rec_arg = None; partial })
+         globals)
+
+(** Extend the environment with a native prim (M3 Stage A). The only
+    public way to grow [Global.t] with a [Prim] entry. It does NOT check
+    that [Prim.arity prim] agrees with [ty]; a catalog-level test does
+    that instead. *)
+let define_prim (globals : Global.t) ~(name : string) ~(ty : Term.t) ~(prim : Prim.t) :
+    (Global.t, Error.t) result =
+  let* () = ensure_fresh globals name in
+  let* ty', _ty_l = infer_univ globals empty_ctx ty in
+  Ok (Global.add name (Global.Prim { Global.prim_ty = ty'; prim }) globals)
 
 (** Declare an inductive's name, parameters and level. Constructors arrive
     separately via [define_ind] so their types can mention the inductive. *)
 let declare_ind (globals : Global.t) ~(name : string) ~(params : Global.telescope)
     ~(level : Level.t) : (Global.t, Error.t) result =
-  match Option.to_list (Global.find name globals) with
-  | _entry :: _ -> Error (Error.Duplicate_global name)
-  | [] ->
-      let* _pctx, rev_stamped =
-        List.fold_left
-          (fun acc (q, x, ty) ->
-            let* ctx, rev_acc = acc in
-            let* ty', _l = infer_univ globals ctx ty in
-            let* ty_v = Eval.eval globals ctx.env ty' in
-            Ok (bind x q ty_v ctx, (q, x, ty') :: rev_acc))
-          (Ok (empty_ctx, []))
-          params
-      in
-      let stamped = List.rev rev_stamped in
-      let closed =
-        List.fold_right
-          (fun (q, x, ty) acc -> Term.Pi (q, x, ty, acc))
-          stamped (Term.Univ level)
-      in
-      Ok
-        (Global.add name
-           (Global.Ind { Global.ind_ty = closed; params = stamped; level; ctor_names = None })
-           globals)
+  let* () = ensure_fresh globals name in
+  let* _pctx, rev_stamped =
+    List.fold_left
+      (fun acc (q, x, ty) ->
+        let* ctx, rev_acc = acc in
+        let* ty', _l = infer_univ globals ctx ty in
+        let* ty_v = Eval.eval globals ctx.env ty' in
+        Ok (bind x q ty_v ctx, (q, x, ty') :: rev_acc))
+      (Ok (empty_ctx, []))
+      params
+  in
+  let stamped = List.rev rev_stamped in
+  let closed =
+    List.fold_right
+      (fun (q, x, ty) acc -> Term.Pi (q, x, ty, acc))
+      stamped (Term.Univ level)
+  in
+  Ok
+    (Global.add name
+       (Global.Ind { Global.ind_ty = closed; params = stamped; level; ctor_names = None })
+       globals)
 
 (** Check and install the constructors of an already-declared inductive.
     Enforces the result-head rule, strict positivity with uniform
@@ -365,7 +483,7 @@ let define_ind (globals : Global.t) ~(name : string) ~(ctors : (string * Term.t)
     let head_ok =
       match head with
       | Term.Global g -> String.equal g name
-      | Term.Var _ | Term.Univ _
+      | Term.Var _ | Term.Univ _ | Term.Lit _
       | Term.Pi (_, _, _, _)
       | Term.Lam (_, _, _)
       | Term.App (_, _, _)
@@ -381,6 +499,7 @@ let define_ind (globals : Global.t) ~(name : string) ~(ctors : (string * Term.t)
               match arg with
               | Term.Var ix -> Int.equal ix (depth + n_params - 1 - j)
               | Term.Univ _
+              | Term.Lit _
               | Term.Pi (_, _, _, _)
               | Term.Lam (_, _, _)
               | Term.App (_, _, _)
@@ -391,7 +510,7 @@ let define_ind (globals : Global.t) ~(name : string) ~(ctors : (string * Term.t)
   in
   let rec no_occur (t : Term.t) : bool =
     match t with
-    | Term.Var _ | Term.Univ _ -> true
+    | Term.Var _ | Term.Univ _ | Term.Lit _ -> true
     | Term.Global g -> not (String.equal g name)
     | Term.Pi (_q, _x, dom, cod) -> no_occur dom && no_occur cod
     | Term.Lam (_q, _x, b) -> no_occur b
@@ -412,7 +531,7 @@ let define_ind (globals : Global.t) ~(name : string) ~(ctors : (string * Term.t)
     | () ->
         (match t with
         | Term.Pi (_q, _x, dom, cod) -> no_occur dom && strict_pos (depth + 1) cod
-        | Term.Var _ | Term.Univ _
+        | Term.Var _ | Term.Univ _ | Term.Lit _
         | Term.Lam (_, _, _)
         | Term.App (_, _, _)
         | Term.Let (_, _, _, _)
@@ -423,7 +542,7 @@ let define_ind (globals : Global.t) ~(name : string) ~(ctors : (string * Term.t)
   let rec strip_pis (acc : Global.telescope) (t : Term.t) : Global.telescope * Term.t =
     match t with
     | Term.Pi (q, x, dom, cod) -> strip_pis ((q, x, dom) :: acc) cod
-    | Term.Var _ | Term.Univ _
+    | Term.Var _ | Term.Univ _ | Term.Lit _
     | Term.Lam (_, _, _)
     | Term.App (_, _, _)
     | Term.Let (_, _, _, _)
@@ -435,11 +554,7 @@ let define_ind (globals : Global.t) ~(name : string) ~(ctors : (string * Term.t)
     List.fold_left
       (fun acc (cname, cty) ->
         let* gacc = acc in
-        let* () =
-          match Option.to_list (Global.find cname gacc) with
-          | _e :: _ -> Error (Error.Duplicate_global cname)
-          | [] -> Ok ()
-        in
+        let* () = ensure_fresh gacc cname in
         let* cty', _cty_l = infer_univ gacc pctx cty in
         let args, cod = strip_pis [] cty' in
         let* () =

@@ -30,7 +30,7 @@ let rec lam_quantities (t : Term.t) : Quantity.t list =
   | Term.App (_, _, _)
   | Term.Let (_, _, _, _)
   | Term.Ann (_, _)
-  | Term.Global _ | Term.Match _ ->
+  | Term.Global _ | Term.Match _ | Term.Lit _ ->
       []
 
 (** Remap a kernel [rec_arg] (an index into the UNERASED formal telescope,
@@ -80,7 +80,7 @@ let remap_rec_arg (def : Term.t) (rec_arg : int option) : int option =
 
 let item ~(exec : bool) (st : state) (it : Syntax.item) : (state, Serror.t) result =
   match it with
-  | Syntax.IDef { loc; name; reducible; rec_; ty; def } ->
+  | Syntax.IDef { loc; name; reducible; rec_; partial; ty; def } ->
       let* ty_t = Elab.term st.globals [] ty in
       (* a rec body mentions its own name: elaborate it against a
          provisional self-entry (the kernel re-adds its own opaque one
@@ -95,13 +95,15 @@ let item ~(exec : bool) (st : state) (it : Syntax.item) : (state, Serror.t) resu
                  def = Term.Global name;
                  reducible = false;
                  rec_arg = None;
+                 partial = false;
                })
             st.globals
         else st.globals
       in
       let* def_t = Elab.term elab_globals [] def in
       let* globals =
-        kernel loc (Check.define ~rec_ st.globals ~name ~reducible ~ty:ty_t ~def:def_t)
+        kernel loc
+          (Check.define ~rec_ ~partial st.globals ~name ~reducible ~ty:ty_t ~def:def_t)
       in
       (* fetch the entry back: its def carries the checker's quantity
          stamps, which structural erasure relies on *)
@@ -110,12 +112,39 @@ let item ~(exec : bool) (st : state) (it : Syntax.item) : (state, Serror.t) resu
           (Global.find_def name globals
           |> Option.to_result ~none:(Error.Unbound_global name))
       in
-      let* def_e = kernel loc (Erase.closed dentry.Global.def) in
+      (* M3 fixes, A1 (O1 + C14, 2026-09-01): in CHECK mode
+         [Interp.define] is never called for USER DEFS, so no def body
+         (a Div/IO HEAD, or a Div value nested under a pure head like
+         [Option (Div Nat)]) can execute host computation under
+         `tot check`. Data-ctor seeding is MODE-INDEPENDENT (round 3,
+         O5): the [IData] arm below calls [Interp.add_erased]/
+         [add_ctor] in both modes, which is harmless -- those entries
+         are inert canonical-value scaffolding, they execute no user
+         code. Elaboration and kernel checking above only ever
+         consult kernel globals ([Eval]'s NbE), never [Interp] values,
+         so nothing downstream needs the def entries; check-mode
+         [eval] items print types only (below) and [main_epilogue]
+         returns early on [exec = false]. Bootstrap folds the prelude
+         with
+         [exec = true], so the prelude path is unchanged. In RUN mode
+         (M3 fixes round 2, R2, superseding the Stage B head-keyed
+         rule) EVERY user def is recorded as a lazy memoized thunk:
+         elaboration, checking, erasure and closedness above stay
+         EAGER (a malformed def is still caught right here), the body
+         runs on first force by an eval item or by [main], and the A2
+         memo keeps single-execution. Dead code (a def [main] never
+         mentions) therefore never runs, so it can neither abort nor
+         hang a guard; the flip side, recorded in SPEC.md, is that a
+         LIVE def's definition-time abort surfaces only at force
+         time. *)
       let* eglobals =
-        kernel loc
-          (Interp.define st.eglobals ~name
-             ~rec_arg:(remap_rec_arg dentry.Global.def dentry.Global.rec_arg)
-             def_e)
+        if not exec then Ok st.eglobals
+        else
+          let* def_e = kernel loc (Erase.closed dentry.Global.def) in
+          Ok
+            (Interp.define st.eglobals ~name
+               ~rec_arg:(remap_rec_arg dentry.Global.def dentry.Global.rec_arg)
+               def_e)
       in
       let line = Printf.sprintf "def %s : %s" name (Pp.term [] ty_t) in
       Ok { globals; eglobals; lines = line :: st.lines }
@@ -218,7 +247,123 @@ let item ~(exec : bool) (st : state) (it : Syntax.item) : (state, Serror.t) resu
       else
         Ok { st with lines = ("eval : " ^ Check.pp_value st.globals 0 ty_v) :: st.lines }
 
-let script ~(exec : bool) (src : string) : (string list, Serror.t) result =
+(** [main]'s EVALUATED type converts (by [Eval.conv], not just a head
+    test) to [IO io_arg] -- e.g. [io_arg = "Verdict"] or ["Unit"].
+    Guarded first by [IO]/[io_arg] actually resolving in [globals], so
+    an unrelated "main" in a non-bootstrapped environment never trips
+    an [Unbound_global] on "IO". Takes the type VALUE, not the term:
+    [main_epilogue] evaluates [main]'s stored type exactly ONCE and
+    reuses it for both target comparisons (M3 fixes, C11, 2026-09-01;
+    M3 Stage D, D4: [IO Verdict] is tried FIRST, then [IO Unit], the
+    plan's own priority order). *)
+let converts_to (globals : Global.t) (main_ty_v : Value.t) ~(io_arg : string) :
+    (bool, Serror.t) result =
+  let has_target = Option.is_some (Global.find "IO" globals) && Option.is_some (Global.find io_arg globals) in
+  if not has_target then Ok false
+  else
+    let* target_v =
+      kernel Loc.start
+        (Eval.eval globals [] (Term.App (Quantity.Many, Term.Global "IO", Term.Global io_arg)))
+    in
+    kernel Loc.start (Eval.conv globals 0 main_ty_v target_v)
+
+(** Force [main] (through [Interp.exec] on the [EGlobal] lookup, which
+    forces a [GDeferred] body exactly once here) and run its action
+    tree to completion, EXACTLY once. Shared by the [IO Verdict] and
+    [IO Unit] epilogue paths below (M3 Stage D; M3 Stage B for the
+    [IO Unit] shape alone). *)
+let run_main (final : state) : (Effect.outcome, Serror.t) result =
+  let* main_v = kernel Loc.start (Interp.exec final.eglobals [] (Eterm.EGlobal "main")) in
+  let* action = kernel Loc.start (Effect.require_action main_v) in
+  kernel Loc.start (Effect.run_io final.eglobals action)
+
+(** M3 Stage D, D4: the [IO Verdict] epilogue path, tried FIRST. An
+    [Exited n] outcome (an explicit [exitWith] fired before ever
+    reaching a [Verdict] value) SHORT CIRCUITS: it wins over rendering
+    a verdict, exactly the plan's own rule, and [Effect.render_verdict]
+    is never even called. A [Done v] outcome renders [v] (a checked
+    [allow]/[ask _]/[deny _] value) into the driver's envelope line (or
+    nothing, for [allow]) and its OS exit code. The replacement LINE
+    LIST here REPLACES the whole script's ordinary per-item echo
+    (`script` below never appends to it): the hook-protocol contract is
+    that stdout carries EXACTLY the rendered decision, nothing else,
+    not "def main : (IO Verdict)" or any earlier item's echo. *)
+let run_verdict_main (final : state) : (string list * int, Serror.t) result =
+  let* outcome = run_main final in
+  match outcome with
+  | Effect.Exited n -> Ok ([], n)
+  | Effect.Done v ->
+      let* line_opt, code = kernel Loc.start (Effect.render_verdict v) in
+      Ok (line_opt |> Option.fold ~none:[] ~some:(fun l -> [ l ]), code)
+
+(** M3 Stage B: the [IO Unit] epilogue path, tried SECOND (only once
+    [main] does not convert to [IO Verdict]). Unlike the [IO Verdict]
+    path, this one does NOT replace the script's ordinary per-item
+    echo lines: `run` mode has always printed one "def ..." line per
+    top-level item, [main] included, and this stage does not change
+    that for a plain [IO Unit] script. [Exited n] becomes exit code
+    [Some n]; completing without an explicit [exitWith] stays [None]
+    ([bin/tot.ml] defaults that to 0). *)
+let run_unit_main (final : state) : (int option, Serror.t) result =
+  let* outcome = run_main final in
+  match outcome with
+  | Effect.Exited n -> Ok (Some n)
+  | Effect.Done _ -> Ok None
+
+(** [main]'s epilogue. Looks up a global literally named "main"; every
+    M2 script defines no such name, so [None] here (via [Option.fold]'s
+    [~none]) is the OVERWHELMINGLY common, and totally unaffected,
+    path.
+
+    M3 fixes, C1' (O4, 2026-09-01): [main] is a RESERVED driver name
+    in BOTH modes. When the user file defines it, its stored type is
+    evaluated exactly ONCE (C11) and must convert to [IO Verdict] or
+    [IO Unit]; anything else is [Serror.Main_bad_type], in check mode
+    too, so `tot check` flags the guard `tot run` would have silently
+    no-op'd (the O4 permit-all). Type evaluation here is kernel NbE
+    only, never [Interp]: check mode still executes no user def body
+    and never calls [run_io]. A MISSPELLED main stays silent by
+    design this milestone (SPEC section 6 residual).
+
+    In RUN mode (M3 Stage D, D4): [IO Verdict] is tried FIRST
+    ([run_verdict_main], REPLACING the printed lines); only if that
+    does not match is [IO Unit] tried ([run_unit_main], M3 Stage B,
+    leaving the printed lines alone). Returns
+    [(replacement_lines option, exit_code option)]: [Some lines]
+    REPLACES [script]'s own accumulated output; [None] leaves it
+    unchanged. In CHECK mode a well-typed [main] stays [None, None]:
+    nothing runs. *)
+let main_epilogue (final : state) ~(exec : bool) :
+    (string list option * int option, Serror.t) result =
+  Global.find_def "main" final.globals
+  |> Option.fold ~none:(Ok (None, None)) ~some:(fun dentry ->
+         let* main_ty_v = kernel Loc.start (Eval.eval final.globals [] dentry.Global.ty) in
+         let* is_verdict = converts_to final.globals main_ty_v ~io_arg:"Verdict" in
+         let* is_unit =
+           if is_verdict then Ok false else converts_to final.globals main_ty_v ~io_arg:"Unit"
+         in
+         match () with
+         | () when (not is_verdict) && not is_unit ->
+             Error (Serror.Main_bad_type { ty = Check.pp_value final.globals 0 main_ty_v })
+         | () when not exec -> Ok (None, None)
+         | () when is_verdict ->
+             let* lines, code = run_verdict_main final in
+             Ok (Some lines, Some code)
+         | () ->
+             let* code = run_unit_main final in
+             Ok (None, code))
+
+(** [st] seeds the starting environment (M3 Stage A); default [initial]
+    keeps every existing caller and every existing test unchanged. M3
+    Stage B: [script] additionally returns the process exit code
+    [main]'s epilogue computed, [None] when there is no [IO Unit] (or,
+    M3 Stage D, [IO Verdict]) [main], or it never called [exitWith]
+    (verdict 3.7). M3 Stage D, D4: when the epilogue returns
+    [Some replacement_lines] (the [IO Verdict] driver path took over
+    rendering), that list REPLACES the ordinary accumulated output
+    instead of appending to it. *)
+let script ?(st : state = initial) ~(exec : bool) (src : string) :
+    (string list * int option, Serror.t) result =
   let* tokens = Lexer.lex src in
   let* items = Parser.parse tokens in
   let* final =
@@ -226,6 +371,9 @@ let script ~(exec : bool) (src : string) : (string list, Serror.t) result =
       (fun acc it ->
         let* st = acc in
         item ~exec st it)
-      (Ok initial) items
+      (Ok st) items
   in
-  Ok (List.rev final.lines)
+  let* replacement_lines, exit_code = main_epilogue final ~exec in
+  let base_lines = List.rev final.lines in
+  let out_lines = replacement_lines |> Option.fold ~none:base_lines ~some:Fun.id in
+  Ok (out_lines, exit_code)

@@ -1,0 +1,8 @@
+-- M3 fixes, C1' (O4): the DOCUMENTED residual.  A misspelled `main`
+-- (here `mian`) is an ordinary def, so the script stays script mode
+-- and exits 0: a denying guard silently becomes a permit-all.  A
+-- strict driver flag is M4 work; SPEC.md section 6 records the debt.
+-- Gate: PASS-D-MAIN-MISSPELLED pins exit 0 (the residual, on
+-- purpose), so a future strict-mode change must revisit that gate
+-- consciously rather than silently.
+def mian : IO Verdict := pureIO Verdict (deny "never reached")

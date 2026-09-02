@@ -1,0 +1,17 @@
+-- M3 fixes, B3 (C16): a child that writes far more than any OS pipe
+-- buffer (300000 bytes here; macOS pipes cap at 64 KiB) to stderr
+-- and exits 0.  Pre-fix procRun drained two pipes SEQUENTIALLY, so
+-- this deadlocked forever (exit 124 under a 10s watchdog, recorded
+-- in dev/M3-FIXES-LOG.md); with temp-file capture it completes and
+-- returns the FULL stderr.  dev/gates.sh pins CODE=0 and
+-- ERRLEN=300000 under a watchdog.
+def cmdArgs : List String :=
+  cons String "-c"
+    (cons String "head -c 300000 /dev/zero | tr '\\0' e 1>&2" (nil String))
+def main : IO Unit :=
+  let* ProcessResult Unit r := procRun "/bin/sh" cmdArgs in
+  match r with
+  | mkProcessResult code out err =>
+      let* Unit Unit u1 := printLine (stringConcat "CODE=" (intToString code)) in
+      printLine (stringConcat "ERRLEN=" (intToString (stringLength err)))
+  end

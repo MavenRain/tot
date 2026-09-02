@@ -1,0 +1,7 @@
+-- M3 fixes, C1' (O4): `main` is a reserved driver name.  A `main`
+-- whose type converts to neither `IO Verdict` nor `IO Unit` is a
+-- script error (Serror.Main_bad_type) in BOTH check and run modes.
+-- Pre-fix this exact script ran to exit 0 printing nothing: the
+-- effect never happened AND no diagnostic was issued, the O4
+-- silent-permit-all shape.  Gate: PASS-D-MAIN-BADTYPE.
+def main : IO Bool := let* Unit Bool a := printLine "THIS EFFECT NEVER HAPPENS" in pureIO Bool true

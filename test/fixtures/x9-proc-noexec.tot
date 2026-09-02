@@ -1,0 +1,13 @@
+-- M3 fixes, B3 (C8): a spawn of a nonexistent binary returns the
+-- cannot-exec sentinel cleanly (OCaml's create_process reports the
+-- exec failure in the PARENT on this host, so the -1 sentinel triple
+-- fires, exactly as pre-fix), and every parent-held descriptor is
+-- closed on the failure path too; the in-process B3 fd-count test
+-- pins the no-descriptor-growth half.  dev/gates.sh pins the printed
+-- code.
+def main : IO Unit :=
+  let* ProcessResult Unit r := procRun "/nonexistent-tot-b3-binary" (nil String) in
+  match r with
+  | mkProcessResult code out err =>
+      printLine (stringConcat "CODE=" (intToString code))
+  end

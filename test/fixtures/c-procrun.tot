@@ -1,0 +1,13 @@
+-- M3 Stage C, Gate C (iii): procRun on /bin/echo populates all three
+-- ProcessResult fields. dev/gates.sh pins the exit code, the stdout
+-- text (echo appends its own trailing newline), and the empty
+-- stderr.
+def cmdArgs : List String := cons String "tot-gate-c" (nil String)
+def main : IO Unit :=
+  let* ProcessResult Unit r := procRun "/bin/echo" cmdArgs in
+  match r with
+  | mkProcessResult code out err =>
+      let* Unit Unit u1 := printLine (stringConcat "CODE=" (intToString code)) in
+      let* Unit Unit u2 := printLine (stringConcat "OUT=" out) in
+      printLine (stringConcat "ERR=" err)
+  end

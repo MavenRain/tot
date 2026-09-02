@@ -1,2 +1,7 @@
+; M3 Stage C: `str` backs the two regex prims (regexTest/regexMatch)
+; only, fired inline in lib/interp.ml. Str is not Unix and not Sys, so
+; the "no Unix, no Sys in lib/" rule holds (see lib/interp.ml's own
+; comment beside the regex engine for the full rationale).
 (library
- (name tot_kernel))
+ (name tot_kernel)
+ (libraries str))

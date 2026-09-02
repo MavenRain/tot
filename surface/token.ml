@@ -23,9 +23,13 @@ type kind =
   | KReturn
   | KRec
   | KEnd
+  | KLetStar  (** M3 Stage C: "let*", the [bindIO] sugar keyword *)
+  | KLetStarDiv  (** M3 Stage C: "let*!", the [bindDiv] sugar keyword *)
+  | KPartial  (** M3 Stage C: "partial", follows "rec" in a def header *)
   | Pipe
   | Ident of string
   | Nat of int
+  | Str of string  (** M3 Stage A: a double-quoted string literal *)
   | Eof
 
 type t = {
@@ -56,7 +60,11 @@ let describe (k : kind) : string =
   | KReturn -> "'return'"
   | KRec -> "'rec'"
   | KEnd -> "'end'"
+  | KLetStar -> "'let*'"
+  | KLetStarDiv -> "'let*!'"
+  | KPartial -> "'partial'"
   | Pipe -> "'|'"
   | Ident s -> Printf.sprintf "identifier %s" s
   | Nat n -> Printf.sprintf "number %d" n
+  | Str s -> Printf.sprintf "string literal %S" s
   | Eof -> "end of input"

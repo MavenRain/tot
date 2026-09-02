@@ -20,7 +20,7 @@ let rec peel (n : int) (t : Term.t) : int * Term.t =
   | Term.App (_, _, _)
   | Term.Let (_, _, _, _)
   | Term.Ann (_, _)
-  | Term.Global _ | Term.Match _ ->
+  | Term.Global _ | Term.Match _ | Term.Lit _ ->
       (n, t)
 
 (** Collect an application spine: head plus args oldest first. *)
@@ -32,7 +32,7 @@ let rec spine (t : Term.t) (args : Term.t list) : Term.t * Term.t list =
   | Term.Lam (_, _, _)
   | Term.Let (_, _, _, _)
   | Term.Ann (_, _)
-  | Term.Global _ | Term.Match _ ->
+  | Term.Global _ | Term.Match _ | Term.Lit _ ->
       (t, args)
 
 (** Does [name] occur anywhere in [t] as a [Term.Global]? Structural,
@@ -44,6 +44,7 @@ let rec mentions (name : string) (t : Term.t) : bool =
   match t with
   | Term.Var _ -> false
   | Term.Univ _ -> false
+  | Term.Lit _ -> false
   | Term.Global g -> String.equal g name
   | Term.Pi (_q, _x, dom, cod) -> mentions name dom || mentions name cod
   | Term.Lam (_q, _x, body) -> mentions name body
@@ -86,13 +87,14 @@ let passes ~(recname : string) (k : int) (formals : int) (body : Term.t) : bool 
            | Term.App (_, _, _)
            | Term.Let (_, _, _, _)
            | Term.Ann (_, _)
-           | Term.Global _ | Term.Match _ ->
+           | Term.Global _ | Term.Match _ | Term.Lit _ ->
                false)
   in
   let rec ok (st : status list) (t : Term.t) : bool =
     match t with
     | Term.Var _ -> true
     | Term.Univ _ -> true
+    | Term.Lit _ -> true
     (* a bare (unapplied) occurrence of the rec global always fails *)
     | Term.Global g -> not (String.equal g recname)
     | Term.App (_q, _f, _a) ->
@@ -101,7 +103,7 @@ let passes ~(recname : string) (k : int) (formals : int) (body : Term.t) : bool 
           match head with
           | Term.Global g when String.equal g recname -> guarded_call st args
           | Term.Global _ -> true
-          | Term.Var _ | Term.Univ _ -> true
+          | Term.Var _ | Term.Univ _ | Term.Lit _ -> true
           | Term.Pi (_, _, _, _)
           | Term.Lam (_, _, _)
           | Term.App (_, _, _) (* unreachable: [spine] never returns an App head *)
@@ -125,7 +127,7 @@ let passes ~(recname : string) (k : int) (formals : int) (body : Term.t) : bool 
           | Term.App (_, _, _)
           | Term.Let (_, _, _, _)
           | Term.Ann (_, _)
-          | Term.Global _ | Term.Match _ ->
+          | Term.Global _ | Term.Match _ | Term.Lit _ ->
               false
         in
         let binder_status = if scrut_special then Smaller else Other in

@@ -41,6 +41,7 @@ let rec term (ctx : ctx) (tm : Term.t) : (Eterm.t, Error.t) result =
       Ok (Eterm.ELet (x, def_e, body_e))
   | Term.Ann (tm', _ty) -> term ctx tm'
   | Term.Global name -> Ok (Eterm.EGlobal name)
+  | Term.Lit l -> Ok (Eterm.ELit l)
   | Term.Match { scrut; motive = _; branches } ->
       (* the motive is a type: it never reaches runtime. Branch binders
          keep only the Many-stamped positions. *)

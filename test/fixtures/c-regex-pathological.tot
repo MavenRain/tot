@@ -1,0 +1,14 @@
+-- M3 Stage C, Gate C (iv): a bounded pathological regexTest fixture.
+-- "(a+)+b" against a run of 'a's with NO trailing 'b' is a textbook
+-- catastrophic-backtracking shape; measured empirically against
+-- OCaml's Str engine (dev/M3-BUILD-LOG.md "Stage C" records the
+-- timing), 35 'a's alone exceeds a 5s external `timeout`/`gtimeout`
+-- wrapper. dev/gates.sh runs this UNDER that wrapper and only checks
+-- that the wrapper itself did not error out unexpectedly (exit 124,
+-- a clean timeout, is an ACCEPTED outcome, not a failure): the Div
+-- classification is provenance and a composition discipline, NEVER
+-- an operational termination proof, so this fixture's whole point is
+-- that tot's type system permits writing (and DEFERS at check-time)
+-- a regexTest call that may never return, and the RUNTIME behavior
+-- here is exactly that: do NOT assert that this fixture completes.
+eval regexTest "\\(a+\\)+b" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"

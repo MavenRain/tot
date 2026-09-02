@@ -2,29 +2,51 @@
     EXACT full output-line list; negatives pin the EXACT error tag, so a
     vacuous pass is impossible. *)
 
+let ( let* ) = Result.bind
+
 let show_lines (lines : string list) : string = String.concat " | " lines
 
-let expect_with ~(exec : bool) (src : string) (want : string list) () :
+let expect_with ?st ~(exec : bool) (src : string) (want : string list) () :
     (unit, string) result =
-  Tot_surface.Run.script ~exec src
+  Tot_surface.Run.script ?st ~exec src
   |> Result.fold
-       ~ok:(fun got ->
+       ~ok:(fun (got, _exit_code) ->
          if List.equal String.equal got want then Ok ()
          else
            Error
              (Printf.sprintf "got  [%s]\n  want [%s]" (show_lines got) (show_lines want)))
        ~error:(fun e -> Error ("error: " ^ Tot_surface.Serror.to_string e))
 
-let expect_lines (src : string) (want : string list) () : (unit, string) result =
-  expect_with ~exec:true src want ()
+let expect_lines ?st (src : string) (want : string list) () : (unit, string) result =
+  expect_with ?st ~exec:true src want ()
 
-let expect_lines_check (src : string) (want : string list) () : (unit, string) result =
-  expect_with ~exec:false src want ()
+let expect_lines_check ?st (src : string) (want : string list) () : (unit, string) result =
+  expect_with ?st ~exec:false src want ()
 
-let expect_err (src : string) (want_tag : string) () : (unit, string) result =
-  Tot_surface.Run.script ~exec:true src
+(* M3 Stage D: like [expect_with ~exec:true], but ALSO pins the process
+   exit code [Run.script]'s epilogue computed -- [expect_lines] itself
+   discards it. Needed for the D4 main-epilogue tests, since the whole
+   point of the IO Verdict priority rule is what exit code comes out,
+   not just what gets printed. *)
+let expect_run ?st (src : string) ~(want_lines : string list) ~(want_exit : int option) () :
+    (unit, string) result =
+  Tot_surface.Run.script ?st ~exec:true src
   |> Result.fold
-       ~ok:(fun lines ->
+       ~ok:(fun (got_lines, got_exit) ->
+         if List.equal String.equal got_lines want_lines && Option.equal Int.equal got_exit want_exit
+         then Ok ()
+         else
+           Error
+             (Printf.sprintf "got [%s] exit=%s, want [%s] exit=%s" (show_lines got_lines)
+                (Option.fold ~none:"None" ~some:string_of_int got_exit)
+                (show_lines want_lines)
+                (Option.fold ~none:"None" ~some:string_of_int want_exit)))
+       ~error:(fun e -> Error ("error: " ^ Tot_surface.Serror.to_string e))
+
+let expect_err ?st (src : string) (want_tag : string) () : (unit, string) result =
+  Tot_surface.Run.script ?st ~exec:true src
+  |> Result.fold
+       ~ok:(fun (lines, _exit_code) ->
          Error
            (Printf.sprintf "expected %s, but the script ran: [%s]" want_tag
               (show_lines lines)))
@@ -39,10 +61,10 @@ let expect_err (src : string) (want_tag : string) () : (unit, string) result =
 (* like [expect_err], but prints the actual error text on a PASS too, so
    a rejection is shown to fire for the intended reason and not just an
    accidental tag match *)
-let expect_err_printed (src : string) (want_tag : string) () : (unit, string) result =
-  Tot_surface.Run.script ~exec:true src
+let expect_err_printed ?st (src : string) (want_tag : string) () : (unit, string) result =
+  Tot_surface.Run.script ?st ~exec:true src
   |> Result.fold
-       ~ok:(fun lines ->
+       ~ok:(fun (lines, _exit_code) ->
          Error
            (Printf.sprintf "expected %s, but the script ran: [%s]" want_tag
               (show_lines lines)))
@@ -102,6 +124,20 @@ let watchdog : string option =
   | () when has "gtimeout" -> Some "gtimeout"
   | () -> None
 
+(* M3 Stage D, D2: point every in-process [Tot_surface.Cache] call this
+   suite makes at a scratch directory, never the real ~/.cache/tot
+   ([Cache]'s own module doc comment names this exact override as its
+   test-isolation fill-in). [Filename.temp_file] both reserves a
+   unique path and creates an (empty) FILE there; removing it and
+   reusing the freed name as a DIRECTORY is the standard
+   "get a fresh unique path" idiom for a test harness (not
+   restructured further, matching this file's own existing
+   [Filename.temp_file] usage in [expect_cli_run_lines] above). *)
+let () =
+  let dir = Filename.temp_file "tot-cache-test" "" in
+  let () = Sys.remove dir in
+  Unix.putenv "TOT_CACHE_DIR" dir
+
 (* M2-fixes batch (Round 2), R2: a divergence REGRESSION on a script run
    in-process (a plain [Tot_surface.Run.script] call, no timeout) would
    hang the whole test binary forever rather than failing it, since
@@ -111,7 +147,14 @@ let watchdog : string option =
    the watchdog), which this helper reports as an [Error], instead of
    wedging the parent test process. Captures stdout+stderr to a scratch
    file and compares the exact line list on a clean exit, same
-   discipline as [expect_lines]. *)
+   discipline as [expect_lines].
+
+   M3 Stage D, D1: both fixtures this helper drives (F1's
+   f1-witness.tot, T0's s0-erased-guard.tot) are kernel-test-style
+   scripts that declare their OWN "data Nat" from scratch, so they run
+   with "--no-prelude" (decision 14): [bin/tot.ml] now auto-loads the
+   prelude by default, and the prelude's own "Nat" would otherwise
+   collide (Duplicate_global). *)
 let expect_cli_run_lines (path : string) (want : string list) () : (unit, string) result =
   watchdog
   |> Option.fold
@@ -123,8 +166,8 @@ let expect_cli_run_lines (path : string) (want : string list) () : (unit, string
        ~some:(fun watchdog_cmd ->
          let out_path = Filename.temp_file "tot-cli-witness" ".out" in
          let cmd =
-           Printf.sprintf "%s 10 %s run %s > %s 2>&1" watchdog_cmd (Filename.quote tot_exe)
-             (Filename.quote path) (Filename.quote out_path)
+           Printf.sprintf "%s 10 %s run --no-prelude %s > %s 2>&1" watchdog_cmd
+             (Filename.quote tot_exe) (Filename.quote path) (Filename.quote out_path)
          in
          let code = Sys.command cmd in
          (* if reading [out_path] here raises, the [Sys.remove] below is
@@ -222,7 +265,7 @@ let map_def : string =
 
 let with_lines (items : string list) : string = String.concat "\n" items
 
-let cases : (string * (unit -> (unit, string) result)) list =
+let cases (bst : Tot_surface.Run.state) : (string * (unit -> (unit, string) result)) list =
   [
     ( "cadd two two runs to church four",
       expect_lines
@@ -509,23 +552,544 @@ let cases : (string * (unit -> (unit, string) result)) list =
             "fun n => n";
             "(succ zero)";
           ]) );
+    (* M3 Stage A: literals, builtin base types, the Prim entry kind.
+       [bst] is the bootstrapped state (Bootstrap.state ()), computed
+       once below and threaded in here. *)
+    ( "A9: eval stringConcat computes",
+      expect_lines ~st:bst "eval stringConcat \"a\" \"b\"" [ "\"ab\"" ] );
+    ("A10: eval intAdd computes", expect_lines ~st:bst "eval intAdd 2 3" [ "5" ]);
+    ( "A11: check mode prints the String and Int result types",
+      expect_lines_check ~st:bst "eval stringConcat \"a\" \"b\"\neval intAdd 2 3"
+        [ "eval : String"; "eval : Int" ] );
+    ( "A12: partial stringConcat quotes as a frozen prim spine",
+      expect_lines ~st:bst "eval stringConcat \"a\"" [ "(stringConcat \"a\")" ] );
+    ( "A13: literal type mismatch is a kernel error",
+      expect_err_printed ~st:bst "def x : String := 3" "Kernel.Mismatch" );
+    ( "A14: match on a String scrutinee cannot eliminate (declared-only ind)",
+      expect_err_printed ~st:bst "def f : String -> String := fun s => match s with end"
+        "Kernel.Ind_incomplete" );
+    (* M3 Stage B: the ladder end to end. [bst] carries Div/IO and the
+       nine new prims (B1-B7 above cover the kernel-level half; B8-B10,
+       the OS-observed half, live in dev/gates.sh via this binary's
+       own [gate-check]/[gate-run] argv mode below). *)
+    ( "B5: eval bindIO ... in check mode prints the type and executes nothing",
+      expect_lines_check ~st:bst "eval bindIO String Unit readStdin (fun s => printLine s)"
+        [ "eval : (IO Unit)" ] );
+    ( "B6: eval of an IO expression in run mode is Kernel.Not_quotable (sequencing goes \
+       through main, not eval)",
+      expect_err_printed ~st:bst "eval bindIO String Unit readStdin (fun s => printLine s)"
+        "Kernel.Not_quotable" );
+    ( "B7: a Div-headed def whose body applies a prim is accepted, and check does not \
+       compute it (paired with the heavier dev/gates.sh PASS-B-DEFERRED timing fixture)",
+      expect_lines_check ~st:bst
+        "def slowish : Div String := pureDiv String (stringConcat \"a\" \"b\")"
+        [ "def slowish : (Div String)" ] );
+    (* M3 Stage C, C7 test 5: a real JSON fixture round-trips (parse,
+       project fields by match, re-serialize, compare against the
+       exact source payload). jsonParse is Div, so the whole check
+       stays Div-typed via let*! until pureDiv closes it. *)
+    ( "C5: JSON fixture round-trips: parse, project by match, re-serialize, compare",
+      expect_lines ~st:bst
+        (with_lines
+           [
+             "def payload : String := \"{\\\"name\\\":\\\"tot\\\",\\\"count\\\":3}\"";
+             "def checkAll : Div Bool :=";
+             "  let*! (Option Json) Bool mj := jsonParse payload in";
+             "  pureDiv Bool";
+             "    (match mj with";
+             "     | none => false";
+             "     | some j =>";
+             "         match jsonGetString j \"name\" with";
+             "         | none => false";
+             "         | some nm =>";
+             "             match stringEq nm \"tot\" with";
+             "             | true =>";
+             "                 match jsonGet j \"count\" with";
+             "                 | none => false";
+             "                 | some cv =>";
+             "                     match jsonAsInt cv with";
+             "                     | none => false";
+             "                     | some n =>";
+             "                         match intEq n 3 with";
+             "                         | true => stringEq (jsonSerialize j) payload";
+             "                         | false => false";
+             "                         end";
+             "                     end";
+             "                 end";
+             "             | false => false";
+             "             end";
+             "         end";
+             "     end)";
+             "eval checkAll";
+           ])
+        [
+          "def payload : String";
+          "def checkAll : (Div Bool)";
+          "true";
+        ] );
+    (* M3 Stage C, C7 test 6: the surface-level positivity control (a
+       kernel-level counterpart lives in test/main.ml's C4): a
+       "jarr : List Json -> Json"-style nesting is STILL rejected. *)
+    ( "C6: control test, List Json -> Json nesting is still rejected by positivity",
+      expect_err_printed ~st:bst
+        "data Bad : Type 0 := | jarr : List Json -> Json" "Kernel.Bad_ctor" );
+    (* M3 Stage C, C7 test 7: let*/let*! desugar and check; a let* over
+       a Div action without liftIO is a Kernel.Mismatch. *)
+    ( "C7a: let* desugars to bindIO and checks",
+      expect_lines_check ~st:bst
+        "def main : IO Unit := let* String Unit raw := readStdin in printLine raw"
+        [ "def main : (IO Unit)" ] );
+    ( "C7b: let*! desugars to bindDiv and checks",
+      expect_lines_check ~st:bst
+        "def y : Div Int := let*! String Int s := pureDiv String \"abc\" in pureDiv Int \
+         (stringLength s)"
+        [ "def y : (Div Int)" ] );
+    ( "C7c: let* over a Div action without liftIO is Kernel.Mismatch",
+      expect_err_printed ~st:bst
+        "def bad : IO Int := let* String Int s := pureDiv String \"a\" in pureDiv Int \
+         (stringLength s)"
+        "Kernel.Mismatch" );
+    (* M3 Stage C, C7 test 8: stringSplit/stringSlice/stringToInt/
+       intCompare each compute one pinned value under `tot run`. *)
+    ( "C8: stringSplit/stringSlice/stringToInt/intCompare each compute a pinned value",
+      expect_lines ~st:bst
+        (with_lines
+           [
+             "eval stringSplit \"a,b,c\" \",\"";
+             "eval stringSlice \"hello world\" 6 5";
+             "eval stringToInt \"42\"";
+             "eval intCompare 2 5";
+           ])
+        [
+          "((cons \"a\") ((cons \"b\") ((cons \"c\") nil)))";
+          "(some \"world\")";
+          "(some 42)";
+          "lt";
+        ] );
+    (* M3 fixes round 2, ctxcat id 9: stringToInt is decimal-only
+       (optional '-', digits), never OCaml's wider int_of_string
+       syntax. Pre-fix (recorded in dev/M3-FIXES-LOG.md): "0x1A"
+       parsed to (some 26) and "1_000" to (some 1000). *)
+    ( "C8b: stringToInt rejects hex/underscore/sign-only/space forms, keeps plain decimals",
+      expect_lines ~st:bst
+        (with_lines
+           [
+             "eval stringToInt \"0x1A\"";
+             "eval stringToInt \"1_000\"";
+             "eval stringToInt \"-42\"";
+             "eval stringToInt \"-\"";
+             "eval stringToInt \" 7\"";
+           ])
+        [ "none"; "none"; "(some -42)"; "none"; "none" ] );
+    (* M3 fixes round 3 (ctxcat id 5): stringSlice bounds arithmetic
+       is overflow-safe. 999999999999999999 (18 nines, ~1e18) is the
+       largest literal shape the lexer admits; intAdd builds ~3e18,
+       and ~3e18 + ~3e18 wraps NEGATIVE in OCaml's 63-bit int, so the
+       pre-fix additive guard admitted an out-of-range String.sub and
+       the process died on an uncaught Invalid_argument (recorded in
+       dev/M3-FIXES-LOG.md). Both calls now return none cleanly; the
+       huge-start case pins the non-overflow out-of-range path
+       beside it. *)
+    ( "C8d: stringSlice with overflow-scale start/len returns none, never a crash",
+      expect_lines ~st:bst
+        (with_lines
+           [
+             "eval stringSlice \"abc\" (intAdd 999999999999999999 (intAdd 999999999999999999 \
+              999999999999999999)) (intAdd 999999999999999999 (intAdd 999999999999999999 \
+              999999999999999999))";
+             "eval stringSlice \"abc\" 999999999999999999 1";
+           ])
+        [ "none"; "none" ] );
+    (* M3 fixes round 2, ctxcat id 14: a raw newline inside a string
+       literal is a Lex error (write \n instead); pre-fix the lexer
+       silently absorbed it, so a missing close quote swallowed the
+       rest of the file. expect_err_printed shows the exact message. *)
+    ( "C8c: a raw newline inside a string literal is a lex error, never silent absorption",
+      expect_err_printed ~st:bst "eval stringLength \"a\nb\"" "Lex" );
+    (* M3 fixes round 4 (sign-off finding): the \r escape lexes to a
+       carriage-return character, usable as a stringSplit separator
+       (the guard's IFS tokenizer needs it). Pre-fix: "unknown escape
+       \r" (recorded in dev/M3-FIXES-LOG.md). *)
+    ( "C8e: the backslash-r escape lexes to a carriage-return split separator",
+      expect_lines ~st:bst "eval stringSplit \"a\\rb\" \"\\r\""
+        [ "((cons \"a\") ((cons \"b\") nil))" ] );
+    (* M3 Stage D, D3: shebang stripping. Only a literal "#!" at column
+       0, line 1 strips; anything else falls through to the ordinary
+       lexer, where a bare '#' is unexpected (there is no comment
+       marker other than "--"). *)
+    ( "D1a: a leading shebang line strips before lexing; the rest runs unchanged",
+      expect_lines ~st:bst "#!/usr/bin/env -S tot run\neval intAdd 2 3" [ "5" ] );
+    ( "D1b: \"#!\" NOT at column 0 line 1 is left alone (a bare '#' is a lex error)",
+      expect_err ~st:bst " #!/x\neval intAdd 2 3" "Lex" );
+    (* M3 Stage D, D2: the on-disk prelude cache. TOT_CACHE_DIR (set
+       once above) keeps this off the real ~/.cache/tot. *)
+    ( "D2: Cache.save/load round-trips byte-for-byte and degrades to a miss, never a crash, \
+       on a missing key, a truncated header or body, a bit-flipped body, a wrong binary \
+       digest, or a wrong magic",
+      fun () ->
+        let open Tot_kernel in
+        let cache_key = Tot_surface.Cache.key "-- D2 test prelude bytes\n" in
+        let missing = Tot_surface.Cache.load (cache_key ^ "-missing") in
+        if Option.is_some missing then Error "expected a miss on a never-saved key, got a hit"
+        else
+          let () = Tot_surface.Cache.save cache_key bst.Tot_surface.Run.globals bst.Tot_surface.Run.eglobals in
+          let loaded = Tot_surface.Cache.load cache_key in
+          loaded
+          |> Option.fold
+               ~none:(Error "expected a hit right after save, got a miss")
+               ~some:(fun (g, e) ->
+                 let want_bytes = Marshal.to_string (bst.Tot_surface.Run.globals, bst.Tot_surface.Run.eglobals) [] in
+                 let got_bytes = Marshal.to_string (g, e) [] in
+                 if not (String.equal want_bytes got_bytes) then
+                   Error "loaded (Global.t, Interp.globals) is not byte-identical to what was saved"
+                 else
+                   (* M3 fixes round 3 (O1): [cache_dir] is an option
+                      now (None disables the cache); TOT_CACHE_DIR is
+                      set once above, so None here is a test-env bug. *)
+                   let* dir =
+                     Tot_surface.Cache.cache_dir ()
+                     |> Option.to_result
+                          ~none:"cache_dir returned None (TOT_CACHE_DIR unset in the test env?)"
+                   in
+                   let path = Filename.concat dir ("prelude-" ^ cache_key ^ ".bin") in
+                   let content = In_channel.with_open_bin path In_channel.input_all in
+                   let rewrite (bytes : string) : unit =
+                     Out_channel.with_open_bin path (fun oc ->
+                         Out_channel.output_string oc bytes)
+                   in
+                   let expect_miss (label : string) (bytes : string) : (unit, string) result =
+                     let () = rewrite bytes in
+                     if Option.is_some (Tot_surface.Cache.load cache_key) then
+                       Error ("expected a miss on " ^ label ^ ", got a hit")
+                     else Ok ()
+                   in
+                   (* a GUARANTEED byte change at one index, via a total
+                      traversal: whatever the byte was, it becomes a
+                      DIFFERENT one *)
+                   let corrupt_at (ix : int) (s : string) : string =
+                     String.mapi
+                       (fun i c ->
+                         match () with
+                         | () when not (Int.equal i ix) -> c
+                         | () when Char.equal c 'A' -> 'B'
+                         | () -> 'A')
+                       s
+                   in
+                   (* content is a just-written cache blob: always >= its
+                      [Cache.header_width]-byte magic+version+digest+
+                      exe-digest header plus a multi-KB Marshal body, so
+                      both slices below are total (M3 fixes, B2: pre-fix,
+                      the corrupted-body shape SEGFAULTED and the
+                      body-truncated one died on an uncaught
+                      Invalid_argument). Offsets derive from the named
+                      width constants [Cache] itself exposes, never bare
+                      literals (M3 fixes round 2, ctxcat id 17: a header
+                      resize now shifts these with it instead of silently
+                      changing which field the test corrupts). *)
+                   let exe_field_off =
+                     Tot_surface.Cache.magic_width + Tot_surface.Cache.version_width
+                     + Tot_surface.Cache.digest_width
+                   in
+                   let* () =
+                     expect_miss "a header-truncated file"
+                       (String.sub content 0 5 (* @total-accessor *))
+                   in
+                   let* () =
+                     expect_miss "a body-truncated file"
+                       (String.sub content 0 (String.length content - 1) (* @total-accessor *))
+                   in
+                   let* () =
+                     (* [header_width] + 40 sits past the whole header,
+                        inside the Marshal body the digest covers *)
+                     expect_miss "a corrupted body byte"
+                       (corrupt_at (Tot_surface.Cache.header_width + 40) content)
+                   in
+                   let* () =
+                     (* M3 fixes round 2, R1: an index inside the
+                        executable-digest header field (bytes
+                        [exe_field_off] .. [header_width - 1]), so this
+                        is exactly the wrong-binary-digest header shape
+                        a drifted sibling binary would present; the
+                        body and its digest stay VALID, proving the exe
+                        field check alone forces the miss *)
+                     expect_miss "a wrong-binary-digest header field"
+                       (corrupt_at (exe_field_off + 12) content)
+                   in
+                   let* () = expect_miss "a wrong-magic file" (corrupt_at 0 content) in
+                   let () =
+                     Tot_surface.Cache.save cache_key bst.Tot_surface.Run.globals
+                       bst.Tot_surface.Run.eglobals
+                   in
+                   Tot_surface.Cache.load cache_key
+                   |> Option.fold
+                        ~none:
+                          (Error "expected a hit again after the final re-save, got a miss")
+                        ~some:(fun (_g2, _e2) -> Ok ())) );
+    (* M3 Stage D, D4: render_verdict and the main : IO Verdict
+       epilogue, tried FIRST, ahead of IO Unit. *)
+    ( "D4a: render_verdict renders allow/ask/deny exactly and rejects a non-Verdict VCon",
+      fun () ->
+        let open Tot_kernel in
+        let check (v : Interp.v) (want : string option * int) (label : string) :
+            (unit, string) result =
+          Tot_surface.Effect.render_verdict v
+          |> Result.fold
+               ~ok:(fun (got_line, got_code) ->
+                 if Option.equal String.equal got_line (fst want) && Int.equal got_code (snd want)
+                 then Ok ()
+                 else Error (label ^ ": rendered value did not match"))
+               ~error:(fun e -> Error (label ^ ": " ^ Error.to_string e))
+        in
+        let* () = check (Interp.VCon ("allow", [])) (None, 0) "allow" in
+        let* () =
+          check
+            (Interp.VCon ("ask", [ Interp.VLit (Literal.LString "why") ]))
+            ( Some
+                "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"ask\",\"permissionDecisionReason\":\"why\"}}",
+              1 )
+            "ask"
+        in
+        let* () =
+          check
+            (Interp.VCon ("deny", [ Interp.VLit (Literal.LString "msg") ]))
+            ( Some
+                "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"msg\"}}",
+              2 )
+            "deny"
+        in
+        Tot_surface.Effect.render_verdict (Interp.VCon ("mystery", []))
+        |> Result.fold
+             ~ok:(fun _ -> Error "expected Mismatch on a non-Verdict VCon, got Ok")
+             ~error:(fun e ->
+               if String.equal (Error.tag e) "Mismatch" then Ok ()
+               else Error ("expected Mismatch, got " ^ Error.tag e)) );
+    ( "D4b: main : IO Verdict takes priority over IO Unit; deny renders the exact envelope \
+       and exit 2",
+      expect_run ~st:bst "def main : IO Verdict := pureIO Verdict (deny \"nope\")"
+        ~want_lines:
+          [
+            "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"nope\"}}";
+          ]
+        ~want_exit:(Some 2) );
+    ( "D4c: main : IO Verdict, allow prints nothing and exits 0",
+      expect_run ~st:bst "def main : IO Verdict := pureIO Verdict allow" ~want_lines:[]
+        ~want_exit:(Some 0) );
+    ( "D4d: an explicit exitWith inside an IO Verdict main short-circuits and wins over \
+       ever rendering a verdict",
+      expect_run ~st:bst
+        "def main : IO Verdict := bindIO Unit Verdict (exitWith 7) (fun u => pureIO Verdict \
+         allow)"
+        ~want_lines:[] ~want_exit:(Some 7) );
+    ( "D4e: main : IO Unit still runs when it does not convert to IO Verdict, and honors \
+       exitWith (the ordinary per-item echo is unaffected, unlike the Verdict path)",
+      expect_run ~st:bst "def main : IO Unit := exitWith 3"
+        ~want_lines:[ "def main : (IO Unit)" ] ~want_exit:(Some 3) );
+    (* M3 fixes, C1' (O4): main is a RESERVED driver name. A main
+       whose type converts to neither IO Verdict nor IO Unit is
+       Serror.Main_bad_type in BOTH modes (pre-fix: a silent exit-0
+       no-op, the permit-all shape); the misspelled variant stays
+       script mode, the documented SPEC section 6 residual. *)
+    ( "D4f: main : IO Bool is Main_bad_type in run mode (error printed, the effect never \
+       fires)",
+      expect_err_printed ~st:bst
+        "def main : IO Bool := let* Unit Bool a := printLine \"THIS EFFECT NEVER HAPPENS\" \
+         in pureIO Bool true"
+        "Main_bad_type" );
+    ( "D4g: main : IO Bool is Main_bad_type in CHECK mode too",
+      fun () ->
+        Tot_surface.Run.script ~st:bst ~exec:false
+          "def main : IO Bool := let* Unit Bool a := printLine \"x\" in pureIO Bool true"
+        |> Result.fold
+             ~ok:(fun (lines, _exit_code) ->
+               Error
+                 (Printf.sprintf "expected Main_bad_type, but check passed: [%s]"
+                    (show_lines lines)))
+             ~error:(fun e ->
+               let tag = Tot_surface.Serror.tag e in
+               Printf.printf "  expected error (Main_bad_type): %s\n"
+                 (Tot_surface.Serror.to_string e);
+               if String.equal tag "Main_bad_type" then Ok ()
+               else Error ("wrong error: " ^ Tot_surface.Serror.to_string e)) );
+    ( "D4h: a misspelled main (mian) stays script mode with no driver exit code (the \
+       documented residual)",
+      expect_run ~st:bst "def mian : IO Verdict := pureIO Verdict (deny \"never reached\")"
+        ~want_lines:[ "def mian : (IO Verdict)" ] ~want_exit:None );
+    (* M3 fixes, B3 (C8): procRun's spawn-failure path returns the
+       cannot-exec sentinel AND closes every parent-held descriptor.
+       /dev/fd's entry count is the observable: it is stable across
+       calls when nothing leaks (each [Sys.readdir]'s own descriptor is
+       closed before it returns), and the pre-fix pipe design held
+       descriptors open across the spawn decision. *)
+    ( "B3: procRun spawn failure returns the -1 sentinel and leaks no descriptors across 5 \
+       attempts",
+      fun () ->
+        let open Tot_kernel in
+        let fd_count () : (int, string) result =
+          match Sys.readdir "/dev/fd" with
+          | exception Sys_error _ -> Error "cannot read /dev/fd"
+          | entries -> Ok (Array.length entries)
+        in
+        let spawn_once () : (unit, string) result =
+          Tot_surface.Effect.dispatch bst.Tot_surface.Run.eglobals Prim.Proc_run
+            [ Interp.VLit (Literal.LString "/nonexistent-tot-b3-binary"); Interp.VCon ("nil", []) ]
+          |> Result.fold
+               ~error:(fun e -> Error ("dispatch errored: " ^ Error.to_string e))
+               ~ok:(fun outcome ->
+                 match outcome with
+                 | Tot_surface.Effect.Exited _ -> Error "unexpected Exited from procRun"
+                 | Tot_surface.Effect.Done v -> (
+                     match v with
+                     | Interp.VCon
+                         ( "mkProcessResult",
+                           [ Interp.VLit (Literal.LInt code); Interp.VLit _; Interp.VLit _ ] )
+                       ->
+                         if Int.equal code (-1) then Ok ()
+                         else Error (Printf.sprintf "want sentinel code -1, got %d" code)
+                     | Interp.VCon (_, _)
+                     | Interp.VClos (_, _, _)
+                     | Interp.VNeut (_, _)
+                     | Interp.VErased | Interp.VLit _
+                     | Interp.VPrim (_, _)
+                     | Interp.VIOAction _ ->
+                         Error "procRun did not produce a mkProcessResult triple"))
+        in
+        let* before = fd_count () in
+        let* () =
+          List.fold_left
+            (fun acc _i ->
+              let* () = acc in
+              spawn_once ())
+            (Ok ()) [ 1; 2; 3; 4; 5 ]
+        in
+        let* after = fd_count () in
+        if Int.equal before after then Ok ()
+        else Error (Printf.sprintf "descriptor growth: %d before, %d after" before after) );
   ]
 
+(** The ordinary in-process suite: bootstrap once, run every [cases]
+    entry, print one PASS/FAIL line each, and return an exit code
+    (0 green, else 1). This is [dune exec test/surface.exe]'s (and
+    `dune runtest`'s) default behavior, UNCHANGED from before M3 Stage
+    B: [run_gate] below is reached only through the two argv shapes
+    [dispatch] recognizes explicitly. *)
+let run_suite () : int =
+  Tot_surface.Bootstrap.state ()
+  |> Result.fold
+       ~error:(fun e ->
+         print_endline ("bootstrap failed: " ^ Tot_surface.Serror.to_string e);
+         1)
+       ~ok:(fun bst ->
+         let failures =
+           List.fold_left
+             (fun acc (name, run) ->
+               run ()
+               |> Result.fold
+                    ~ok:(fun () ->
+                      Printf.printf "PASS %s\n" name;
+                      acc)
+                    ~error:(fun msg ->
+                      Printf.printf "FAIL %s\n  %s\n" name msg;
+                      acc + 1))
+             0 (cases bst)
+         in
+         (match () with
+         | () when Int.equal failures 0 -> print_endline "M1 surface: all tests green"
+         | () -> Printf.printf "%d test(s) failed\n" failures);
+         Int.min failures 1)
+
+(** M3 Stage B: a tiny process-level harness for dev/gates.sh's
+    OS-observed Gate B checks (a real stdin/exit-code sequence, the
+    check-performs-no-I/O constraint, and the deferred-Div timing
+    bound). [bin/tot.ml] does not gain [Bootstrap.state ()] wiring
+    until Stage D (D1): wiring it in early there would double-define
+    every prelude global the moment `stdlib/prelude.tot` itself is
+    checked/run as a target script, which is exactly what the FIXED
+    Gate command battery's `PASS-CHECK-PRELUDE`/`PASS-RUN-PRELUDE`
+    steps (dev/gates.sh) do today. Reusing this ALREADY-Files-listed
+    test binary for a second, argv-gated mode avoids adding a new dune
+    executable while still giving the gate script a real OS process
+    whose own exit code is exactly what the fixture's `main` computed;
+    recorded here (not silently absorbed) per the plan's own
+    instruction to log a plan-detail fill-in. *)
+let run_gate ~(exec : bool) (path : string) : int =
+  match () with
+  | () when not (Sys.file_exists path) ->
+      print_endline (path ^ ": no such file");
+      1
+  | () ->
+      let src = In_channel.with_open_text path In_channel.input_all in
+      Tot_surface.Bootstrap.state ()
+      |> Result.fold
+           ~error:(fun e ->
+             print_endline ("bootstrap failed: " ^ Tot_surface.Serror.to_string e);
+             1)
+           ~ok:(fun st ->
+             Tot_surface.Run.script ~st ~exec src
+             |> Result.fold
+                  ~ok:(fun (lines, exit_code) ->
+                    List.iter print_endline lines;
+                    Option.value exit_code ~default:0)
+                  ~error:(fun e ->
+                    print_endline (path ^ ": " ^ Tot_surface.Serror.to_string e);
+                    1))
+
+(** M3 Stage C: [stdlib/prelude.tot] is no longer independently
+    checkable via a bare, unbootstrapped [tot check/run] (bin/tot.ml
+    stays on [Run.initial] until Stage D's D1): the Stage C DATA/DEF
+    segments reference the builtin [String]/[Int]/[Div]/[IO] type
+    formers and the [stringEq] prim, none of which exist without
+    [Bootstrap.phase1]/[phase2] having run first. Folding the prelude
+    a SECOND time via [gate-check]/[gate-run] would double-define
+    every global (the exact failure mode Stage B's own build log
+    documents for a different reason), so this mode instead verifies
+    [Bootstrap.state ()] itself -- which folds the prelude internally,
+    with every phase interleaved correctly -- succeeds. dev/gates.sh
+    derives its [PASS-CHECK-PRELUDE] marker from this exit code
+    (checking the prelude and bootstrapping are the same operation;
+    since the M3 fixes batch, A3/C15, [PASS-RUN-PRELUDE] instead runs
+    a real prelude-exercising script through gate-run). *)
+let bootstrap_only () : int =
+  Tot_surface.Bootstrap.state ()
+  |> Result.fold
+       ~ok:(fun _st -> 0)
+       ~error:(fun e ->
+         print_endline ("bootstrap failed: " ^ Tot_surface.Serror.to_string e);
+         1)
+
+(** M3 Stage C, C6: a fourth argv-gated mode, the same "reuse this
+    already-Files-listed binary instead of adding a new dune
+    executable" discipline [run_gate] documents above. Prints the
+    number of prim entries [surface/bootstrap.ml] actually seeds
+    ([phase1_prims @ phase2_prims @ phase3_prims]'s length; M3 fixes
+    round 2, ctxcat id 16: this doc comment now sits on the function
+    it describes and names all THREE phase lists), so
+    dev/prim-lint.sh can compare it against [Prim.catalog]'s own size
+    (via "tot prims"'s line count) without a full [Bootstrap.state ()]
+    fold: counting the source lists needs no prelude at all. *)
+let print_bootstrap_prim_count () : int =
+  Printf.printf "%d\n"
+    (List.length
+       (Tot_surface.Bootstrap.phase1_prims @ Tot_surface.Bootstrap.phase2_prims
+      @ Tot_surface.Bootstrap.phase3_prims));
+  0
+
 let () =
-  let failures =
-    List.fold_left
-      (fun acc (name, run) ->
-        run ()
-        |> Result.fold
-             ~ok:(fun () ->
-               Printf.printf "PASS %s\n" name;
-               acc)
-             ~error:(fun msg ->
-               Printf.printf "FAIL %s\n  %s\n" name msg;
-               acc + 1))
-      0 cases
-  in
-  (match () with
-  | () when Int.equal failures 0 -> print_endline "M1 surface: all tests green"
-  | () -> Printf.printf "%d test(s) failed\n" failures);
-  Stdlib.exit (Int.min failures 1)
+  match Array.to_list Sys.argv with
+  | [ _exe; "gate-check"; path ] -> Stdlib.exit (run_gate ~exec:false path)
+  | [ _exe; "gate-run"; path ] -> Stdlib.exit (run_gate ~exec:true path)
+  | [ _exe; "prim-bootstrap-count" ] -> Stdlib.exit (print_bootstrap_prim_count ())
+  | [ _exe; "bootstrap-only" ] -> Stdlib.exit (bootstrap_only ())
+  | [] | [ _ ] -> Stdlib.exit (run_suite ())
+  (* M3 fixes, C4' (C13, 2026-09-01): a malformed or unknown
+     subcommand shape (a typo'd name, gate-check with a missing or
+     extra argument) is a USAGE ERROR, exit 2 with a message on
+     stderr, never a silent fallback to the full suite: dev/gates.sh
+     must see its own broken invocation, not a spurious green suite
+     run. Only a BARE argv still runs the ordinary suite. *)
+  | _exe :: arg :: rest ->
+      Printf.eprintf
+        "unknown subcommand: %s\n\
+         usage: surface.exe [gate-check FILE | gate-run FILE | prim-bootstrap-count | \
+         bootstrap-only]\n"
+        (String.concat " " (arg :: rest));
+      Stdlib.exit 2

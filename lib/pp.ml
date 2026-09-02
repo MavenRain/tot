@@ -1,5 +1,29 @@
 (** Display-only printer. Free variables print as [#n]. *)
 
+(** Render a string literal's SOURCE form: double-quoted, with
+    backslash, double-quote, newline and tab escaped (M3 Stage A).
+    Reused by Stage C's JSON serializer and Stage D's verdict renderer,
+    both reachable from [surface/] through this module. *)
+let escape_string (s : string) : string =
+  let buf = Buffer.create (String.length s + 2) in
+  Buffer.add_char buf '"';
+  String.iter
+    (fun c ->
+      match c with
+      | '\\' -> Buffer.add_string buf "\\\\"
+      | '"' -> Buffer.add_string buf "\\\""
+      | '\n' -> Buffer.add_string buf "\\n"
+      | '\t' -> Buffer.add_string buf "\\t"
+      | _ -> Buffer.add_char buf c)
+    s;
+  Buffer.add_char buf '"';
+  Buffer.contents buf
+
+let literal (l : Literal.t) : string =
+  match l with
+  | Literal.LString s -> escape_string s
+  | Literal.LInt n -> string_of_int n
+
 let rec term (names : string list) (tm : Term.t) : string =
   match tm with
   | Term.Var ix -> List.nth_opt names ix |> Option.value ~default:(Printf.sprintf "#%d" ix)
@@ -14,6 +38,7 @@ let rec term (names : string list) (tm : Term.t) : string =
         (term (x :: names) body)
   | Term.Ann (tm', ty) -> Printf.sprintf "(%s : %s)" (term names tm') (term names ty)
   | Term.Global n -> n
+  | Term.Lit l -> literal l
   | Term.Match { scrut; motive; branches } ->
       let motive_s =
         motive
@@ -38,6 +63,7 @@ let rec eterm (names : string list) (e : Eterm.t) : string =
       Printf.sprintf "let %s := %s in %s" x (eterm names def) (eterm (x :: names) body)
   | Eterm.EGlobal n -> n
   | Eterm.EErased -> "<erased>"
+  | Eterm.ELit l -> literal l
   | Eterm.EMatch (scrut, branches) ->
       let branch_s (c, binders, body) =
         let names' = List.fold_left (fun acc x -> x :: acc) names binders in

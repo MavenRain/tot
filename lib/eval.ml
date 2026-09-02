@@ -39,7 +39,11 @@ let is_canonical (globals : Global.t) (v : Value.t) : bool =
              let full_arity = n_params + List.length ctor.Global.args in
              Int.equal (List.length args) full_arity)
   | Value.VUniv _ | Value.VPi (_, _, _, _) | Value.VLam (_, _) | Value.VInd (_, _)
-  | Value.VNeutral (_, _) ->
+  | Value.VNeutral (_, _)
+  (* a VLit is NOT canonical for guarded unfolding: structural recursion
+     is over constructors, and there is no structurally smaller literal
+     (M3 Stage A). *)
+  | Value.VLit _ ->
       false
 
 let rec eval (globals : Global.t) (env : Value.t list) (tm : Term.t) :
@@ -47,6 +51,7 @@ let rec eval (globals : Global.t) (env : Value.t list) (tm : Term.t) :
   match tm with
   | Term.Var ix -> List.nth_opt env ix |> Option.to_result ~none:(Error.Unbound_var ix)
   | Term.Univ l -> Ok (Value.VUniv l)
+  | Term.Lit l -> Ok (Value.VLit l)
   | Term.Pi (q, x, dom, cod) ->
       let* dom_v = eval globals env dom in
       Ok (Value.VPi (q, x, dom_v, { Value.env; body = cod }))
@@ -69,6 +74,10 @@ let rec eval (globals : Global.t) (env : Value.t list) (tm : Term.t) :
       (match entry with
       | Global.Ind _ -> Ok (Value.VInd (name, []))
       | Global.Ctor _ -> Ok (Value.VCtor (name, []))
+      (* a Prim entry has no [def] to unfold to and no [reducible] flag
+         to set: this arm IS the entire kernel-level argument that
+         checking can never perform an effect (M3 Stage A). *)
+      | Global.Prim _ -> Ok (Value.VNeutral (Value.HGlobal name, []))
       | Global.Def d ->
           (match () with
           | () when Option.is_some d.Global.rec_arg ->
@@ -114,7 +123,10 @@ and run_match (globals : Global.t) (env : Value.t list) (scrut_v : Value.t)
       eval globals (List.rev_append own env) body
   | Value.VNeutral (h, frames) ->
       Ok (Value.VNeutral (h, Value.FMatch { Value.motive; branches; menv = env } :: frames))
-  | Value.VUniv _ | Value.VPi (_, _, _, _) | Value.VLam (_, _) | Value.VInd (_, _) ->
+  | Value.VUniv _ | Value.VPi (_, _, _, _) | Value.VLam (_, _) | Value.VInd (_, _)
+  (* a checked program cannot reach a VLit scrutinee here: String and
+     Int are not eliminable (M3 Stage A). Total backstop. *)
+  | Value.VLit _ ->
       Error (Error.Not_inductive "<match on a non-constructor value>")
 
 and apply (globals : Global.t) (f : Value.t) (a : Value.t) : (Value.t, Error.t) result =
@@ -144,6 +156,7 @@ and apply (globals : Global.t) (f : Value.t) (a : Value.t) : (Value.t, Error.t) 
       Ok (Value.VNeutral (h, Value.FApp a :: frames))
   | Value.VPi (_, _, _, _) -> Error (Error.Not_a_function "<pi value>")
   | Value.VUniv l -> Error (Error.Not_a_function ("Type " ^ Level.to_string l))
+  | Value.VLit _ -> Error (Error.Not_a_function "<literal value>")
 
 (** Replay a frame list (oldest first) on top of an unfolded head. *)
 and replay (globals : Global.t) (head : Value.t) (frames_oldest : Value.frame list) :
@@ -163,6 +176,7 @@ and app_closure (globals : Global.t) (clo : Value.closure) (arg : Value.t) :
 and quote (globals : Global.t) (size : int) (v : Value.t) : (Term.t, Error.t) result =
   match v with
   | Value.VUniv l -> Ok (Term.Univ l)
+  | Value.VLit l -> Ok (Term.Lit l)
   | Value.VPi (q, x, dom, clo) ->
       let* dom_t = quote globals size dom in
       let* cod_v = app_closure globals clo (Value.var size) in
@@ -254,6 +268,25 @@ and conv (globals : Global.t) (size : int) (a : Value.t) (b : Value.t) :
       if String.equal c1 c2 then conv_args globals size args1 args2 else Ok false
   | Value.VNeutral (h1, fs1), Value.VNeutral (h2, fs2) ->
       if conv_head h1 h2 then conv_frames globals size fs1 fs2 else Ok false
+  | Value.VLit a1, Value.VLit a2 -> Ok (Literal.equal a1 a2)
+  (* a literal is never convertible with any other value shape (M3
+     Stage A), in both directions *)
+  | ( Value.VLit _,
+      ( Value.VUniv _
+      | Value.VPi (_, _, _, _)
+      | Value.VLam (_, _)
+      | Value.VInd (_, _)
+      | Value.VCtor (_, _)
+      | Value.VNeutral (_, _) ) ) ->
+      Ok false
+  | ( ( Value.VUniv _
+      | Value.VPi (_, _, _, _)
+      | Value.VLam (_, _)
+      | Value.VInd (_, _)
+      | Value.VCtor (_, _)
+      | Value.VNeutral (_, _) ),
+      Value.VLit _ ) ->
+      Ok false
   (* cross-shape pairs are definitionally distinct (no eta for inductives:
      a neutral never equals a ctor value) *)
   | ( Value.VUniv _,

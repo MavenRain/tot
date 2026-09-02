@@ -1,0 +1,7 @@
+-- M3 Stage A smoke fixture: stringConcat and intAdd. Runnable via `tot
+-- run` once Stage D wires the CLI to auto-load the bootstrap/prelude
+-- (D1); until then, dev/gates.sh's PASS-A-LITERALS marker exercises
+-- this same computation in-process, through test/surface.ml's A9/A10
+-- cases against Bootstrap.state ().
+eval stringConcat "hello, " "world"
+eval intAdd 2 3

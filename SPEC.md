@@ -184,19 +184,237 @@ verdict CLIs, small tools. The house rules are the semantics:
   actual witness, and re-verification killed a fresh over-application
   variant of the same claim. See `dev/M2-FIXES-LOG.md` "## Round 4" for
   the full correction.
+- 2026-09-01 (M3): the effect ladder, literals, stdlib breadth, real
+  hooks. Design authority: `tot-m3-design-verdict.md` (M3-SYNTH), the
+  judged synthesis of the three M3 design proposals, transcribed into
+  `dev/M3-PLAN.md`. Verdict 3.10's fourteen decisions, transcribed:
+  1. `Term.Pi`, `Lam` and `App` keep their M2 arity. Effects are types,
+     not a stamp.
+  2. `Prim` is a fourth `Global.entry` kind with no `def` and no
+     `reducible` field.
+  3. `Prim.t` is a closed enum with a name and arity table, no
+     closures, for the sake of the `Marshal` cache.
+  4. `Prim.arity` counts kept arguments only.
+  5. `String`, `Int`, `Div` and `IO` are zero-constructor `Ind`
+     bootstrap entries. `Json`, `ProcessResult`, `Unit`, `Ordering` and
+     `Verdict` are ordinary prelude `data` items.
+  6. No `liftDiv`, no `runDiv`. `Div` is absorbing.
+  7. One elaboration per literal token; no numeric overloading; `Nat`
+     stays Peano and separate from `Int`.
+  8. `Interp.quote` on `VPrim` rebuilds the spine; on `VIOAction` it
+     returns `Not_quotable`.
+  9. `Check.define` refuses `reducible` on a `Div`-headed or
+     `IO`-headed def.
+  10. `def rec` that fails the guard stays a hard error; `partial` is
+      the only way to `Div`, and it forces a `Div`-headed codomain.
+  11. Deferred definition-time execution keys on the def's type head,
+      not on a new attribute.
+  12. Every prim carries a one-line comment justifying its ladder
+      classification; `dev/prim-lint.sh` lists the catalog.
+  13. An execution budget for a hung guard is the hook runner's job
+      (`timeout` in the shebang wrapper or the calling harness), not
+      M3 kernel work. Recorded as a risk, not built.
+  14. `tot run --no-prelude` exists for kernel tests.
 
-## 3. Core calculus (M0 core, M2 inductives)
+  Three confirmed user decisions (2026-09-01, final):
+  1. **Effect model: monadic reified IO.** `Div` and `IO` are opaque
+     zero-constructor type formers. `Prim` is a fourth `Global.entry`
+     kind with no `def` field and no `reducible` field. Div prims fire
+     inline. IO is reified as an action tree that only `run_io` walks.
+     Hooks write `main : IO Verdict` with `let*` sugar and an explicit
+     `liftIO` at every Div-to-IO step.
+  2. **Json: self-recursive `data Json` with its own cons cells** in
+     the prelude. No builtin opaque Json. No nested inductives.
+  3. **Hook protocol: driver-rendered `Verdict`.** `allow` exits 0,
+     `ask` exits 1, `deny` exits 2, and the driver renders the JSON
+     envelope. `main : IO Unit` plus an explicit `exitWith` stays legal
+     as a second accepted shape.
+
+  Plan-level fill-ins (`dev/M3-PLAN.md`), each with its rationale:
+  - Builtin type formers are DECLARED and never DEFINED, so
+    `ctor_names` stays `None` and any `match` on `String`, `Int`,
+    `Div` or `IO` is `Ind_incomplete`. This closes the vacuous empty
+    match that would otherwise inhabit any type from a `String`
+    scrutinee.
+  - Integer literals reuse the existing `Nat` token, so the M1 numeric
+    cap now bounds int literals as a Lex error.
+  - `exitWith` returns an `Exited` outcome through `run_io`; the single
+    process exit stays in `bin/tot.ml`.
+  - `intCompare : Int -> Int -> Ordering`, with `Ordering` a prelude
+    data type, chosen over an `Int` sentinel.
+  - Regex uses OCaml's `Str` dialect, not PCRE, and `str` is linked
+    into `tot_kernel` for exactly two prims.
+  - The prim catalog is seeded in phases around the prelude fold,
+    because prim types mention prelude data types (in the shipped
+    build, three phases and three prelude-fold segments, since the
+    prelude's own Stage C accessor defs call a phase-2 prim; recorded
+    in `dev/M3-BUILD-LOG.md`).
+- 2026-09-01 (M3 fixes, stage A): check mode builds no runtime
+  environment for the user file.  The M3 Stage B rule deferred a def
+  exactly when its stamped type HEAD was `Div`/`IO`, so a `Div` value
+  nested under a pure head (`Option (Div Nat)`) executed, and could
+  diverge, under `tot check` (review round 1, O1).  Now
+  `surface/run.ml` never calls `Interp.define` for user-file defs in
+  check mode;  kernel elaboration and type checking are unchanged
+  (they consult kernel globals only, never `Interp` values), and
+  bootstrap keeps folding the prelude with execution on.  Run mode
+  kept eager definition-time execution for pure heads at this round,
+  a rule the round-2 entry below (M3 fixes round 2, R2) replaced with
+  lazy memoized thunks for every def.  Also (C17): forcing a deferred
+  global now memoizes.  The
+  entry's `gval` is a `gbody ref`;  the first force writes the
+  computed value back as `GForced`, so a chain of n `Div`-headed defs
+  each referencing the previous twice costs n forces, not 2^n.
+  Memoizing an `IO`-headed def changes nothing observable: its body
+  only builds an inert action tree, and `Effect.run_io` still fires
+  effects once per walk.  `Cache.format_version` bumped 1 -> 2 for
+  the layout change.
+- 2026-09-01 (M3 fixes, stage B): runtime robustness.
+  - Regex Str-dialect caveats and error channel (O2 + C19):
+    `regex_group_count` is a state machine that counts a group
+    exactly when Str's own parser would: `\(` read in the normal
+    state only.  The dialect rules it honors, now recorded: an
+    escaped backslash `\\` consumes both characters, so it can never
+    lend its backslash to a following `(`;  `[` opens a character
+    class;  inside a class a backslash is an ORDINARY member (Str
+    classes have no escapes);  `]` closes the class except as its
+    first member (`[]a]` and `[^]a]` keep the literal `]`).  A
+    malformed pattern (`Str.regexp`'s own `Failure`) is a NEW
+    distinct runtime error, `Error.Regex_bad_pattern`, through the
+    ordinary Result channel: a typo'd pattern in a guard errors
+    instead of reading as a silent no-match forever.  `str_opt` keeps
+    `Not_found` as the ordinary no-match fence and adds
+    `Invalid_argument` as a backstop for the no-exceptions promise.
+  - Prelude cache integrity (O3 + C7 + O7): the blob is the magic
+    string `TOTCACHE`, the fixed-width `format_version`, the MD5 hex
+    digest of the body, then the body;  `load` verifies all three
+    BEFORE `Marshal.from_string` sees a byte, and the Marshal fence
+    also catches `Invalid_argument`.  Any mismatch is a silent miss.
+    The digest defends against CORRUPTION;  the cache directory
+    itself is a TRUSTED input, the same trust class as the tot
+    binary (section 6 records the residual).  `save` unlinks its
+    temp file on a failed rename.  `format_version` bumped 2 -> 3.
+    `tot check` KEEPS writing the prelude cache: hooks need
+    warm-cache check latency, and `bin/tot.ml`'s doc says so now.
+  - `procRun` capture (C8 + C16 + C9): child stdout/stderr go to two
+    temp files, not pipes, so a child that outgrows a pipe buffer
+    can never deadlock a sequential drain, and every parent-held
+    descriptor is closed immediately after the spawn decision on the
+    success AND failure paths alike, with the capture files unlinked
+    on both.  A signaled child maps to exit 128+signo (the shell
+    convention, host signal numbering);  a stopped child is waited
+    on again (unreachable without `WUNTRACED`, kept honest).
+  - `exitWith` range (C10): valid domain 0..255.  Out of range is a
+    runtime script error (`Error.Exit_code_out_of_range`, message on
+    stderr, process exit 1), never a silent OS-level wrap of the
+    code modulo 256.
+- 2026-09-01 (M3 fixes, stage C): driver, tests, docs.
+  - `main` is a RESERVED driver name (O4): a user-file def literally
+    named `main` whose type converts to neither `IO Verdict` nor
+    `IO Unit` is a script error, `Serror.Main_bad_type` carrying the
+    printed type, in BOTH check and run modes.  Pre-fix it was a
+    silent exit-0 no-op in both, so an `IO Bool` main turned a
+    denying guard into a permit-all that `tot check` reported clean.
+    The reserved-name check evaluates `main`'s stored type ONCE
+    (kernel NbE only, never `Interp`), shared by both target
+    comparisons (C11).  Two residuals stay open in section 6: a
+    MISSPELLED main is still silent (a strict driver flag is M4
+    work), and a script-level `Serror` exits 1, colliding with the
+    `ask` verdict's exit code in the hook protocol.
+  - A `VPrim` spine accumulates its arguments NEWEST FIRST (cons,
+    like `VNeut`'s frames) and is reversed into argument order once,
+    at fire time and at readback (C4);  `Cache.format_version` bumped
+    3 -> 4, since an old-order blob read by a new binary would fire
+    prims with reversed arguments.
+  - `dev/prim-lint.sh` asserts every non-empty `tot prims` line
+    matches the strict catalog-row shape and FAILS listing the
+    offending lines (C1), replacing wc-l arithmetic that failed
+    spuriously on a benign header and undercounted without a
+    trailing newline;  the catalog-size agreement against the seeded
+    prim count stays.
+  - test/surface.exe's argv dispatch errors (exit 2, usage on
+    stderr) on a malformed or unknown subcommand instead of silently
+    running the full suite (C13);  the prim-arity pin covers all
+    three seeding phases (O6);  `dev/gates.sh` chmods only its
+    scratch binary copy, with `examples/guard.tot`'s executable bit
+    carried by the working tree (C0);  a partial def whose type has
+    no leading Pi reuses the already-evaluated type value for the
+    Div-codomain check (C2).
+- 2026-09-01 (M3 fixes round 2, R2): run mode stores EVERY user def
+  as a lazy memoized thunk.  The round-1 rule (eager for pure heads,
+  deferred for `Div`/`IO` heads) let a `Div` computation nested under
+  a pure head in a def `main` never mentions abort or hang `tot run`
+  while `tot check` reported the same file clean (round-2 re-probe).
+  Now `Interp.define` records every user def as a `GDeferred` thunk:
+  elaboration, checking, erasure and closedness stay EAGER at
+  definition time (a malformed def is still caught there), the body
+  runs on first force by an eval item or by `main`, and the A2 memo
+  keeps single-execution.  `Div` carries no host effects and `IO` is
+  reified, so laziness is observationally invisible except that
+  unforced defs never run, which is the point.  Check mode is
+  unchanged (`Interp.define` is never called for user defs;
+  data-ctor seeding stays mode-independent, M3 fixes round 3, O5);
+  it therefore
+  over-approximates run's definition-time failure set again for DEAD
+  code (check may reject or diverge on a def run would never force),
+  and a LIVE def's definition-time abort surfaces only at force
+  time.  `Cache.format_version` bumped 4 -> 5 (shared with R1: the
+  stored prelude `gval` contents changed shape).  Gates:
+  PASS-RUN-DEADCODE-ABORT and PASS-RUN-DEADCODE-HANG over
+  test/fixtures/x12-dead-abort.tot and x13-dead-hang.tot.
+- 2026-09-01 (M3 fixes round 2, R1): the prelude cache is bound to
+  the exact executable.  The round-2 re-probe proved layout drift
+  undetectable by construction: `format_version` is folded into the
+  cache KEY, so the file a mismatched binary opens always carries a
+  matching version field, and the body digest is computed by the
+  WRITER, so any self-consistent blob reaches `Marshal` (two
+  binaries sharing version 4 but differing in one marshaled payload
+  type produced a silently wrong prelude one way, exit 0, and a
+  SIGSEGV the other, exit 139).  Now `surface/cache.ml` computes,
+  once per process, the MD5 digest of the running binary's own
+  contents (`Digest.file Sys.executable_name`), folds it into the
+  key AND writes it as a fourth header field that `load` verifies
+  before the body digest; on any read failure of the binary the
+  cache is DISABLED for the run, one loud stderr line, never a
+  crash.  Only the exact binary that wrote a blob ever reads it, so
+  a forgotten `format_version` bump degrades to two independent cold
+  caches.  Section 6 keeps the trusted-directory residual.
+
+## 3. Core calculus (M0 core, M2 inductives, M3 literals and effects)
 
 Syntax (de Bruijn indices; binder names are display-only):
 
     t ::= x | Type l | (q x : t) -> t | fun x => t
-        | t t | let x : t = t in t | (t : t) | g
+        | t t | let x : t = t in t | (t : t) | g | lit
         | match t [as x return t] with {| c x .. => t} end
 
-Surface items: `[reducible] def [rec] NAME : t := t`, `check t`,
-`eval t`, and
+`lit` is a `Term.Lit` leaf (M3): a string or int literal, opaque to
+conversion beyond structural equality (`VLit` is canonical, like
+`VCtor`, but is NOT eliminable and is NOT itself a smaller value for
+guarded unfolding).
+
+Surface items: `[reducible] def [rec] [partial] NAME : t := t`,
+`check t`, `eval t`, and
 
     data NAME (0 p : t) .. : Type l := | c1 : t | c2 : t ..
+
+M3 surface sugar, both purely syntactic (desugared in `Elab`, before
+any typechecking, never touching `Eval.conv`):
+
+    let* A B x := e in body    -- bindIO A B e (fun x => body)
+    let*! A B x := e in body   -- bindDiv A B e (fun x => body)
+
+`A`/`B` are the two EXPLICIT type arguments the desugared `bindIO`/
+`bindDiv` application needs (the shipped fallback shape: the bounded
+hole pass did not ship this milestone, so every `let*`/`let*!` names
+its monad's two type parameters explicitly, exactly as `stdlib/
+prelude.tot`'s own `map` calls already do; a compound type needs
+parens, e.g. `let* (Option String) Verdict x := ... in ...`).
+
+A script MAY start with a shebang line (`#!` at column 0, line 1);
+the lexer strips exactly that one line before tokenizing. `--` stays
+the only comment marker for everything else. A hook script's first
+line is `#!/usr/bin/env -S tot run`.
 
 Quantities: `0` (erased: types, proofs) and `w` (runtime). The checker
 carries a mode. Inside types the mode is `0` and every variable is
@@ -215,8 +433,45 @@ Totality: a `def rec` body must pass the structural guard: one formal
 is the principal argument, and every recursive call passes a strictly
 smaller variable there (a binder bound by a match on the principal or
 on something already smaller). Well-founded recursion with measures
-comes after M2. `partial` will exist, quarantined from the erased
-fragment.
+comes after M2. `def rec` that fails the guard stays a hard error; the
+ONE sanctioned escape (M3) is the `partial` keyword, which skips the
+guard, forces `reducible = false` and `rec_arg = None`, and requires a
+`Div`-headed codomain (`Check.define ~partial`): divergence stays
+visible in the type, quarantined to the `Div` rung of the effect
+ladder, never silently reachable from an ordinary `def rec`.
+
+The effect ladder (M3, verdict 3.2): `Div` and `IO` are declared-only,
+zero-constructor `Ind` bootstrap entries (non-eliminable, for the same
+reason `String`/`Int` are), each `(0 A : Type 0) -> Type 0`. `Div` is
+absorbing (no `liftDiv`, no `runDiv`): any def that touches a `Div`
+prim has a `Div`-headed type, and only `partial` reaches it from `tot`
+source. `IO` is reified: `pureIO`/`bindIO`/`liftIO` and the native OS
+prims never perform a host effect while a value is merely being BUILT
+(`Interp.apply` only ever constructs a `VIOAction` action-tree node for
+them); `surface/effect.ml`'s `run_io` is the one place that walks a
+built tree and performs the effects it describes, and `Check.define`
+separately refuses `reducible` on a `Div`- or `IO`-headed def, so
+conversion can never step into an effect either way.  Hard constraint
+1, scoped honestly (M3 fixes round 2, R3, 2026-09-01), claims
+exactly this: `tot check` performs no host effects and never
+executes the interpreter (`surface/run.ml` builds no runtime
+environment for the user file at all; `Interp.define` is never
+called for user-file defs in check mode, whatever a def's type
+shape, a `Div`/`IO` head or a `Div` value nested under a pure head
+such as `Option (Div Nat)` alike).  It does NOT claim bounded
+compute: kernel CONVERSION can be driven to unbounded work by
+`reducible` definitions (a handful of lines of reducible arithmetic
+drives conversion past minutes), the same as any dependent checker,
+Coq and Lean included; opaque-by-default is the mitigation, and a
+driver-level check budget is M4 work (section 6).  In RUN mode (M3
+fixes round 2, R2) EVERY user def is recorded WITHOUT executing its
+body (`Interp`'s `GDeferred`), and forcing memoizes: the first
+force, by an eval item or by `main`, stores the computed value back
+into the entry's cell, later forces return it (sound: a pure body
+is pure, `Div` is pure modulo divergence, and an `IO` body only
+ever builds an inert action tree).  A def `main` never mentions
+never runs at all, so dead code can neither abort nor hang a guard;
+a LIVE def's definition-time abort surfaces at force time.
 
 ## 4. Kernel modules
 
@@ -266,10 +521,13 @@ The `tot` executable (`bin/`) wraps `Run` as `tot (check|run) FILE`.
   totality guard and guarded unfolding; `data`/`match`/`def rec`
   surface syntax; core stdlib (`stdlib/prelude.tot`: Bool, Nat, Option,
   Result, List, Pair). String and Json moved to M3.
-- M3: IO ladder (Tot < Div < IO), literals, String/process/JSON/regex
-  stdlib, prelude auto-loading, shebang runner, content-addressed
-  elaboration cache. Port the first PreToolUse guard and run it for
-  real.
+- M3 (done): IO ladder (Tot < Div < IO), literals, String/Int/process/
+  JSON/regex stdlib, `let*`/`let*!`/`partial` surface sugar, prelude
+  auto-loading with a content-addressed elaboration cache, a shebang
+  runner, and `main : IO Verdict` driver-rendered hook output. Ported
+  the first real PreToolUse guard (`examples/guard.tot`: `rg`/`sd`
+  house rule) and ran it end to end against allow/deny/other/garbage
+  fixtures.
 - M4: propositional equality, indexed inductives, rewriting,
   deterministic type classes, proof ergonomics. Then measure and decide
   the next tradeoff.
@@ -316,3 +574,108 @@ The `tot` executable (`bin/`) wraps `Run` as `tot (check|run) FILE`.
   ctor-entry arity cache (fold `n_params` into `Global.ctor_entry` at
   `define_ind` time, so canonicity checks a single field instead of
   chaining through `Global.Ind`), deferred to M3 or later.
+
+Known debts entering M4 (M3, carried from `tot-m3-design-verdict.md`
+section 6 plus `dev/M3-PLAN.md`'s own additions):
+
+- The prim catalog is an unverified trust boundary: nothing checks that
+  an OCaml implementation matches its declared ladder position. The
+  mitigation is the one-line justification per prim and
+  `dev/prim-lint.sh`.
+- Monad laws are invisible to conversion by design. `liftIO (pureDiv x)`
+  and `pureIO x` are different neutrals. M4 propositional equality can
+  postulate them; unfolding will never derive them.
+- `Div` typing gives provenance, not a termination proof. A guard can
+  still hang on a crafted regex, so the calling harness keeps a
+  `timeout`.
+- JSON conformance gaps (recorded by the M3 fixes' C5' doc sweep;
+  `lib/interp.ml`'s comments already referred here): `jsonParse`
+  supports no `\uXXXX` unicode escapes, and `jsonSerialize` escapes
+  only `Pp.escape_string`'s set (backslash, quote, newline, tab),
+  which covers every string `jsonParse` can itself produce but not
+  other control characters reachable from string literals.  A
+  conformance suite is M4+ work.
+- Json cons cells (`data Json`, its own `jarrCons`/`jobjCons` spine)
+  duplicate the `List` combinators until nested inductives land. The
+  accessor names (`jsonGet`, `jsonToList`, ...) are chosen so the
+  migration to `jarr : List Json -> Json` is a stdlib change, not an API
+  change.
+- `Marshal` cache format fragility: since M3 fixes round 2 (R1) the
+  cache is bound to the exact executable, which is the load-bearing
+  fence.  The MD5 digest of the running binary's own contents is
+  folded into the cache key and re-asserted as a header field that
+  `load` verifies before the body digest, so only the binary that
+  wrote a blob ever reads it and a forgotten `Cache.format_version`
+  bump degrades to two independent cold caches, never a
+  foreign-shape blob fed to `Marshal`.  (The round-2 re-probe
+  falsified the previous claim that the magic/version/digest check
+  alone protects against a forgotten bump: the version is part of
+  the KEY, so a mismatched binary always opens a file whose version
+  field matches, and the body digest is writer-computed.)  The bump
+  checklist beside `Term.t`, `Value.t`, `Eterm.t`, `Global.entry`,
+  `Interp.v` and `Prim.t` stays as documentation; bumping eagerly
+  orphans stale files, but nothing rests on it anymore.  Measured
+  cost (M3 fixes round 3, O2): hashing the executable's own contents
+  takes ~3.3ms of an ~8ms warm-hit startup on the build machine,
+  accepted as correctness-first hook latency;  a stat-identity fast
+  path (device/inode/mtime/size instead of a re-hash) is possible M4
+  work.
+- The cache directory (`$TOT_CACHE_DIR`, default `~/.cache/tot`) is a
+  TRUSTED input, the same trust class as the tot binary itself (M3
+  fixes, B2).  The digests defend against corruption -- torn
+  writes, disk faults, truncation -- and against accidental
+  cross-binary drift (round 2, R1), not against an attacker with
+  write access to the directory: such an attacker can re-digest a
+  forged body and can also read the binary and compute its digest,
+  and a cache hit replaces the entire checked prelude
+  (what `Bool`, `Verdict` and `deny` mean for a guard).  Do not point
+  `TOT_CACHE_DIR` at a directory less trusted than the binary.
+- Hole resolution (the C3 bounded pass) fires only in check position, so
+  a bare `eval` of a bind chain still needs explicit type arguments.
+  Shipped fallback: the pass itself did not ship this milestone (see
+  `dev/M3-BUILD-LOG.md`, Stage C), so every `let*`/`let*!` in M3 source
+  names its monad's two type parameters explicitly.
+- Builtin type formers (`String`, `Int`, `Div`, `IO`) are non-eliminable
+  through the `Ind_incomplete` path, whose error wording ("cannot
+  eliminate NAME: its constructors are declared but not yet defined")
+  was written for M2's provisional-inductive window, not for a builtin
+  that will never be defined. M4 should give builtins their own marker
+  and message.
+- `Str` is linked into `tot_kernel` for exactly two prims (`regexTest`,
+  `regexMatch`), and `Str`'s match state is process-global. The regex
+  prims must not be re-entered from within a match; the interpreter is
+  single threaded today, so this holds by construction. M4 should
+  replace `Str` with a bounded engine.
+- `tot run` stores every user def as a lazy memoized thunk (M3 fixes
+  round 2, R2; the round-1 eager rule let dead code abort or hang a
+  guard).  Nothing runs before `main` needs it, so a pathological
+  computation in an UNUSED def costs nothing; the traded-away
+  property is failure locality: a LIVE def's definition-time abort
+  surfaces only at force time, and `tot check` over-approximates
+  run's definition-time failure set for dead code.  Laziness
+  protects only defs that neither an eval item nor `main`
+  transitively forces (M3 fixes round 3, O5): an eval item forces
+  its expression's dependencies transitively, exactly like `main`.
+- `tot check` has no compute budget: kernel conversion can be driven
+  to unbounded work by `reducible` definitions (M3 fixes round 2,
+  R3; inherent to dependent checking, shared with Coq and Lean).
+  Opaque-by-default is the mitigation; a driver-level fuel or
+  wall-clock budget flag for check mode is M4 work.  Until then,
+  hook installations should wrap `tot` in an external `timeout`,
+  exactly as decision 13 already prescribes for hung guards.
+- A MISSPELLED `main` (`mian`, `Main`, ...) is an ordinary def: the
+  script stays script mode and exits 0, so a typo'd guard is still a
+  silent permit-all (M3 fixes, C1'; the reserved-name check catches
+  only a def literally named `main` with the wrong type).  A strict
+  driver flag ("this file MUST define a driver main") is M4 work.
+  test/fixtures/x11-main-misspelled.tot and gate
+  PASS-D-MAIN-MISSPELLED pin the residual on purpose.
+- A script-level `Serror` (type error, missing file, bootstrap
+  failure, `Main_bad_type`) exits 1 through `bin/tot.ml`, the same
+  exit code the hook protocol assigns to the `ask` verdict: a broken
+  guard degrades to ask, not to deny (M3 fixes, C1' records the
+  collision;  a distinct error exit code is a protocol change, M4).
+- The `(rec_, partial)` flag pair on `Syntax.IDef` admits the illegal
+  `partial = true, rec_ = false` state;  only the parser maintains
+  the invariant (M3 fixes, C12).  Collapsing the two flags into one
+  sum type (NonRec | Rec | RecPartial) is the M4 shape.

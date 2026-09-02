@@ -17,11 +17,12 @@ let eof_err : ('a, Serror.t) result =
 
 let kind_starts_atom (k : Token.kind) : bool =
   match k with
-  | Token.Ident _ | Token.KType | Token.LParen -> true
+  | Token.Ident _ | Token.KType | Token.LParen | Token.Nat _ | Token.Str _ -> true
   | Token.RParen | Token.Colon | Token.ColonEq | Token.Arrow | Token.DArrow
   | Token.KFun | Token.KLet | Token.KIn | Token.KDef | Token.KReducible | Token.KEval
   | Token.KCheck | Token.KData | Token.KMatch | Token.KWith | Token.KAs | Token.KReturn
-  | Token.KRec | Token.KEnd | Token.Pipe | Token.Nat _ | Token.Eof ->
+  | Token.KRec | Token.KEnd | Token.KLetStar | Token.KLetStarDiv | Token.KPartial
+  | Token.Pipe | Token.Eof ->
       false
 
 let starts_atom (ts : Token.t list) : bool =
@@ -60,6 +61,8 @@ let rec parse_term (ts : Token.t list) : (Syntax.t * Token.t list, Serror.t) res
   match ts with
   | { Token.kind = Token.KFun; loc } :: rest -> parse_fun loc rest
   | { Token.kind = Token.KLet; loc } :: rest -> parse_let loc rest
+  | { Token.kind = Token.KLetStar; loc } :: rest -> parse_let_star loc ~is_div:false rest
+  | { Token.kind = Token.KLetStarDiv; loc } :: rest -> parse_let_star loc ~is_div:true rest
   | { Token.kind = Token.KMatch; loc } :: rest -> parse_match loc rest
   | ({ Token.kind = _; loc = _ } :: _ | []) -> parse_arrow ts
 
@@ -103,6 +106,34 @@ and parse_let (loc : Loc.t) (ts : Token.t list) :
   | { Token.kind; loc = bad_loc } :: _rest ->
       parse_err bad_loc
         ("expected 'NAME : TYPE := TERM in BODY' after 'let', found " ^ Token.describe kind)
+  | [] -> eof_err
+
+(** "let* A B x := e in body" / "let*! A B x := e in body" (M3 Stage C,
+    C3). FALLBACK SHAPE (see [Syntax.SLetStar]'s doc comment): [A] and
+    [B] are the two EXPLICIT type-argument atoms the desugared
+    [bindIO]/[bindDiv] application needs, parsed the same way an
+    ordinary application argument is (one [parse_atom] each, so a
+    compound type needs parens, e.g. "let* (Option String) Verdict x
+    := ... in ..."), NOT a bounded hole pass. *)
+and parse_let_star (loc : Loc.t) ~(is_div : bool) (ts : Token.t list) :
+    (Syntax.t * Token.t list, Serror.t) result =
+  let* ty_a, rest = parse_atom ts in
+  let* ty_b, rest2 = parse_atom rest in
+  match rest2 with
+  | { Token.kind = Token.Ident x; loc = _ } :: { Token.kind = Token.ColonEq; loc = _ } :: rest3
+    ->
+      let* rhs, rest4 = parse_term rest3 in
+      (match rest4 with
+      | { Token.kind = Token.KIn; loc = _ } :: rest5 ->
+          let* body, rest6 = parse_term rest5 in
+          Ok (Syntax.SLetStar (loc, is_div, ty_a, ty_b, x, rhs, body), rest6)
+      | { Token.kind; loc = bad_loc } :: _rest ->
+          parse_err bad_loc ("expected 'in', found " ^ Token.describe kind)
+      | [] -> eof_err)
+  | { Token.kind; loc = bad_loc } :: _rest ->
+      parse_err bad_loc
+        ("expected 'NAME := TERM in BODY' after the let* type arguments, found "
+        ^ Token.describe kind)
   | [] -> eof_err
 
 (** "match S [as x return P] with | c xs => B .. end". The scrutinee and
@@ -234,6 +265,8 @@ and parse_atom (ts : Token.t list) : (Syntax.t * Token.t list, Serror.t) result 
   | { Token.kind = Token.KType; loc } :: { Token.kind = Token.Nat n; loc = _ } :: rest ->
       Ok (Syntax.SType (loc, n), rest)
   | { Token.kind = Token.KType; loc } :: rest -> Ok (Syntax.SType (loc, 0), rest)
+  | { Token.kind = Token.Str s; loc } :: rest -> Ok (Syntax.SStr (loc, s), rest)
+  | { Token.kind = Token.Nat n; loc } :: rest -> Ok (Syntax.SInt (loc, n), rest)
   | { Token.kind = Token.LParen; loc } :: rest ->
       let* inner, rest2 = parse_term rest in
       (match rest2 with
@@ -282,16 +315,22 @@ let rec parse_items (ts : Token.t list) (acc : Syntax.item list) :
         ^ Token.describe kind)
   | [] -> eof_err
 
-(** "[reducible] def [rec] NAME : TYPE := TERM". *)
+(** "[reducible] def [rec [partial]] NAME : TYPE := TERM". [partial] is
+    a keyword that only ever follows [rec] (M3 Stage C, C4: "keyword
+    form, not a silent downgrade"); [def partial NAME ...] (no [rec])
+    falls through to [parse_def_body]'s own "expected NAME" error,
+    since the leading [KPartial] token is left unconsumed. *)
 and parse_def ~(loc : Loc.t) ~(reducible : bool) (ts : Token.t list) :
     (Syntax.item * Token.t list, Serror.t) result =
   match ts with
+  | { Token.kind = Token.KRec; loc = _ } :: { Token.kind = Token.KPartial; loc = _ } :: rest ->
+      parse_def_body ~loc ~reducible ~rec_:true ~partial:true rest
   | { Token.kind = Token.KRec; loc = _ } :: rest ->
-      parse_def_body ~loc ~reducible ~rec_:true rest
+      parse_def_body ~loc ~reducible ~rec_:true ~partial:false rest
   | ({ Token.kind = _; loc = _ } :: _ | []) ->
-      parse_def_body ~loc ~reducible ~rec_:false ts
+      parse_def_body ~loc ~reducible ~rec_:false ~partial:false ts
 
-and parse_def_body ~(loc : Loc.t) ~(reducible : bool) ~(rec_ : bool)
+and parse_def_body ~(loc : Loc.t) ~(reducible : bool) ~(rec_ : bool) ~(partial : bool)
     (ts : Token.t list) : (Syntax.item * Token.t list, Serror.t) result =
   match ts with
   | { Token.kind = Token.Ident name; loc = _ }
@@ -301,7 +340,7 @@ and parse_def_body ~(loc : Loc.t) ~(reducible : bool) ~(rec_ : bool)
       (match rest2 with
       | { Token.kind = Token.ColonEq; loc = _ } :: rest3 ->
           let* def, rest4 = parse_term rest3 in
-          Ok (Syntax.IDef { loc; name; reducible; rec_; ty; def }, rest4)
+          Ok (Syntax.IDef { loc; name; reducible; rec_; partial; ty; def }, rest4)
       | { Token.kind; loc = bad_loc } :: _rest ->
           parse_err bad_loc ("expected ':=', found " ^ Token.describe kind)
       | [] -> eof_err)
@@ -401,3 +440,14 @@ and parse_ctors (ts : Token.t list) (acc : (string * Syntax.t) list) :
   | [] -> eof_err
 
 let parse (ts : Token.t list) : (Syntax.item list, Serror.t) result = parse_items ts []
+
+(** Parse exactly one term and require [Eof] (M3 Stage A). Used by
+    [surface/bootstrap.ml] to elaborate a prim's type from source text
+    instead of hand-building [Pi] telescopes in OCaml. *)
+let term_only (ts : Token.t list) : (Syntax.t, Serror.t) result =
+  let* tm, rest = parse_term ts in
+  match rest with
+  | { Token.kind = Token.Eof; loc = _ } :: _rest -> Ok tm
+  | { Token.kind; loc = bad_loc } :: _rest ->
+      parse_err bad_loc ("expected end of input, found " ^ Token.describe kind)
+  | [] -> eof_err

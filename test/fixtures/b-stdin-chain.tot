@@ -1,0 +1,11 @@
+-- M3 Stage B, Gate B item (i) fixture: three real bindIO steps over
+-- process stdin, terminating in an exit code DERIVED from the actual
+-- input (stringLength raw), so a passing gate proves real sequencing
+-- occurred and is not just a hardcoded constant. dev/gates.sh feeds
+-- this a here-doc of "hello\n" (6 bytes) and asserts exit code 6
+-- exactly.
+def main : IO Unit :=
+  bindIO String Unit readStdin (fun raw =>
+  bindIO Unit Unit (printLine raw) (fun ignored =>
+  bindIO (Option String) Unit (getEnv "TOT_GATE_B_ABSENT_PROBE") (fun probe =>
+  exitWith (stringLength raw))))

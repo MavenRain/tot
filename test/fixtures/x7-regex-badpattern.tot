@@ -1,0 +1,7 @@
+-- M3 fixes, B1 (C19): a genuinely malformed pattern (`a\(` opens a
+-- group and never closes it, so Str.regexp itself raises Failure) is
+-- a DISTINCT runtime error (Regex_bad_pattern), never the same
+-- silent no-match a benign miss produces.  Pre-fix this printed
+-- `false` and exited 0 (the classic fail-open shape for a guard with
+-- a typo'd pattern), recorded in dev/M3-FIXES-LOG.md.
+eval regexTest "a\\(" "aaa"

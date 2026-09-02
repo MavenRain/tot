@@ -1,0 +1,33 @@
+-- M3 Stage C, Gate C (i): a real JSON fixture round-trips: parse,
+-- project fields by match, re-serialize, compare. jsonParse is Div
+-- (host-code parser, no structural proof), so the whole computation
+-- stays Div-typed until pureDiv closes it; let*! is the bindDiv sugar.
+def payload : String := "{\"name\":\"tot\",\"count\":3}"
+def checkAll : Div Bool :=
+  let*! (Option Json) Bool mj := jsonParse payload in
+  pureDiv Bool
+    (match mj with
+     | none => false
+     | some j =>
+         match jsonGetString j "name" with
+         | none => false
+         | some nm =>
+             match stringEq nm "tot" with
+             | true =>
+                 match jsonGet j "count" with
+                 | none => false
+                 | some cv =>
+                     match jsonAsInt cv with
+                     | none => false
+                     | some n =>
+                         match intEq n 3 with
+                         | true => stringEq (jsonSerialize j) payload
+                         | false => false
+                         end
+                     end
+                 end
+             | false => false
+             end
+         end
+     end)
+eval checkAll

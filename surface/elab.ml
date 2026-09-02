@@ -51,6 +51,30 @@ let rec term (globals : Global.t) (scope : string list) (s : Syntax.t) :
       let* tm_t = term globals scope tm in
       let* ty_t = term globals scope ty in
       Ok (Term.Ann (tm_t, ty_t))
+  | Syntax.SStr (_loc, s) -> Ok (Term.Lit (Literal.LString s))
+  | Syntax.SInt (_loc, n) -> Ok (Term.Lit (Literal.LInt n))
+  | Syntax.SLetStar (_loc, is_div, ty_a, ty_b, x, rhs, body) ->
+      (* M3 Stage C, C3: purely syntactic desugar to
+         [bindIO A B e (fun x => body)] / [bindDiv A B e (fun x =>
+         body)], BEFORE any typechecking (this function only resolves
+         names to indices; [Check] alone assigns the real Pi
+         quantities, which is why every [Term.App] stamp below is the
+         same [Quantity.Many] placeholder [SApp] itself always writes).
+         FALLBACK SHAPE (no [SHole]; see [Syntax.SLetStar]'s own doc
+         comment): [ty_a]/[ty_b] are the sugar's own EXPLICIT type
+         arguments, elaborated in the OUTER scope like the
+         right-hand-side (neither can mention [x], which is bound only
+         in [body]). *)
+      let* ty_a_t = term globals scope ty_a in
+      let* ty_b_t = term globals scope ty_b in
+      let* rhs_t = term globals scope rhs in
+      let* body_t = term globals (x :: scope) body in
+      let bind_name = if is_div then "bindDiv" else "bindIO" in
+      let app (f : Term.t) (a : Term.t) : Term.t = Term.App (Quantity.Many, f, a) in
+      Ok
+        (app
+           (app (app (app (Term.Global bind_name) ty_a_t) ty_b_t) rhs_t)
+           (Term.Lam (Quantity.Many, x, body_t)))
   | Syntax.SMatch (_loc, scrut, motive, branches) ->
       (* the ctor name in a pattern is NOT resolved here: the kernel
          checks it against the inductive's declared constructors *)

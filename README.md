@@ -18,12 +18,18 @@ record and the milestone plan.
 
 ## Status
 
-M2: the kernel (terms, NbE evaluation, conversion, bidirectional checker,
-quantity checking) plus surface syntax, an elaborator, structural
-erasure, a call-by-value interpreter, and the `tot` CLI — now with
-parameterized inductive types (`data`), dependent `match`, structurally
-recursive `def rec` (totality-checked, guarded unfolding), and a core
-prelude (`stdlib/prelude.tot`: Bool, Nat, Option, Result, List, Pair).
+M3: the M2 kernel (terms, NbE evaluation, conversion, bidirectional
+checker, quantity checking, parameterized `data`, dependent `match`,
+structurally recursive `def rec`) plus an effect ladder (`Div` for
+provenance-tracked host divergence, `IO` reified as an inert action
+tree), `String`/`Int` literals and a closed native-prim catalog
+(string, int, JSON, process, regex), `let*`/`let*!`/`partial` surface
+sugar, and a prelude (`stdlib/prelude.tot`: Bool, Nat, Option, Result,
+List, Pair, Json, ProcessResult, Ordering, Verdict, ...) that `tot`
+auto-loads and caches on disk. `tot` can now run a `#!/usr/bin/env -S
+tot run` hook script directly: `examples/guard.tot` ports the house
+`rg`/`sd` PreToolUse rule end to end, reading a JSON tool-call payload
+on stdin and rendering an `allow`/`ask`/`deny` verdict.
 
 ## Build and run
 

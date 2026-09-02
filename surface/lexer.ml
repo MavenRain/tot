@@ -2,6 +2,8 @@
     that is pure recursion over that list. Numeric-literal overflow is
     unguarded (documented SPEC debt). *)
 
+let ( let* ) = Result.bind
+
 let is_digit (c : char) : bool = c >= '0' && c <= '9'
 
 let is_ident_start (c : char) : bool =
@@ -26,6 +28,7 @@ let keywords : (string * Token.kind) list =
     ("return", Token.KReturn);
     ("rec", Token.KRec);
     ("end", Token.KEnd);
+    ("partial", Token.KPartial);  (** M3 Stage C *)
   ]
 
 let ident_kind (s : string) : Token.kind =
@@ -43,6 +46,35 @@ let rec span (p : char -> bool) (loc : Loc.t) (cs : char list) :
 
 let nat_of_digits (digits : char list) : int =
   List.fold_left (fun acc c -> (acc * 10) + (Char.code c - Char.code '0')) 0 digits
+
+(** Scan a double-quoted string literal's body, immediately after the
+    opening quote. Honors backslash-backslash, backslash-quote,
+    backslash-n, backslash-t, and backslash-r escapes (M3 fixes round
+    4: [\r] added so a guard can name the carriage-return IFS
+    separator; mirrors [json_string_body]); accumulates decoded
+    characters newest-first. An unterminated literal, an unknown escape, or a RAW
+    newline before the closing quote (write [\n] instead; M3 fixes
+    round 2, ctxcat id 14: silently absorbing the newline made a
+    missing close quote swallow the rest of the file instead of
+    failing fast at its own line) is a [Serror.Lex] (M3 Stage A). *)
+let rec scan_string (loc : Loc.t) (cs : char list) (acc : char list) :
+    (string * Loc.t * char list, Serror.t) result =
+  match cs with
+  | [] -> Error (Serror.Lex { loc; msg = "unterminated string literal" })
+  | '"' :: rest ->
+      let s = List.rev acc |> List.to_seq |> String.of_seq in
+      Ok (s, Loc.next_col loc, rest)
+  | '\\' :: 'n' :: rest -> scan_string (Loc.next_col (Loc.next_col loc)) rest ('\n' :: acc)
+  | '\\' :: 't' :: rest -> scan_string (Loc.next_col (Loc.next_col loc)) rest ('\t' :: acc)
+  | '\\' :: 'r' :: rest -> scan_string (Loc.next_col (Loc.next_col loc)) rest ('\r' :: acc)
+  | '\\' :: '\\' :: rest -> scan_string (Loc.next_col (Loc.next_col loc)) rest ('\\' :: acc)
+  | '\\' :: '"' :: rest -> scan_string (Loc.next_col (Loc.next_col loc)) rest ('"' :: acc)
+  | [ '\\' ] -> Error (Serror.Lex { loc; msg = "unterminated escape at end of input" })
+  | '\\' :: c :: _rest ->
+      Error (Serror.Lex { loc; msg = Printf.sprintf "unknown escape \\%c" c })
+  | '\n' :: _rest ->
+      Error (Serror.Lex { loc; msg = "newline in string literal (use \\n)" })
+  | c :: rest -> scan_string (Loc.next_col loc) rest (c :: acc)
 
 let rec go (loc : Loc.t) (cs : char list) (acc : Token.t list) :
     (Token.t list, Serror.t) result =
@@ -64,6 +96,9 @@ let rec go (loc : Loc.t) (cs : char list) (acc : Token.t list) :
   | '(' :: rest -> go (Loc.next_col loc) rest ({ Token.kind = Token.LParen; loc } :: acc)
   | ')' :: rest -> go (Loc.next_col loc) rest ({ Token.kind = Token.RParen; loc } :: acc)
   | '|' :: rest -> go (Loc.next_col loc) rest ({ Token.kind = Token.Pipe; loc } :: acc)
+  | '"' :: rest ->
+      let* s, loc', rest' = scan_string (Loc.next_col loc) rest [] in
+      go loc' rest' ({ Token.kind = Token.Str s; loc } :: acc)
   | c :: rest when is_digit c ->
       let taken, loc', rest' = span is_digit (Loc.next_col loc) rest in
       let digits = c :: taken in
@@ -71,6 +106,17 @@ let rec go (loc : Loc.t) (cs : char list) (acc : Token.t list) :
       if List.length digits > 18 then
         Error (Serror.Lex { loc; msg = "numeric literal too long" })
       else go loc' rest' ({ Token.kind = Token.Nat (nat_of_digits digits); loc } :: acc)
+  (* M3 Stage C: "let*!" and "let*" are matched as LITERAL prefixes,
+     longest first, BEFORE the identifier scanner below: '*' is not an
+     identifier character, so the keyword table above cannot carry
+     these (the ordinary "let" scan would stop at "let" and then hit
+     "unexpected character '*'"). The bare "let" keyword is unaffected:
+     neither pattern matches unless the very next character after "let"
+     is '*'. *)
+  | 'l' :: 'e' :: 't' :: '*' :: '!' :: rest ->
+      go (Loc.advance loc 5) rest ({ Token.kind = Token.KLetStarDiv; loc } :: acc)
+  | 'l' :: 'e' :: 't' :: '*' :: rest ->
+      go (Loc.advance loc 4) rest ({ Token.kind = Token.KLetStar; loc } :: acc)
   | c :: rest when is_ident_start c ->
       let taken, loc', rest' = span is_ident_char (Loc.next_col loc) rest in
       let s = List.to_seq (c :: taken) |> String.of_seq in
@@ -88,5 +134,36 @@ and skip_comment (loc : Loc.t) (cs : char list) (acc : Token.t list) :
   | '\n' :: rest -> go (Loc.next_line loc) rest acc
   | _other :: rest -> skip_comment (Loc.next_col loc) rest acc
 
+(** M3 Stage D, D3: strip ONE leading shebang line ("#!" at column 0,
+    line 1) before tokenizing, so a hook script can start with
+    "#!/usr/bin/env -S tot run". "--" stays the only comment marker for
+    everything else; this handles ONLY the very first line, and ONLY
+    when it starts with the literal two characters "#!" -- a "#!"
+    appearing anywhere else (mid-file, or after a leading space) is
+    left alone and falls through to the ordinary lexer, where a bare
+    '#' is "unexpected character" (there is no line comment marker
+    other than "--"). Line numbers in every later token/error stay
+    accurate: the rest of the source is lexed starting from
+    [Loc.next_line Loc.start] (line 2), not line 1, since physically it
+    IS line 2 onward in the original file. A shebang line with no
+    trailing newline at all (the whole source is just the shebang)
+    strips to an empty remaining program, handled downstream the
+    ordinary way (no tokens but [Eof]). Both slices below carry their
+    own length precondition ON THE SAME LINE, so neither [String.sub]
+    call can raise. *)
+let strip_shebang (src : string) : string * Loc.t =
+  let is_shebang =
+    String.length src >= 2 && String.equal (String.sub src 0 2 (* @total-accessor *)) "#!"
+  in
+  if not is_shebang then (src, Loc.start)
+  else
+    String.index_opt src '\n'
+    |> Option.fold
+         ~none:("", Loc.next_line Loc.start)
+         ~some:(fun i ->
+           let rest_len = String.length src - i - 1 in
+           (String.sub src (i + 1) rest_len (* @total-accessor *), Loc.next_line Loc.start))
+
 let lex (src : string) : (Token.t list, Serror.t) result =
-  go Loc.start (String.to_seq src |> List.of_seq) []
+  let src', loc0 = strip_shebang src in
+  go loc0 (String.to_seq src' |> List.of_seq) []

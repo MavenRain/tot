@@ -1,0 +1,10 @@
+-- M3 fixes, A3 (C15): genuine run-mode prelude coverage.  Both
+-- PASS-CHECK-PRELUDE and PASS-RUN-PRELUDE used to derive from the ONE
+-- bootstrap-only exit code, which only proves `Bootstrap.state ()`
+-- succeeds (a check-time operation).  This fixture makes the RUN
+-- marker execute prelude code for real: `add` is a prelude
+-- `reducible def rec`, applied here to canonical Nat data, so a green
+-- gate proves Interp's exec/force/quote path works over a prelude rec
+-- def in run mode.  dev/gates.sh pins the exact output line
+-- `(succ (succ (succ zero)))`, a computed readback, never an echo.
+eval add (succ (succ zero)) (succ zero)

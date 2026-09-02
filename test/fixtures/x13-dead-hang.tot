@@ -1,0 +1,12 @@
+-- M3 fixes round 2, R2: dead code must not hang a guard.  Same shape
+-- as x12-dead-abort.tot, but the dead def diverges instead of
+-- erroring: `deadcode` applies a spinning partial under a pure
+-- `Option` head, so the round-1 rule executed `spin zero` at
+-- definition time in run mode and `tot run` hung forever: pre-fix it
+-- exits 124 under a 5s watchdog (recorded in dev/M3-FIXES-LOG.md as
+-- the mutation confirmation).  Post-fix `deadcode` is a never-forced
+-- lazy thunk and `tot run` exits 0 with an empty stdout envelope
+-- (allow prints nothing): dev/gates.sh's PASS-RUN-DEADCODE-HANG.
+def rec partial spin : Nat -> Div Nat := fun n => spin n
+def deadcode : Option (Div Nat) := some (Div Nat) (spin zero)
+def main : IO Verdict := pureIO Verdict allow

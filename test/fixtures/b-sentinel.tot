@@ -1,0 +1,8 @@
+-- M3 Stage B, Gate B item (ii) fixture: hard constraint 1. `tot check`
+-- on this script must perform NO I/O: printLine's actual stdout write
+-- must never happen. `tot run` performs it for real. Stage B's prim
+-- catalog has no writeFile yet (Stage C's C1 adds one), so
+-- dev/gates.sh observes this through captured process stdout instead
+-- of a real file: it redirects BOTH invocations to the SAME path and
+-- checks for the exact sentinel line's presence/absence there.
+def main : IO Unit := printLine "SENTINEL-WRITTEN"

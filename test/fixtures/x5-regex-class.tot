@@ -1,0 +1,8 @@
+-- M3 fixes, B1 (O2): `\(` INSIDE a `[...]` class is not a group
+-- opener in the Str dialect (a backslash is an ordinary class member
+-- there), so this pattern has ZERO groups and the class matches
+-- either of the two members `\` and `(`.  Pre-fix the syntactic
+-- counter saw one phantom group and Str.matched_group killed the
+-- whole process with an uncaught Invalid_argument (exit 2, recorded
+-- in dev/M3-FIXES-LOG.md).  dev/gates.sh pins the printed value.
+eval regexMatch "[\\(]x" "(x"

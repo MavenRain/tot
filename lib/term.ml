@@ -100,3 +100,53 @@ and motive = {
           then [m_self]; so de Bruijn 0 is [m_self] and de Bruijn [m] is
           the head of [m_idx] *)
 }
+
+(** M5 Stage B (pin 2): weaken a term by [by] under [cutoff] binders.
+    Total and exhaustive over all eleven constructors, with no
+    catch-all arm, so a twelfth constructor is a compile error here
+    before it is a scope bug in a materialized instance nest.
+
+    The two non-obvious cutoffs are the [Match] ones, and both follow
+    the ONE convention this file states at [motive]: [m_body] is scoped
+    under [m_idx] and then under [m_self], so it sits under
+    [List.length m_idx + 1] binders; a branch body sits under its own
+    ctor args, so it sits under [List.length binders] binders. *)
+let rec shift ~(cutoff : int) ~(by : int) (t : t) : t =
+  match t with
+  | Var i -> if i >= cutoff then Var (i + by) else Var i
+  | Univ l -> Univ l
+  | Pi (q, x, dom, cod) ->
+      Pi (q, x, shift ~cutoff ~by dom, shift ~cutoff:(cutoff + 1) ~by cod)
+  | Lam (q, x, body) -> Lam (q, x, shift ~cutoff:(cutoff + 1) ~by body)
+  | App (q, f, a) -> App (q, shift ~cutoff ~by f, shift ~cutoff ~by a)
+  | Let (x, ty, def, body) ->
+      Let
+        ( x,
+          shift ~cutoff ~by ty,
+          shift ~cutoff ~by def,
+          shift ~cutoff:(cutoff + 1) ~by body )
+  | Ann (tm, ty) -> Ann (shift ~cutoff ~by tm, shift ~cutoff ~by ty)
+  | Global g -> Global g
+  | Lit l -> Lit l
+  | Auto -> Auto
+  | Match { scrut; scrut_q; motive; branches } ->
+      Match
+        {
+          scrut = shift ~cutoff ~by scrut;
+          scrut_q;
+          motive =
+            motive
+            |> Option.map (fun (mo : motive) ->
+                   {
+                     mo with
+                     m_body =
+                       shift
+                         ~cutoff:(cutoff + List.length mo.m_idx + 1)
+                         ~by mo.m_body;
+                   });
+          branches =
+            List.map
+              (fun ((c : string), (binders : (Quantity.t * string) list), (body : t)) ->
+                (c, binders, shift ~cutoff:(cutoff + List.length binders) ~by body))
+              branches;
+        }

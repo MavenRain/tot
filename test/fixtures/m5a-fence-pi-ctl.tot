@@ -1,0 +1,7 @@
+-- The SAME shape with the self-recursive occurrence removed.  PZf is
+-- one constructor, one erased argument, no self recursion, so
+-- zero_eliminable IS true and the match erases.  This file pins the
+-- accept side of the pair.  Observed 2026-09-03: a mentions that
+-- stops at Pi rejects m5a-fence-pi.tot on the termination guard.
+data PZf : Type 0 := | pzwrap : (0 f : (0 n : Nat) -> Nat) -> PZf
+def pzfLoop : (0 s : PZf) -> Nat := fun s => match s with | pzwrap g => zero end

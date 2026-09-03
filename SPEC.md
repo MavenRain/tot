@@ -741,6 +741,377 @@ verdict CLIs, small tools.  The house rules are the semantics:
 - 2026-09-02 (M4, Stage D): debts discharged in Stage A (the ctor-arity
   cache and the builtin-former marker) stay discharged;  nothing in this
   stage touches either.
+- 2026-09-02 (M5, Stage A): the JSON parser accepts `\uXXXX` and
+  surrogate PAIRS (design pin 13).  A high surrogate (`\uD800` to
+  `\uDBFF`) is valid only as the first half of a pair whose second half
+  is `\uDC00` to `\uDFFF`;  the pair decodes to one supplementary code
+  point, UTF-8 encoded byte for byte.  A lone high surrogate, a lone
+  low surrogate, a short escape (fewer than four hex digits), and a
+  non-hex escape each return `none` and fail the WHOLE parse, never a
+  partial decode.  This closes the milestone's one LIVE exploit: the
+  payload `{"tool_name":"Bash","tool_input":{"command":"\u0067rep
+  foo"}}` piped to `tot run examples/guard.tot` exited 0 (allow) at M4
+  HEAD, because the parser rejected the escape, `jsonParse` returned
+  `none`, and the guard maps `none` to allow, so a banned binary ran.
+  It now decodes to `grep foo` and DENIES with exit 2
+  (`PASS-M5A-BYPASS`;  `PASS-M5A-LONE-SURROGATE` pins the negative
+  shapes together with the suite's direct parse assertions).
+- 2026-09-02 (M5, Stage A): two escapers, one parser rule (design pin
+  13).  `Pp.escape_string` is the SOURCE escaper (tot string
+  literals);  `Json_escape.string` (lib/json_escape.ml, NEW) is the
+  JSON escaper, covering the RFC 8259 short forms plus `\u00XX` for
+  every remaining byte below 0x20, DEL and bytes at or above 0x80
+  unescaped.  M4's claim at the serializer (lib/interp.ml) that the
+  source escape set is a sufficient SUBSET of JSON's was FALSE: the
+  parser accepts `\r`, `\b` and `\f`, the source escaper leaves all
+  three raw, and a deny envelope carrying a raw CR or a raw 0x01 was
+  rejected by a conforming JSON parser, so a hook fell back to its
+  decode-error posture, which is fail-open.  Three call sites were
+  rewired to the JSON escaper: the serializer's `jstr` value, the
+  serializer's object KEY, and the verdict envelope in
+  surface/effect.ml (`PASS-M5A-ENVELOPE-VALID` pins the envelope and
+  the serializer independently, one mutation proof per site).
+- 2026-09-02 (M5, Stage A): raw C0 bytes inside a parsed string body
+  are still ACCEPTED, a deliberate non-change.  The guard's deny set
+  does not read control bytes, and tightening the parser moves
+  payloads between paths for no exploit found.  `\u0000` decodes to a
+  real NUL byte (OCaml strings are byte arrays, so the value is
+  carried, not truncated), and the decoded `\u0000grep foo` command
+  still yields allow, because the first token's basename is
+  `\x00grep`, not `grep`.  That is the honest result, not a
+  regression.  Section 6 carries the residual.
+- 2026-09-02 (M5, Stage A): `--strict-json` (design pin 20, amendment
+  A2).  Default off;  effective in `run` only (`check` never runs the
+  epilogue, so `readStdin` never fires);  the flag travels as
+  `Run.policy.strict_json` and is enforced at `Effect.dispatch`'s
+  `readStdin` arm, the one raw stdin read in the tree, so `lib/` is
+  untouched and the guard script needs no edit.  Under the flag a
+  stdin payload that is not one well-formed JSON value DENIES: an
+  `IO Verdict` script renders the deny envelope with the fixed reason
+  `strict-json: stdin is not a single well-formed JSON value` and
+  exits 2;  an `IO Unit` script has no verdict channel and takes the
+  DRIVER contract instead (`Serror.Json_strict_reject`: one stderr
+  line, exit 1, OUTSIDE the `--serror-exit` mapping).  Consequence,
+  stated plainly (review round 2026-09-03): a hook harness that
+  blocks only on exit 2 treats that exit 1 as NON-blocking, so the
+  fail-closed guarantee is `IO Verdict`-only;  a blocking Unit-shape
+  posture is an M6 decision, listed in section 5.  Without the
+  flag the fail-open posture is byte-identical to M4 HEAD
+  (`PASS-M5A-STRICT-DENY`, `PASS-M5A-STRICT-ALLOW`).  Rejected
+  alternatives: threading a flag through `Interp.fire_prim` puts
+  installation policy in `lib/` against the repo's own rule and costs
+  23 call sites for no coverage;  changing `jsonParse`'s posture needs
+  a different type (`String -> Div (Option Json)`), moving the prelude
+  and every caller;  editing only `examples/guard.tot` gives the
+  posture to one file, and a script that ignored an argv-passed flag
+  would still fall open, so the flag would guarantee nothing.
+- 2026-09-02 (M5, Stage A): the subsingleton fence walks under a Pi
+  (design pin 15, amendment A5).  `Totality.mentions` recurses into
+  BOTH halves of a `Pi`, so a self-recursive occurrence in a
+  constructor argument's Pi CODOMAIN keeps `self_rec = true`, the
+  family stays outside `zero_eliminable`, and eliminating it erased at
+  mode `w` stays `Erased_use` (`PASS-M5A-FENCE-PI`, fixture
+  m5a-fence-pi.tot, with the no-recursion control pinning the flip
+  target).  The executable mutation proof is the CODOMAIN half: walk
+  the domain only and the fixture flips to exit 0.  The verdict's
+  DOMAIN mutation is refuted by `Check.strict_pos`: a constructor
+  argument may never mention the family in a Pi DOMAIN (measured
+  rejection: `invalid constructor pywrap: negative or non-uniform
+  occurrence of PY`), so no admissible declaration witnesses a domain
+  occurrence and that mutation can flip nothing.  No later milestone
+  should propose it again.
+- 2026-09-02 (M5, Stage A): the parameter-level predicativity
+  exemption, written down (design pin 16, amendment A5).
+  `declare_ind_status` treats three telescopes differently: the
+  PARAMETER fold DISCARDS the inferred level (lib/check.ml, `let* ty',
+  _l = infer_univ ..`), while every INDEX type and every constructor
+  ARGUMENT is bounded by the declared universe
+  (`Index_above_universe`, `Bad_ctor`).  A parameter may therefore
+  live above the family's level, and this exemption is exactly what
+  makes `Acc` check.  The working spelling, verbatim (parameters
+  0-marked, accessibility as an INDEX):
+
+      data Acc (0 A : Type 0) (0 R : A -> A -> Type 0) : (0 x : A) -> Type 0 :=
+        | acc : (x : A) -> ((y : A) -> R y x -> Acc A R y) -> Acc A R x
+
+  The design verdict's own spelling fails at the parser (`data`
+  parameters must be marked 0) and then at the constructor-codomain
+  arity rule, so it is elliptical, not runnable.  Gates: the positive
+  `Acc`/`PBox` fixture at exit 0 and the two negatives at their exact
+  rejection texts (`PASS-M5A-PARAM-LEVEL`).  No milestone may cite
+  this exemption as evidence again without this entry.
+- 2026-09-02 (M5, Stage A): the positivity door stays SHUT, and the
+  recorded reason is the MUTUAL gap (design pin 14).
+  `Totality.mentions` tests only the family's OWN name when `self_rec`
+  is computed, so a recursive PAIR of families reads as
+  non-self-recursive.  The losing proposal's NESTING claim is
+  corrected explicitly: nesting does NOT lose `self_rec`, because
+  `mentions` recurses into both halves of `App`, so a nested
+  occurrence such as `jarr : List Json -> Json` still gives
+  `self_rec = true`.  The emptiness claim behind the subsingleton
+  soundness argument stays UNPROVEN, and M5 leaves M6 this oracle
+  rather than a memory.
+- 2026-09-02 (M5, Stage A): `Cache.format_version` stays 10, a
+  deliberate no-bump.  Five checkable reasons: (1) `Term.t` is
+  unchanged, no constructor and no field;  (2) `Global` entry shapes
+  are unchanged, `self_rec` already exists;  (3) the cache stores
+  ELABORATED terms and Stage A does not touch the lexer, so the same
+  source elaborates to the same term;  (4) `Json_escape.string` and
+  the parser's `\u` arm are RUNTIME behaviour, neither runs during
+  elaboration;  (5) `Run.policy` is a driver value, never serialized.
+  The cache key also carries the running binary's digest, so a
+  rebuild invalidates existing entries anyway;  that is a belt, not
+  the argument.
+- 2026-09-02 (M5, Stage C): the check budget (design pins 8, 9, 11).
+  `Budget.t` (lib/budget.ml, NEW, with lib/budget.mli, the second
+  interface file after `Level`) is opaque and holds one
+  driver-supplied `poll : unit -> bool`.  `lib/` reads no clock, holds
+  no mutable state and raises nothing;  `bin/tot.ml` owns the clock
+  (`Sys.time`, CPU milliseconds, one read per 1024 polls) and builds
+  the budget AFTER the prelude bootstrap returns, so the prelude runs
+  unlimited by construction and a 1 ms budget does not pay the warm
+  bootstrap's own ~10 ms.  The same construction leaves a COLD
+  bootstrap unbounded (review round 2026-09-03): the cache key
+  carries the binary digest, so the first invocation after every
+  rebuild or upgrade re-elaborates the prelude outside the budget,
+  and no `--check-budget-ms` value cuts that window;  decision 13's
+  external `timeout` belt owns it.  `ctx.budget` defaults to
+  `Budget.unlimited`, so no existing call site changed.
+  `--check-budget-ms N` defaults to 0, which is OFF, and applies to
+  `check` and to `run`.  The budget covers elaboration and
+  type-checking in both verbs.  It does not cover `Interp` execution,
+  where decision 13's external `timeout` stays the belt (the claim
+  that installs may drop `timeout` stays RETRACTED).
+- 2026-09-02 (M5, Stage C): exit 3 is RESERVED for budget exhaustion
+  (design pins 10, 19, amendment A1), outside the `--serror-exit`
+  mapping, with one exact stderr line
+  `<path>: check budget exhausted (<N> ms)` (`<N>` is the CONFIGURED
+  number of milliseconds, not an elapsed measurement, so the line is
+  deterministic for a given invocation) and stdout untouched.
+  Because `exitWith` accepts any 0..255 and `--serror-exit 3` is a
+  shipped, tested configuration, the LINE, not the code alone, is the
+  discriminator a hook matches;  the reservation is a convention for
+  the default configuration, stated plainly rather than implied to be
+  an identification.  The PreToolUse harness treats codes other than
+  0 and 2 as non-blocking, so the default posture on exhaustion
+  matches the external-timeout posture it replaces;  an installation
+  that wants fail-closed wraps the driver.  (`PASS-M5C-BUDGET-FIRES`,
+  `PASS-M5C-BUDGET-QUIET`, `PASS-M5C-DETERMINISM`.)
+- 2026-09-02 (M5, Stage C): the budget is NODE-granular (design pin
+  9).  `Check.check` and `Check.infer` are polling wrappers around
+  the M4 bodies (`check_node`/`infer_node`), so node granularity is a
+  property of the call graph, and `build_instance` polls beside its
+  fuel guard with the budget arm FIRST: a run that is out of time
+  reports the cutoff, not a fuel exhaustion it reached only because
+  the operator waited.  It is a cutoff, not a real-time guarantee:
+  one pathological `Eval.eval` or `Eval.conv` call between two poll
+  sites is unbounded by it.
+- 2026-09-02 (M5, Stage C): `inst_fuel` gains the class-count factor
+  (design pin 12).  The round-5 shape is multiplied by
+  `1 + class_count globals`, where the count is the number of
+  DISTINCT class components of `inst$` mangled names in the table
+  (`Check.instance_class_of`/`inst_table_stats`, one fold for both
+  numbers the bound needs).  A class is not a distinguishable kind of
+  global in this design (`surface/cache.ml`: "classes are ordinary
+  `Ind`"), so the count is a property of the INSTANCE TABLE, which is
+  where the round-5 comment already places it;  a class with no
+  registered instance counts nothing, correctly for a fuel bound.
+  The factor is NOT a proof that the leaf is gone: on the
+  `classes K` generated shape the charge and the bound are both about
+  quadratic in K, so the leaf is re-measured, never asserted (the "by
+  construction" claim is dropped).
+- 2026-09-02 (M5, Stage C): the K leaf, re-bisected.
+  `dev/bisect-inst-classes.sh` makes the stopping rule executable:
+  double through 61, 122, 244, 488 (K_max, three doublings from the
+  M4 leaf), bisect at the first rejection;  ceilings of 8 MB per
+  generated file and 120 s per probe, both checked before the probe
+  runs.  Measured 2026-09-02 on this binary: 61, 122, 244 and 488
+  ALL resolve, so the verdict is NOLEAF<=488 and no margin is
+  invented (pin 12).  The gate pin is the largest K that RESOLVED
+  inside the search bound subject to affordability (file at most
+  1 MB, run at most 10 s): K = 122, bound by the file ceiling
+  (`PASS-M5C-LEAF-MARGIN` carries the probe table and the
+  re-measurement recipe;  `PASS-M5C-CLASSES-61` pins the paid M4 leaf
+  itself, and its recorded mutation, dropping the factor, restores
+  that file's exact exit-1 fuel line).
+- 2026-09-02 (M5, Stage C): `--require-main` is a DRIVER failure
+  (design pin 21, amendment A3).  A mainless target takes the driver
+  contract: one stderr line, the literal exit 1, OUTSIDE the
+  `--serror-exit` mapping, exactly like a missing file.  The stderr
+  TEXT does not move
+  (`<path>:this file must define a driver main, and it does not`,
+  the tight separator);  only the exit mapping moves.
+  `Serror.Missing_main`, its `to_string` line and `Run.script` are
+  unchanged;  the decision lives in `bin/tot.ml`'s error ladder
+  (`Serror.is_missing_main`).  An ordinary script error KEEPS the
+  mapping (`PASS-M5C-REQUIRE-MAIN-OK`, the anti-overreach half;
+  `PASS-M5C-REQUIRE-MAIN-DRIVER` pins all four invocations, check and
+  run, bare and under `--serror-exit 0`).
+- 2026-09-02 (M5, Stage D, recording Stage B per its B15 handoff):
+  instance term sharing (design pins 1 to 5, plus pin 7's measured
+  option).  The `Term.Auto` site now emits a LOCAL `let`-nest over
+  the memo's own entries (`Check.materialize`, one fold in reverse
+  definition order): `islot = IHead | IApp` with
+  `iarg = IType of Term.t | ISlot of int`, entry `i` shifting
+  `IType t` by `Term.shift ~cutoff:0 ~by:i` and sending `ISlot j` to
+  `Term.Var (i - 1 - j)`;  a memo HIT returns the slot and the cached
+  `e_val` and never re-evaluates (pin 5).  `Term.shift` is total and
+  exhaustive over all eleven constructors (`m_body` at
+  `cutoff + |m_idx| + 1`, a branch body at `cutoff + |binders|`;
+  `PASS-M5B-SHIFT`).  It is NOT hash-consing: physical identity does
+  not survive `Marshal`, `Term.t` gained a function and no
+  constructor, and `Cache.format_version` stays 10 (pin 1).
+  Measured: term_size 694 at branching nesting 16 against the
+  un-shared M4 tree's 458714 (`PASS-M5B-SHARE-SIZE`), and the
+  restored nesting-20 file runs in 0.034s against M4 HEAD's 30.188s
+  (`PASS-M5B-BRANCHING-20`).  Key-TYPE sharing stays UNSPENT
+  (pin 7): the measured 694 sits far under the 4000 gate, so the
+  option is recorded as a section 6 debt, not built.
+- 2026-09-02 (M5, Stage D, recording Stage B): sharing is a
+  performance change under an UNCHANGED kernel rule (design pin 6).
+  The `Auto` site re-checks its materialized candidate at
+  lib/check.ml:1002, so a mis-shifted nest is a loud type error and
+  never a wrong dictionary;  `PASS-M5B-RUNTIME-IDENTITY` pins four
+  runtime values through the nest, and the Stage B mutation table in
+  dev/M5-BUILD-LOG.md records the slot-arithmetic flips.  Do not
+  weaken that re-check to buy speed.
+- 2026-09-02 (M5, Stage D): named watchdog tiers (design pin 17).
+  `FAST=10`, `MED=30`, `SLOW=120`, `SUITE=300`, plus the non-leg
+  calibration constant `BITE_S=1`.  The mapping rule is "smallest
+  tier greater than or equal to the current literal", so no budget
+  shrank: at plan time 37 of 86 legs grew, and MEASURED at Stage D
+  entry, over the corpus Stages A to C grew to 125 executable legs,
+  39 got a larger ceiling (8 moved 5 to 10, 26 moved 15 to 30,
+  1 moved 20 to 30, 4 moved 60 to 120) and none got a smaller one.
+  A tier is a HANG ceiling, not a performance budget;  pin 9 keeps
+  the external `timeout` as the belt, and the measurement log
+  (`gate_timed`, one MEASURE line per wrapped perf run) is what
+  detects a leg that creeps.  The oracle is
+  `rg -q '"\$watchdog" [0-9]' dev/gates.sh` asserted on EXIT
+  STATUS, with two positive counts beside it (116 direct tier uses
+  after 18 perf runs moved inside `gate_timed`, and 2 calibration
+  uses), because an absence assertion alone is satisfied by deletion
+  (`PASS-M5D-TIERS`;  `PASS-M5D-TIER-BITES` proves the watchdog
+  machinery still cuts at a value a tier names).  The corpus record
+  is corrected here: at M4 HEAD 91 lines mention `$watchdog`, 89
+  match the corrected oracle, and 86 of those are executable legs;
+  at Stage D entry the same three numbers are 130, 128 and 125.
+- 2026-09-02 (M5, Stage D): the deny message echoes the blocked
+  command (plan D3).  The echo is attacker-controlled data inside a
+  JSON string, so it is bounded at 2000 bytes with `stringSlice`
+  (`elideAt`, the house elision width) and it depends on Stage A's
+  C0 escaper: a control byte goes out as its `\uXXXX` escape, never
+  raw.  `PASS-M5D-GUARD-ECHO` is the executable statement of that
+  dependency: the emitted envelope must re-parse through the same
+  binary to the same bytes.
+- 2026-09-02 (M5, Stage D): the third guard is a NARROW port (plan
+  D4).  `examples/guard-rewrap.tot` implements criteria 1 and 2 of
+  the Python Bash map-over-rewrap guard on raw text: only
+  `tool_name = "Bash"`, only a command mentioning `.rs`, only the
+  line-pair shape (`let` first token, `?;` last token, next line
+  starting `Ok(`).  The scrubber, the block-tail test, the used-name
+  test and the net-new comparison are not ported.  The guard fails
+  open on everything it does not recognise, matching the other two
+  guards (`PASS-M5D-REWRAP-GUARD`).
+- 2026-09-02 (M5, Stage D): the hole-anchor measurement (scope item
+  11, plan D5).  A STATIC classifier (`dev/hole-anchors.py`) walks
+  stdlib/prelude.tot plus examples/*.tot (test fixtures excluded on
+  purpose: they stress the kernel and would bias the ratio), finds
+  every application of a head whose declared type opens with leading
+  erased `Type` binders, and buckets each of the first-k anchor
+  arguments: E (expected-type-only: check position and the head's
+  result type mentions the anchor's binder), A (argument-driven:
+  check position but only a later argument's inferred type fixes it)
+  and N (proof plumbing, class keys, infer position).  Measured
+  2026-09-02: total 98, E 59, A 9, N 30.  E is an UPPER bound on
+  what an expected-type-only hole pass would solve, because the
+  classifier does not run the checker.  `PASS-M5D-HOLE-ANCHORS`
+  pins schema, bucket sum and an independent recount;
+  `PASS-M5D-MEASURE-LOG` pins the section 6 number against the log.
+- 2026-09-02 (M5, Stage D): every design pin is a dated entry
+  (design pin 18).  Stages A and C wrote their own pin entries;
+  Stage D wrote Stage B's above (the B15 handoff) and its own, and
+  audited the set: pins 1 to 21 and 23 each appear in a dated
+  section 2 entry, and pin 22 (the well-founded spike) is OWED BY
+  STAGE E, which appends its own dated block after Stage D lands.
+  Section 6's measured claims are rewritten with post-M5 numbers at
+  the same shapes (plan D7), so the before and after compare.
+
+- 2026-09-02 (M5, Stage E, SPIKE): `--experimental-wf` exists and is
+  off by default (design pin 22, amendment A4;  this block pays the
+  pin the Stage D audit recorded as owed).  The flag selects
+  `Totality.Structural_wf` in place of `Totality.Structural`.  It is a
+  DRIVER flag: `bin/tot.ml` maps it into `Run.policy.wf_rule` once,
+  and `Check.define`'s REQUIRED `~rule` argument threads it to the
+  guard, so the compiler enumerates every call site and none picks up
+  a silent default.  It never reaches the prelude, which folds through
+  `Run.default_policy`, and an instance body passes
+  `Totality.Structural` literally, so no flag can enter the cache key:
+  `Cache.format_version` stays 10.  Cost (measurement M2, medians of
+  three at Stage E exit): kernel suite 0.198s, surface suite 0.862s,
+  the 80-file default-path transcript 5.547s and byte-identical, the
+  flagged worked example 0.024s;  the clause runs only inside
+  `guarded_call` on the argument at candidate position k, and at
+  `Structural` it costs one constructor comparison there.
+  `PASS-M5E-DEFAULT-IDENTITY` pins the byte-identity of the whole
+  check corpus without the flag.
+- 2026-09-02 (M5, Stage E, SPIKE): the prototype rule, in one
+  sentence.  At `Structural_wf`, a recursive call whose argument at
+  the candidate position is an APPLICATION is guarded when that
+  application's head is a variable already marked `Smaller`.  The
+  prototype is KNOWN to be too permissive;  it exists to be measured,
+  not to be relied on, and M6 either promotes it or deletes it.
+- 2026-09-02 (M5, Stage E, SPIKE): the precondition that keeps the
+  witness out.  A branch binder becomes `Smaller` only when the match
+  scrutinee is a `Principal` or `Smaller` VARIABLE.  The panel witness
+  (`def rec bad : T -> Nat := fun t => match mk (fun n => t) with
+  | mk g => bad (g zero) end`) builds its own scrutinee, so its binder
+  stays `Other` and the call stays rejected, with the SAME message and
+  exit code with and without the flag.  This is the missing
+  precondition amendment A4 names, and `PASS-M5E-WITNESS-REJECTED`
+  pins it (its leg (a) proves the flag is live, so the negative can
+  never pass vacuously).
+- 2026-09-02 (M5, Stage E, SPIKE): the clause is not specific to
+  accessibility.  It inspects the head's STATUS, never the field's
+  TYPE, so it unlocks infinitary structural recursion at the same time
+  as `accRec`.  Measurement M1, four shapes run with and without the
+  flag on 2026-09-02: `accRec` (argument `h y r`) exit 1 -> exit 0;
+  `bad2` (variable scrutinee, argument `g zero`) exit 1 -> exit 0;
+  `bad` (the panel witness, built scrutinee) exit 1 -> exit 1;  `bad3`
+  (argument `mk g`, a constructor head) exit 1 -> exit 1.  Two of the
+  four rows flip, so M6 must decide whether it wants one feature or
+  two.
+- 2026-09-02 (M5, Stage E, SPIKE): `Acc` needs no universe
+  polymorphism and no new kernel typing rule.  The declaration
+  `data Acc (0 A : Type 0) (0 R : A -> A -> Type 0) : A -> Type 0 :=
+  | acc : (x : A) -> ((y : A) -> R y x -> Acc A R y) -> Acc A R x`
+  checks at M4 HEAD at exit 0;  only `Totality.guard` rejects
+  `accRec`, and under the flag the full worked example checks at
+  exit 0 with the five lines `PASS-M5E-ACC-CHECKS` pins byte for
+  byte.
+- 2026-09-02 (M5, Stage E, SPIKE): a relation supplied as an INDEXED
+  FAMILY does not fit `Acc`'s `R`.  An indexed family's stamped
+  domains carry `Quantity.Zero` binders, and
+  `(0 _ : Nat) -> (0 _ : Nat) -> Type 0` does not convert with the
+  `(w _ : Nat) -> (w _ : Nat) -> Type 0` that `Acc`'s parameter
+  demands: `type mismatch: expected (w _ : Nat) -> (w _ : Nat) ->
+  Type 0, found (0 _ : Nat) -> (0 _ : Nat) -> Type 0`, exit 1.  The
+  Stage E worked example supplies the relation as a `reducible def`
+  family (`LtNat`) instead.  The gap is real and is M6 work;  a spike
+  does not change the quantity rules.
+- 2026-09-02 (M5, Stage E, SPIKE): `Frozen_rec` stays un-motivated
+  (measurement M3).  `Frozen` stays dead code for every `Acc` shape M5
+  can build: an `(0 a : Acc A R x)` argument fails with `erased
+  variable a used at runtime` before the guard runs, because `acc`
+  carries two runtime fields and so `Acc` is not zero-eliminable under
+  the M4 subsingleton fence;  the M4 Stage C claim is unchanged and
+  the `Frozen` emptiness claim stays UNPROVEN.  `Frozen_rec` as a
+  definition-time error buys nothing until `Acc` gains an erased
+  elimination form, which is a subsingleton-fence change, not a
+  totality change.  The two changes are therefore COUPLED: M6 must
+  size them together or neither, which confirms the verdict's
+  "Deferred and TIED to well-founded recursion" line with an
+  executable reason.
 
 ## 3.  Core calculus (M0 core, M2 inductives, M3 literals and effects)
 
@@ -807,6 +1178,16 @@ A script MAY start with a shebang line (`#!` at column 0, line 1);
 the lexer strips exactly that one line before tokenizing.  `--` stays
 the only comment marker for everything else.  A hook script's first
 line is `#!/usr/bin/env -S tot run`.
+
+The driver grammar (M5 Stage A adds `--strict-json`):
+
+    tot (check|run) [--no-prelude] [--no-axioms] [--serror-exit N]
+        [--require-main] [--strict-json] FILE | tot prims
+
+A fail-closed installation spells its hook command
+`tot run --strict-json <guard>`;  the flag is enforced by the driver
+at the `readStdin` boundary, so the guard script itself needs no
+edit (section 2, the M5 Stage A `--strict-json` entry).
 
 Quantities: `0` (erased: types, proofs) and `w` (runtime).  The checker
 carries a mode.  Inside types the mode is `0` and every variable is
@@ -945,21 +1326,42 @@ The `tot` executable (`bin/`) wraps `Run` as `tot (check|run) FILE`.
   `Syntax.defkind`).
   Ported `examples/guard-classes.tot`, the house `rg`/`sd` guard again
   with the flagged command list behind a type class and two `Eq` proofs.
-- M5: well-founded recursion (now unblocked by indexed families), holes,
-  nested/mutual inductives (unblocks the `Json` cons-cell migration to
-  `jarr : List Json -> Json`), universe polymorphism (`Eq` is currently
-  `Type 0`-monomorphic).  Then measure and decide the next tradeoff.
+- M6 candidate list (M5 Stage E rewrote the former `M5:` bullet with
+  the spike's numbers;  measure and decide the next tradeoff):
+  - Well-founded recursion.  Leading candidate.  `Acc` checks today;
+    the whole kernel delta sits in `Totality.guard`;  the prototype
+    clause is measured in the Stage E entry of section 2 and is too
+    permissive as written (2 of 4 measured shapes flip, including
+    infinitary structural recursion).
+  - Holes.  Sized by Stage D's hole-anchor count (98 anchors over the
+    530-line prelude-plus-examples corpus: 59 expected-type-only, 9
+    argument-driven, 30 neither), not by taste.
+  - Nested and mutual inductives (would unblock the `Json` cons-cell
+    migration to `jarr : List Json -> Json`).  Blocked on the MUTUAL
+    gap in `Totality.mentions`, which tests only the family's own
+    name, over an emptiness claim SPEC still records as UNPROVEN.
+  - Universe polymorphism (`Eq` is currently `Type 0`-monomorphic).
+    Not needed by `Acc` (Stage E probe P1).
+  - A blocking `--strict-json` posture for `IO Unit` scripts.  The
+    Stage A entry in section 2 records the exit-1 route as
+    `IO Verdict`-only fail-closed (review round 2026-09-03).
 
 ## 6.  Known debts (deliberate)
 
-- No `.mli` interfaces yet except `Level`;  `Global.add` is public but
-  documented as kernel-internal.
+- No `.mli` interfaces yet except `Level` and `Budget`;  `Global.add`
+  is public but documented as kernel-internal.
 - No cumulativity: concrete types live one universe up from where
   church-encoded tests want them.
 - Apache license text not vendored yet (README notes dual intent).
 - Errors carry mostly pre-rendered strings, not structured values (the
   M2 variants add small records).  Fine at this scale;  revisit when the
   elaborator wants error recovery.
+- Pin 5's cost half is unpinned (review round 2026-09-03).  Tests pin
+  that a memo HIT returns the cached `e_val`;  no timing leg pins what
+  a re-derive would cost.  The Stage B M9 mutation re-derived at
+  6.212 s against the healthy 0.034 s (183x) and every leg stayed
+  green (FAST ceiling 10 s).  The `gate_timed` MEASURE line is the
+  manual instrument until a leg pins it.
 - Retired (M4 fixes round 2, opus R2;  completed round 3, opus R3-2):
   the CLI file-open no longer raises, and no longer blocks, on ANY
   path.  `surface/source.ml`'s `read` classifies a path before reading
@@ -1042,13 +1444,13 @@ section 6 plus `dev/M3-PLAN.md`'s own additions):
 - `Div` typing gives provenance, not a termination proof.  A guard can
   still hang on a crafted regex, so the calling harness keeps a
   `timeout`.
-- JSON conformance gaps (recorded by the M3 fixes' C5' doc sweep;
-  `lib/interp.ml`'s comments already referred here): `jsonParse`
-  supports no `\uXXXX` unicode escapes, and `jsonSerialize` escapes
-  only `Pp.escape_string`'s set (backslash, quote, newline, tab),
-  which covers every string `jsonParse` can itself produce but not
-  other control characters reachable from string literals.  A
-  conformance suite is M4+ work.
+- Retired (M5 Stage A;  this is the M3-era statement of the same debt
+  the "JSON conformance suite" bullet below records, retired with it
+  so no stale claim survives): `jsonParse` now decodes `\uXXXX` with
+  surrogate PAIRS and returns `none` on a lone surrogate or a short
+  escape, and the serializer escapes through `Json_escape.string`
+  (all of C0), not `Pp.escape_string`'s four-character set.  See the
+  dated section 2 entries and the retirement below.
 - Json cons cells (`data Json`, its own `jarrCons`/`jobjCons` spine)
   duplicate the `List` combinators until nested inductives land.  The
   accessor names (`jsonGet`, `jsonToList`, ...) are chosen so the
@@ -1138,13 +1540,22 @@ section 6 plus `dev/M3-PLAN.md`'s own additions):
   protects only defs that neither an eval item nor `main`
   transitively forces (M3 fixes round 3, O5): an eval item forces
   its expression's dependencies transitively, exactly like `main`.
-- `tot check` has no compute budget: kernel conversion can be driven
-  to unbounded work by `reducible` definitions (M3 fixes round 2,
-  R3;  inherent to dependent checking, shared with Coq and Lean).
-  Opaque-by-default is the mitigation;  a driver-level fuel or
-  wall-clock budget flag for check mode is M4 work.  Until then,
-  hook installations should wrap `tot` in an external `timeout`,
-  exactly as decision 13 already prescribes for hung guards.
+- Retired (M5 Stage C): `tot check` HAS a compute budget now.
+  `--check-budget-ms N` (default 0, off) cuts elaboration and
+  checking at kernel-node granularity with the reserved exit 3 and
+  ONE exact stderr line, `<path>: check budget exhausted (<N> ms)`,
+  OUTSIDE the `--serror-exit` mapping;  the LINE, not the code
+  alone, is the discriminator a hook matches, because `exitWith`
+  lets a script exit any code in 0..255 (amendment A1, design pins
+  10 and 19;  `PASS-M5C-BUDGET-FIRES`).  The budget is a
+  node-granular cutoff and NOT a real-time guarantee, so the
+  external `timeout` around a hook install STAYS as the belt over
+  one pathological `Eval` or `Conv` call (pin 9;  the old claim that
+  a wrapper timeout "suffices" is retracted in the other direction
+  too: a wrapper alone gave exit 124 with two empty channels, no
+  verdict).  Opaque-by-default remains the underlying mitigation for
+  `reducible`-driven conversion blowup, which is inherent to
+  dependent checking and shared with Coq and Lean.
 - A MISSPELLED `main` (`mian`, `Main`, ...) is an ordinary def: the
   script stays script mode and exits 0, so a typo'd guard is still a
   silent permit-all BY DEFAULT (M3 fixes, C1';  the reserved-name check
@@ -1202,45 +1613,104 @@ Known debts entering M5 (M4, carried from `dev/M4-PLAN.md`'s own
 "Known debts entering M5" section):
 
 - The `Frozen` emptiness claim stays UNPROVEN (M4 Stage C's own dated
-  entry).  The fence is syntactic and the backstop is executable;
-  revisit if mutual or nested inductives ever land, since either could
-  open a gap the current fence does not cover.
+  entry;  restated through M5).  The fence is syntactic and the
+  backstop is executable;  revisit if mutual or nested inductives
+  ever land, since either could open a gap the current fence does
+  not cover.  M5 ties it to well-founded recursion: on every def M5
+  can construct, `Frozen` is dead code, so promoting it to a
+  definition-time error buys nothing until `Acc` values appear at
+  erased quantity, which is exactly what the Stage E spike sizes.
 - The `$`-mangled instance namespace (M4 Stage D) is flat, matching the
   flat global namespace.  There are no per-module instances because
   there are no modules.
 - No holes, again (a pre-M4 debt too): every proof names its type
-  arguments.  Measure after M4;  holes stay an M5 candidate.
+  arguments.  The "measure after M4" instruction is DISCHARGED here
+  (M5 Stage D, scope item 11).  `python3 dev/hole-anchors.py` (add
+  `--log <path>` for the machine line, `--count-sites` for the
+  independent recount) statically classifies every leading erased
+  `Type` anchor argument over stdlib/prelude.tot plus
+  examples/*.tot;  measured 2026-09-02:
+  ANCHORS total=98 expected-type-only=59 argument-driven=9
+  neither=30.  E = 59 is an UPPER bound on what an
+  expected-type-only hole pass would solve, because the classifier
+  does not run the checker.  The two structural reasons a hole pass
+  is real work stand: `infer`'s App arm consumes one argument at a
+  time and evaluates the stamped argument to instantiate the
+  codomain (lib/check.ml:770-779), and `check` has no App arm at
+  all, so argument-driven anchors need bidirectional application
+  checking that does not exist today.  Holes stay a candidate,
+  now with a number attached (`PASS-M5D-HOLE-ANCHORS`,
+  `PASS-M5D-MEASURE-LOG`).
 - Frozen-guard fixtures (M4 Stage C: m4c-frozen.tot and friends) must be
   maintained as the erasure story evolves.
 - Nested inductives and the `Json` cons-cell migration to
-  `jarr : List Json -> Json` (a pre-M4 debt, restated): waits for the M5
-  positivity door.
+  `jarr : List Json -> Json` (a pre-M4 debt, restated): the door
+  stays SHUT through M5, and the recorded REASON is corrected here
+  (design pin 14).  The gap is the MUTUAL gap: `Totality.mentions`
+  tests only the family's OWN name (lib/check.ml:1828), so a
+  recursive PAIR of families reads as non-self-recursive.  It is NOT
+  a nesting gap, and the earlier text claiming so was wrong:
+  `Totality.mentions` recurses into both halves of `App`
+  (lib/totality.ml:52), so `jarr : List Json -> Json` gives
+  `self_rec = true` already.  This entry replaces the losing claim.
 - The bounded regex engine.  `Str` stays single-threaded-safe;  the
   replacement is its own mini-milestone.
-- The JSON conformance suite (no `\uXXXX` escapes, partial serializer
-  escaping;  a pre-M4 debt, restated).
-- The check-budget flag (a pre-M4 debt, restated).  A driver wrapper
-  `timeout` suffices for hooks today.
+- Retired (M5 Stage A): the JSON conformance suite.  The parser
+  accepts `\uXXXX` with surrogate-pair decoding and returns `none`
+  on a lone surrogate or a short escape;  the serializer and the
+  verdict envelope quote through `Json_escape.string` (RFC 8259
+  short forms plus `\u00XX` for the rest of C0), while
+  `Pp.escape_string` stays the SOURCE escaper (design pin 13).
+  Pinned by `PASS-M5A-BYPASS` (the live `grep` escape bypass,
+  now denied) and `PASS-M5A-ENVELOPE-VALID` (envelope and serializer
+  each satisfy a conforming parser, proved site-independently).
+- Raw C0 bytes inside a parsed JSON string body are ACCEPTED (M5
+  Stage A, a deliberate non-change;  section 2 records the reasons and
+  the decoded-NUL allow behaviour).  RFC 8259 forbids them;  revisit
+  only against a measured exploit.
+- `Cache.format_version` stayed 10 through M5 Stage A (a deliberate
+  no-bump;  section 2 records the five reasons), so a reviewer must
+  not read the missing bump as an oversight.
 - The prim catalog's unverified trust boundary (a pre-M4 debt,
   restated).
 - `Div` typing gives provenance, not a termination proof (a pre-M4
   debt, restated).
-- Well-founded recursion, now UNBLOCKED by indexed families (M4 Stage
-  A): an M5 candidate, not scheduled.
-- `--require-main` is ADVISORY under a fail-open exit mapping (M4 fixes
-  round 2, opus R4).  A file that exists but declares no `main` is
-  routed through `serror_exit`, so `tot check --require-main
-  --serror-exit 0 ok.tot` writes the "this file must define a driver
-  main" line to stderr and exits 0, which a hook reads as allow.  The
-  missing-FILE branch is deliberately outside that mapping;  a mainless
-  file is not, because it is a script-level verdict about content, not
-  a driver-level verdict about the target's usability.  An operator who
-  wants a mainless script to FAIL open-mapped must leave
-  `--serror-exit` at its default.  Repro:
-  `printf 'def x : Bool := true\n' > ok.tot;
-  tot check --require-main --serror-exit 0 ok.tot; echo $?` prints 0.
-  Changing it is a behavior change to a shipped flag, so it waits for a
-  deliberate decision rather than riding a fix round.
+- Well-founded recursion: SCHEDULED as an M5 SPIKE, not a feature
+  (amendment A4, design pin 22, owned by M5 Stage E).  The spike
+  lives behind an experimental flag;  the default path stays
+  byte-identical, and the panel's divergence witness is a pinned
+  NEGATIVE under the flag (measured on this binary 2026-09-02: the
+  positivity-passing `data TT := | mk : (w f : Nat -> TT) -> TT`
+  declares at exit 0 and the recursive def over it fails the
+  structural termination guard at exit 1, so the guard alone rejects
+  it today).  Proposal 1's evidence stands: `Acc` (indexed families,
+  M4 Stage A) checks today at exit 0, and only `Totality.guard`
+  rejects `accRec`.  DELIVERED by Stage E (design pin 22): what the
+  spike MEASURED is in the dated section 2 Stage E block (the M1
+  shape table, 2 of 4 rows flip;  the M2 cost medians with the
+  byte-identical default transcript;  the M3 `Frozen_rec` coupling),
+  and what it did NOT close is: a sound admission rule (the prototype
+  clause inspects the head's status, never the field's type, so it
+  admits infinitary structural recursion `bad2` alongside `accRec`);
+  the indexed-family relation gap (`R` demands `w`-quantity domains,
+  an indexed family stamps `0`);  and the erased elimination form for
+  `Acc` (coupled to the subsingleton fence).  M6 either promotes the
+  prototype behind a sound side condition or deletes the flag;  no
+  stage may promote the spike to a shipped feature.
+- Retired (M5 Stage C, design pin 21, amendment A3): `--require-main`
+  was ADVISORY under a fail-open exit mapping (M4 fixes round 2, opus
+  R4).  A file that exists but declares no `main` was routed through
+  `serror_exit`, so `tot check --require-main --serror-exit 0 ok.tot`
+  wrote the "this file must define a driver main" line to stderr and
+  exited 0, which a hook reads as allow;  executed on M4 HEAD, that
+  repro did print 0.  On 2026-09-02 amendment A3 moved the mainless
+  verdict onto the DRIVER contract, exactly like a missing file: the
+  same stderr line, byte for byte, and the literal exit 1, outside the
+  mapping.  New repro: `printf 'def x : Bool := true\n' > ok.tot;
+  tot check --require-main --serror-exit 0 ok.tot; echo $?` prints 1,
+  with one stderr line.  An ordinary script error keeps the mapping
+  (`PASS-M5C-REQUIRE-MAIN-OK`;  `PASS-M5C-REQUIRE-MAIN-DRIVER` pins
+  the four driver invocations).
 - Retired (M4 fixes round 3, opus R3-1): the `(class, key)` instance
   MEMO is IMPLEMENTED.  `Check.resolve_auto` threads an immutable map
   beside the fuel, scoped to one `Term.Auto`, keyed on the class name
@@ -1264,49 +1734,91 @@ Known debts entering M5 (M4, carried from `dev/M4-PLAN.md`'s own
   fire on legitimate input" is the round-3 INTENT, not an achieved
   property: M4 fixes round 6 measured a leaf on the class-count
   dimension where it still does, and the entry below records it.
-- What remains after that memo is a TERM SIZE limit, not a resolution
-  one (M4 fixes round 3, opus R3-1).  A branching telescope's resolved
-  dictionary is a binary tree: `(0 A : Type 0) -> C A -> C A ->
-  C (Box A)` at nesting n emits a term of 2^n nodes however fast the
-  walk that built it was, because `Term.t` has no sharing.  Resolution
-  is now linear in n, but the mandatory re-check of the resolved
-  candidate, its evaluation and its erasure are each linear in that
-  emitted TERM.  Measured on `test/fixtures/m4fix-inst-branching.tot`
-  (nesting 20, about a million nodes): 19.6s total, of which 16.8s is
-  the re-check and 2.8s everything else;  nesting 16 is 1.03s and
-  nesting 12 is 0.064s.  Non-branching shapes are unaffected at any
-  depth (nesting 400 in 3.7s, unchanged since round 1).  Term-level
-  sharing (a `let`-nest over the memo's own entries, or hash-consing)
-  is the fix and is an M5 candidate;  it needs de Bruijn shifting over
-  a term the memo currently stores at one fixed context depth, which is
-  why it did not ride a fix round.  Pinned by
-  `PASS-M4FIX-INST-BRANCHING` (resolution required, 60s budget) and, at
-  depths whose emitted term is small, by `PASS-M4FIX-INST-SPEC16`,
-  `PASS-M4FIX-INST-TWOCLASS`, `PASS-M4FIX-INST-CHAINS` and
-  `PASS-M4FIX-INST-SMALL-REACH`.
+- What remained after that memo was a TERM SIZE limit, not a
+  resolution one (M4 fixes round 3, opus R3-1) -- PAID by M5 Stage B
+  (design pins 1 to 6), with the numbers restated here at the SAME
+  shapes so the before and after compare.  A branching telescope's
+  resolved dictionary is a binary tree: `(0 A : Type 0) -> C A ->
+  C A -> C (Box A)` at nesting n used to emit a term of 2^n nodes,
+  because `Term.t` has no sharing (still true: pin 1 leaves `Term.t`
+  unchanged).  The `Auto` site now emits a LOCAL `let`-nest over the
+  memo's own entries instead, and the fix is that nest, NOT
+  hash-consing: physical identity does not survive `Marshal`.  The
+  mandatory re-check, evaluation and erasure walk the nest, whose
+  size is quadratic in n, not exponential: `term_size` 694 at
+  nesting 16 against the un-shared 458714 (`PASS-M5B-SHARE-SIZE`).
+  Measured on this binary 2026-09-02 (dev/gen-inst-branching.py, the
+  m4fix-inst-branching shape;  M4 numbers in parens): nesting 20
+  checks in 0.07s and runs in 0.15s (was 19.6s total, 16.8s of it
+  the re-check);  nesting 16 in about 0.08s (was 1.03s);  nesting 12
+  in about 0.02s (was 0.064s).  Non-branching shapes were unaffected
+  before and stay unaffected.  Pinned by `PASS-M5B-BRANCHING-20`
+  (nesting 20 under the FAST tier, about 300x headroom),
+  `PASS-M4FIX-INST-BRANCHING` and, at depths whose emitted term is
+  small, by `PASS-M4FIX-INST-SPEC16`, `PASS-M4FIX-INST-TWOCLASS`,
+  `PASS-M4FIX-INST-CHAINS` and `PASS-M4FIX-INST-SMALL-REACH`.
 - `Check.inst_fuel` is a backstop with MEASURED margins, and neither an
-  unreachable one nor a time budget (M4 fixes round 6, opus R6-1;  this
-  one entry carries both halves, because the same walk pays them).
-  Reach: the bound clears every shipped gate shape with a recorded
-  margin (`PASS-M4FIX-INST-WIDE` at L = 2500, `PASS-M4FIX-INST-CLASSES`
-  at K = 57, D9f's charge of about 10710 against a bound of 147312), but
-  a WIDE-CLASS query rejects beyond a measured leaf: on the generated
-  shape of `dev/gen-inst-fuel.py classes K`, K = 60 resolves and K = 61
-  reports `Inst_depth` even though K = 61 is registrable and its walk is
-  structurally terminating.  Round 5's product term moved that leaf by
-  under 10 percent (round-4 bisection K = 56 / K = 57;  a round-6
-  differential reverting only the width term, K = 55 / K = 56), because
-  the class count enters the CHARGE through both the (class, key) pair
-  count and the telescope length while every term of the bound is linear
-  in `per_key`.  The pinned K = 57 therefore sits three classes under
-  the leaf, about 5 percent, and the leaf must be re-measured whenever
-  `build_instance`'s charge accounting or `inst_fuel` changes (the gate
-  comment carries the recipe).  Time: the counter is fuel, not wall
-  clock, so a large LEGITIMATE resolution buys unbounded time with no
-  verdict.  A sub-2 KB doubling type costs 41.4s at depth 18 at exit 0,
-  and a plain LINEAR chain of about 800 nested boxes (7.2 KB, the
-  `m4fix-inst-chains` shape) exceeds a 60s budget with no verdict at
-  all, exit 124.  Closing either half is M5 work: hash consing for the
-  cost, and the driver-level check budget above for the cutoff.  Until
-  then a hook installation wraps `tot` in an external `timeout`, exactly
-  as decision 13 prescribes.
+  unreachable one nor a time budget (M4 fixes round 6, opus R6-1;
+  updated M5 Stage C;  this one entry carries both halves, because the
+  same walk pays them).  Reach: M5 Stage C multiplied the round-5
+  shape by `1 + class_count` (section 2's dated entry), paying the M4
+  leaf: on the generated shape of `dev/gen-inst-fuel.py classes K`,
+  the measured M4 leaf was K = 60 resolving and K = 61 reporting
+  `Inst_depth`, and BOTH now resolve.  The re-bisection
+  (`dev/bisect-inst-classes.sh`: doublings 61, 122, 244, 488 under an
+  8 MB file ceiling and a 120 s probe ceiling) found NO rejecting K:
+  NOLEAF<=488, measured 2026-09-02 on this binary.  On this shape the
+  charge and the bound are both about quadratic in K, so this is a
+  measurement, not a proof;  re-run the bisection whenever
+  `build_instance`'s charge accounting or `inst_fuel` changes
+  (`PASS-M5C-LEAF-MARGIN`'s comment carries the probe table and the
+  recipe;  its pin K = 122 is bound by the 1 MB affordability
+  ceiling, not by a margin, since no leaf exists to keep a margin
+  under;  `PASS-M4FIX-INST-CLASSES` keeps its K = 57 fixture, a gate
+  that got cheaper to pass and is still a gate).  Time: the counter
+  is fuel, not wall clock, so a large LEGITIMATE resolution still
+  buys wall clock;  what M5 Stage C changed is that the operator now
+  GETS A VERDICT where exit 124 and two empty channels used to be.
+  The same 800-box linear chain (7.2 KB, the `m4fix-inst-chains`
+  shape) that exceeded a 60 s external `timeout` with both channels
+  empty on M4 HEAD now reports
+  `<path>: check budget exhausted (<N> ms)` at the reserved exit 3
+  under `--check-budget-ms N` (`PASS-M5C-BUDGET-FIRES`).  The budget
+  covers elaboration and checking only;  decision 13's external
+  `timeout` stays the belt for `Interp` execution and for any single
+  non-polling call.
+
+New debts created by M5 Stage D (deliberate, each with its
+compensating instrument):
+
+- Tier slack.  39 of the 125 executable gate legs now carry a larger
+  hang ceiling than their old literal (8 moved 5 to 10, 26 moved 15
+  to 30, 1 moved 20 to 30, 4 moved 60 to 120;  measured at Stage D
+  entry, the plan-time count over the M4 corpus was 37 of 86).  A
+  leg that doubles in runtime can stay green where it used to go
+  red.  The compensating instruments are the measurement log, which
+  records elapsed wall time per wrapped perf run on every battery
+  (`gate_timed`, `PASS-M5D-MEASURE-LOG`), and
+  `PASS-M5B-SHARE-SIZE`, which is machine-independent and survives
+  any later tier relaxation.
+- The rewrap guard is a narrow port (plan D4).  Both directions of
+  the difference from the Python guard are recorded: LOUDER on a
+  pre-existing rewrap tail inside a heredoc (no net-new comparison),
+  QUIETER on a single-line `let x = e?; Ok(x)` tail (the line-pair
+  shape needs two lines).  The scrubber, the block-tail test and the
+  used-name test are not ported.
+- The echoed command is bounded at 2000 bytes and the elision marker
+  `... (elided)` is prose, not a machine-readable flag.  A consumer
+  cannot tell an elided command from one that genuinely ends in that
+  literal text.
+- Guard helper duplication.  `firstNonEmpty`, `lastOr`, `splitEach`,
+  `firstToken`, `orEmpty` and `elideAt` now exist in two example
+  files, because there are no modules and the global namespace is
+  flat.  A fix to one is a fix to neither until somebody copies it.
+  The prelude is the natural home and the move is a cache-format
+  change, so it waits.
+- Key-TYPE sharing stays unspent (design pin 7).  Stage B's exit
+  measurement (term_size 694 against the 4000 gate) left no need to
+  share the per-slot key TYPES through the same materializer;  the
+  option is recorded here and needs no new design if a later corpus
+  reopens it.

@@ -33,6 +33,20 @@ end, reading a JSON tool-call payload on stdin and rendering an
 `allow`/`ask`/`deny` verdict;  `examples/guard-classes.tot` reruns it
 with the flagged command list behind a type class and two `Eq` proofs.
 
+M5 adds a third hook, `examples/guard-rewrap.tot`: a NARROW port of
+the house map-over-rewrap Bash guard.  It denies a Bash command that
+writes a `.rs` file whose text pairs a `let x = <expr>?;` line
+directly with an `Ok(...)` line, and fails open on everything else;
+the deny reason echoes the offending command, bounded at 2000 bytes
+and quoted by the JSON escaper.  Installing it is the operator's
+step, not the repo's;  the PreToolUse hook entry looks like this
+(the external `timeout` stays, by design):
+
+```json
+{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command",
+  "command": "timeout 10 tot run /path/to/tot/examples/guard-rewrap.tot"}]}]}}
+```
+
 ## Build and run
 
 ```

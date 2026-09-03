@@ -65,6 +65,35 @@ def usesBanned : String -> Bool :=
     orb (stringEq (baseName (firstToken cmd)) "grep")
         (stringEq (baseName (firstToken cmd)) "sed")
 
+-- M5 Stage D (plan D3): the deny reason now ECHOES the blocked
+-- command, bounded and re-escaped, so the operator reads what was
+-- denied without trusting the attacker's bytes: the echo rides the
+-- envelope through the Stage A JSON escaper, so a control byte goes
+-- out as its \uXXXX escape and never raw (gate PASS-M5D-GUARD-ECHO
+-- round-trips the envelope through this same binary).
+
+-- Unwrap a bounds-checked slice.  stringSlice is partial by type
+-- (Option String) and total by behaviour: it returns none for any
+-- out-of-range window (stringSlice "abc" 0 99 = none, and a negative
+-- start is none too), so this default is unreachable for the windows
+-- elideAt builds and is a backstop, not a fallback.
+def orEmpty : Option String -> String :=
+  fun o => match o with | none => "" | some s => s end
+
+-- Bound the echoed command at 2000 bytes, the house elision width
+-- (M4 fixes round 5).  intCompare returns Ordering, so all three
+-- arms are named and no arm is a wildcard.  Arm order is lt, eq, gt:
+-- tot pins match arms to declaration order (the plan's gt-first
+-- spelling is a parse-time reject; conflict note in
+-- dev/M5-BUILD-LOG.md).
+def elideAt : Int -> String -> String :=
+  fun n s =>
+    match intCompare (stringLength s) n with
+    | lt => s
+    | eq => s
+    | gt => stringConcat (orEmpty (stringSlice s 0 n)) "... (elided)"
+    end
+
 def decide : Json -> Verdict :=
   fun payload =>
     match jsonGetString payload "tool_name" with
@@ -76,7 +105,10 @@ def decide : Json -> Verdict :=
             | none => allow
             | some ti =>
                 match usesBanned (jsonGetStringOr ti "command" "") with
-                | true => deny "house rule: use rg instead of grep and sd instead of sed"
+                | true =>
+                    deny (stringConcat
+                            "house rule: use rg instead of grep and sd instead of sed (command: "
+                            (stringConcat (elideAt 2000 (jsonGetStringOr ti "command" "")) ")"))
                 | false => allow
                 end
             end
@@ -91,6 +123,12 @@ def decide : Json -> Verdict :=
 -- live PreToolUse hooks already take on a decode error: a guard must
 -- never convert its own parse failure into a deny. The same posture
 -- applies inside decide when tool_name or tool_input is missing.
+-- M5 Stage A (pin 20): an installation that wants fail-CLOSED spells
+-- the hook command `tot run --strict-json <this file>` instead; the
+-- DRIVER then denies (exit 2) any stdin payload that is not one
+-- well-formed JSON value BEFORE main runs, so the none branch below
+-- is reached only under the default fail-open posture.  This file
+-- itself is unchanged: the flag lives in the driver, not here.
 def main : IO Verdict :=
   let* String Verdict raw := readStdin in
   let* (Option Json) Verdict parsed := liftIO (Option Json) (jsonParse raw) in

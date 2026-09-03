@@ -272,6 +272,20 @@ and quote (globals : Global.t) (size : int) (v : Value.t) : (Term.t, Error.t) re
 
 and conv (globals : Global.t) (size : int) (a : Value.t) (b : Value.t) :
     (bool, Error.t) result =
+  (* M5 Stage B: physical identity implies structural identity implies
+     convertibility, so this arm is sound for every value shape. It
+     pays for the let-nest: the nest binds one value per entry, so two
+     uses of one dictionary are one pointer and the deep comparison is
+     skipped whole. *)
+  match () with
+  | () when a == b -> Ok true
+  | () -> conv_shapes globals size a b
+
+(** The shape-directed half of [conv].  Every recursive call inside it
+    goes back through [conv], so the physical-equality shortcut applies
+    at every depth, not only at the root. *)
+and conv_shapes (globals : Global.t) (size : int) (a : Value.t) (b : Value.t) :
+    (bool, Error.t) result =
   match (a, b) with
   | Value.VUniv l1, Value.VUniv l2 -> Ok (Level.equal l1 l2)
   | Value.VPi (q1, _x1, dom1, clo1), Value.VPi (q2, _x2, dom2, clo2) ->

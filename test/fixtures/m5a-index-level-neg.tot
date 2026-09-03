@@ -1,0 +1,4 @@
+-- M5 Stage A, gate PASS-M5A-PARAM-LEVEL (design pin 16), second
+-- negative: an INDEX whose type is "Type 0" (level 1) on a level-0
+-- family stays Index_above_universe (lib/check.ml:1591).
+data IBad : (0 t : Type 0) -> Type 0 := | imk : IBad Nat

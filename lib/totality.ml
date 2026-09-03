@@ -5,6 +5,15 @@
     whose argument [k] is a variable made structurally smaller by a match
     on the principal (or on something already smaller). *)
 
+(** M5 Stage E (SPIKE): which totality rule [guard] runs.  [Structural]
+    is the shipped M2 rule, byte for byte.  [Structural_wf] adds the
+    PROTOTYPE accessibility clause and is reachable only through
+    --experimental-wf.  The prototype admits shapes the shipped rule
+    rejects; SPEC section 2's Stage E entry records which ones. *)
+type rule =
+  | Structural
+  | Structural_wf
+
 (** Status of one binder, tracked newest first alongside de Bruijn use. *)
 type status =
   | Principal  (** the candidate formal itself *)
@@ -63,7 +72,8 @@ let rec mentions (name : string) (t : Term.t) : bool =
 let status_at (st : status list) (ix : int) : status option = List.nth_opt st ix
 
 (** Does candidate position [k] guard every recursive occurrence? *)
-let passes ~(recname : string) (k : int) (formals : int) (body : Term.t) : bool =
+let passes ~(rule : rule) ~(recname : string) (k : int) (formals : int) (body : Term.t) :
+    bool =
   let smaller_at (st : status list) (ix : int) : bool =
     status_at st ix
     |> Option.fold ~none:false ~some:(fun s ->
@@ -84,10 +94,28 @@ let passes ~(recname : string) (k : int) (formals : int) (body : Term.t) : bool 
     |> Option.fold ~none:false ~some:(fun a ->
            match a with
            | Term.Var ix -> smaller_at st ix
+           | Term.App (_, _, _) -> (
+               (* M5 Stage E (SPIKE): the accessibility clause.  A call
+                  whose argument k applies a match-bound field of the
+                  scrutinee is the accRec shape.  Reachable only at
+                  [Structural_wf]. *)
+               match rule with
+               | Structural -> false
+               | Structural_wf -> (
+                   let head, _sub = spine a [] in
+                   match head with
+                   | Term.Var ix -> smaller_at st ix
+                   | Term.Univ _ | Term.Auto
+                   | Term.Pi (_, _, _, _)
+                   | Term.Lam (_, _, _)
+                   | Term.App (_, _, _)
+                   | Term.Let (_, _, _, _)
+                   | Term.Ann (_, _)
+                   | Term.Global _ | Term.Match _ | Term.Lit _ ->
+                       false))
            | Term.Univ _ | Term.Auto
            | Term.Pi (_, _, _, _)
            | Term.Lam (_, _, _)
-           | Term.App (_, _, _)
            | Term.Let (_, _, _, _)
            | Term.Ann (_, _)
            | Term.Global _ | Term.Match _ | Term.Lit _ ->
@@ -159,13 +187,16 @@ let passes ~(recname : string) (k : int) (formals : int) (body : Term.t) : bool 
   ok seed body
 
 (** Find the first formal position (0-based, outermost first) on which the
-    stamped body of [def rec recname] is structurally recursive. *)
-let guard ~(recname : string) (body : Term.t) : (int, Error.t) result =
+    stamped body of [def rec recname] is structurally recursive.  [rule]
+    selects the totality rule (M5 Stage E): [Structural] is the shipped
+    behaviour, [Structural_wf] the measured prototype behind
+    --experimental-wf. *)
+let guard ~(rule : rule) ~(recname : string) (body : Term.t) : (int, Error.t) result =
   let formals, inner = peel 0 body in
   let rec first_fit (k : int) : (int, Error.t) result =
     match () with
     | () when k >= formals -> Error (Error.Termination recname)
-    | () when passes ~recname k formals inner -> Ok k
+    | () when passes ~rule ~recname k formals inner -> Ok k
     | () -> first_fit (k + 1)
   in
   first_fit 0

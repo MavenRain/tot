@@ -23,6 +23,63 @@ if [ -z "$watchdog" ]; then
   echo "FAIL-WATCHDOG (no timeout/gtimeout on PATH)"
   exit 1
 fi
+# M5 Stage D (design pin 17): named watchdog tiers. Every leg names
+# a tier. No numeric watchdog literal survives in this file, which
+# PASS-M5D-TIERS asserts on EXIT STATUS.
+#
+# A tier is a HANG ceiling, not a performance budget. Pin 9 keeps
+# the external timeout as the belt over one pathological Eval or
+# Conv call; the tiers are the same belt inside the battery. A leg
+# that creeps from 1s to 9s stays green at FAST and shows up in the
+# measurement log instead, which is what gate_timed is for.
+#
+#   FAST  a leg that must finish well under a second.
+#   MED   a leg that runs the CLI more than once, or over a fixture.
+#   SLOW  a perf leg with a measured runtime in SPEC section 6.
+#   SUITE one of the two test executables.
+#
+# BITE_S is NOT a leg budget. It is the calibration constant that
+# PASS-M5D-TIER-BITES uses to prove the watchdog machinery still
+# cuts at the value a tier names. Nothing else may use it.
+FAST=10
+MED=30
+SLOW=120
+SUITE=300
+BITE_S=1
+# M5 Stage D (verdict item 6): per-leg measurement. gate_timed runs
+# ONE leg under a named tier, records elapsed wall time, and
+# forwards the leg's own stdout and exit code unchanged. It adds no
+# policy: a leg that was green stays green, and a leg that was red
+# stays red with the same output.
+#
+# 2026-09-03 (M5 review round): one adjudicated exception to the
+# next rule.  The two SUITE legs (SUITE-KERNEL, SUITE-SURFACE) had
+# no 2>&1 before Stage D; wrapping them in gate_timed added the
+# merge.  Accepted: the suite PASS oracles match whole lines, dune
+# writes no stderr on a warm build, and the Stage D whole-output
+# diff was adjudicated additions-only with the merge in place.
+#
+# Wrap ONLY a leg that already merges stderr into stdout (2>&1); the
+# merge moves inside gate_timed. The prelude legs and the M5C budget
+# legs split the two channels on purpose (byte-exact stderr oracles)
+# and must stay unwrapped; wrapping one would merge a channel the B4
+# channel rule keeps apart.
+typeset -F SECONDS
+GATE_LOG="${TOT_GATE_LOG:-${TMPDIR:-/tmp}/tot-gate-measure.log}"
+: > "$GATE_LOG" || exit 9
+gate_timed() {
+  local tier="$1"
+  local name="$2"
+  shift 2
+  local t0=$SECONDS
+  local out
+  out=$("$watchdog" "$tier" "$@" 2>&1)
+  local code=$?
+  printf 'MEASURE %s tier=%s elapsed=%.3f exit=%d\n' \
+    "$name" "$tier" "$((SECONDS - t0))" "$code" >> "$GATE_LOG"
+  printf '%s' "$out"
+  return $code
+}
 # dunecho test reports "0 run" on these custom runners (vacuous-pass trap):
 # run the test executables directly and require BOTH to exit 0.
 # M4 fixes round 5 (ctxcat r5 id 16): the kernel suite's watchdog is 300,
@@ -33,9 +90,9 @@ fi
 # 12x the observed runtime) instead of a performance gate that flakes on
 # ambient load, which is the exact failure PASS-M4FIX-INST-BRANCHING hit
 # in round 4.
-main_out=$("$watchdog" 300 dune exec --root "$ROOT" test/main.exe); t1=$?
+main_out=$(gate_timed "$SUITE" SUITE-KERNEL dune exec --root "$ROOT" test/main.exe); t1=$?
 printf '%s\n' "$main_out"
-surface_out=$("$watchdog" 120 dune exec --root "$ROOT" test/surface.exe); t2=$?
+surface_out=$(gate_timed "$SLOW" SUITE-SURFACE dune exec --root "$ROOT" test/surface.exe); t2=$?
 printf '%s\n' "$surface_out"
 { [ "$t1" -eq 0 ] && [ "$t2" -eq 0 ]; } && echo TEST-OK || { echo TEST-FAIL; exit 1; }
 # M3 Stage A gate (iv): stringConcat and intAdd compute correctly in
@@ -67,7 +124,7 @@ printf '%s\n' "$surface_out" | rg -q '^PASS A9: eval stringConcat computes$' \
 # readback, so an Interp exec/force/quote fault in a prelude def that
 # type-checks fine but explodes at execution time turns this marker
 # red (the regression class the old duplicated marker missed).
-out=$("$watchdog" 30 dune exec --root "$ROOT" test/surface.exe -- bootstrap-only 2>&1)
+out=$("$watchdog" "$MED" dune exec --root "$ROOT" test/surface.exe -- bootstrap-only 2>&1)
 [ $? -eq 0 ] && echo PASS-CHECK-PRELUDE \
   || { printf '%s\n' "$out"; echo FAIL-CHECK-PRELUDE; exit 1; }
 # M3 fixes round 3 (ctxcat id 17): stdout is captured ALONE and the
@@ -75,7 +132,7 @@ out=$("$watchdog" 30 dune exec --root "$ROOT" test/surface.exe -- bootstrap-only
 # dune notice, the R1 cache-disabled line) cannot turn a semantically
 # green run red; stderr goes to a temp file for the failure replay.
 prelude_err=$(mktemp "${TMPDIR:-/tmp}/tot-gate-prelude-run-err.XXXXXX")
-out=$("$watchdog" 30 dune exec --root "$ROOT" test/surface.exe -- gate-run "$ROOT"/test/fixtures/x2-prelude-run.tot 2> "$prelude_err")
+out=$("$watchdog" "$MED" dune exec --root "$ROOT" test/surface.exe -- gate-run "$ROOT"/test/fixtures/x2-prelude-run.tot 2> "$prelude_err")
 code=$?
 { [ "$code" -eq 0 ] && printf '%s\n' "$out" | rg -qx '\(succ \(succ \(succ zero\)\)\)'; } \
   && { rm -f "$prelude_err"; echo PASS-RUN-PRELUDE; } \
@@ -89,16 +146,16 @@ code=$?
 # via a temp file), so the marker can no longer pass or fail on a
 # divergence between two separate runs of the same failing bootstrap.
 berr_file=$(mktemp "${TMPDIR:-/tmp}/tot-gate-prelude-err.XXXXXX")
-bout=$(TOT_PRELUDE="$ROOT/nonexistent-prelude.tot" "$watchdog" 30 dune exec --root "$ROOT" bin/tot.exe -- check "$ROOT"/examples/church.tot 2> "$berr_file")
+bout=$(TOT_PRELUDE="$ROOT/nonexistent-prelude.tot" "$watchdog" "$MED" dune exec --root "$ROOT" bin/tot.exe -- check "$ROOT"/examples/church.tot 2> "$berr_file")
 bcode=$?
 berr=$(cat "$berr_file")
 rm -f "$berr_file"
 { [ "$bcode" -eq 1 ] && [ -z "$bout" ] && printf '%s\n' "$berr" | rg -q '^prelude: '; } \
   && echo PASS-PRELUDE-ERR-STDERR \
   || { printf '%s\n' "$berr"; echo "FAIL-PRELUDE-ERR-STDERR (exit=$bcode stdout=[$bout])"; exit 1; }
-out=$("$watchdog" 30 dune exec --root "$ROOT" bin/tot.exe -- check "$ROOT"/examples/church.tot 2>&1)
+out=$("$watchdog" "$MED" dune exec --root "$ROOT" bin/tot.exe -- check "$ROOT"/examples/church.tot 2>&1)
 [ $? -eq 0 ] && echo PASS-CHECK-CHURCH || { printf '%s\n' "$out"; echo FAIL-CHECK-CHURCH; exit 1; }
-out=$("$watchdog" 30 dune exec --root "$ROOT" bin/tot.exe -- run "$ROOT"/examples/church.tot 2>&1)
+out=$("$watchdog" "$MED" dune exec --root "$ROOT" bin/tot.exe -- run "$ROOT"/examples/church.tot 2>&1)
 [ $? -eq 0 ] && echo PASS-RUN-CHURCH || { printf '%s\n' "$out"; echo FAIL-RUN-CHURCH; exit 1; }
 # M3 Stage D, D1: bin/tot.exe now auto-loads the prelude by default
 # (Bootstrap.cached_state ()); examples/nat.tot is a kernel-test-style
@@ -106,9 +163,9 @@ out=$("$watchdog" 30 dune exec --root "$ROOT" bin/tot.exe -- run "$ROOT"/example
 # otherwise collide with the prelude's own "Nat" (Duplicate_global).
 # --no-prelude (decision 14) keeps it on the bare M2-only environment,
 # exactly as before this stage.
-out=$("$watchdog" 30 dune exec --root "$ROOT" bin/tot.exe -- check --no-prelude "$ROOT"/examples/nat.tot 2>&1)
+out=$("$watchdog" "$MED" dune exec --root "$ROOT" bin/tot.exe -- check --no-prelude "$ROOT"/examples/nat.tot 2>&1)
 [ $? -eq 0 ] && echo PASS-CHECK-NAT || { printf '%s\n' "$out"; echo FAIL-CHECK-NAT; exit 1; }
-out=$("$watchdog" 30 dune exec --root "$ROOT" bin/tot.exe -- run --no-prelude "$ROOT"/examples/nat.tot 2>&1)
+out=$("$watchdog" "$MED" dune exec --root "$ROOT" bin/tot.exe -- run --no-prelude "$ROOT"/examples/nat.tot 2>&1)
 [ $? -eq 0 ] && echo PASS-RUN-NAT || { printf '%s\n' "$out"; echo FAIL-RUN-NAT; exit 1; }
 echo SCRIPTS-OK
 # M3 Stage B gate (process level, because these are OS-observed): the
@@ -122,7 +179,7 @@ echo SCRIPTS-OK
 # exitWith (stringLength raw), fed "hello\n" (6 bytes) via a
 # here-doc, so a pass proves real sequencing occurred, not a
 # hardcoded constant.
-out=$("$watchdog" 30 dune exec --root "$ROOT" test/surface.exe -- gate-run "$ROOT"/test/fixtures/b-stdin-chain.tot <<'EOF'
+out=$("$watchdog" "$MED" dune exec --root "$ROOT" test/surface.exe -- gate-run "$ROOT"/test/fixtures/b-stdin-chain.tot <<'EOF'
 hello
 EOF
 )
@@ -141,11 +198,11 @@ code=$?
 # recreate left the predictable path unowned between gates, a symlink
 # TOCTOU window on a shared /tmp fallback.
 sentinel=$(mktemp "${TMPDIR:-/tmp}/tot-gate-b-sentinel.XXXXXX")
-"$watchdog" 30 dune exec --root "$ROOT" test/surface.exe -- gate-check "$ROOT"/test/fixtures/b-sentinel.tot > "$sentinel" 2>&1
+"$watchdog" "$MED" dune exec --root "$ROOT" test/surface.exe -- gate-check "$ROOT"/test/fixtures/b-sentinel.tot > "$sentinel" 2>&1
 c1=$?
 { [ "$c1" -eq 0 ] && ! rg -q 'SENTINEL-WRITTEN' "$sentinel"; } \
   || { cat "$sentinel"; echo FAIL-B-NOEFFECT; rm -f "$sentinel"; exit 1; }
-"$watchdog" 30 dune exec --root "$ROOT" test/surface.exe -- gate-run "$ROOT"/test/fixtures/b-sentinel.tot > "$sentinel" 2>&1
+"$watchdog" "$MED" dune exec --root "$ROOT" test/surface.exe -- gate-run "$ROOT"/test/fixtures/b-sentinel.tot > "$sentinel" 2>&1
 c2=$?
 { [ "$c2" -eq 0 ] && rg -qx 'SENTINEL-WRITTEN' "$sentinel"; } && echo PASS-B-NOEFFECT \
   || { cat "$sentinel"; echo FAIL-B-NOEFFECT; rm -f "$sentinel"; exit 1; }
@@ -161,7 +218,7 @@ rm -f "$sentinel"
 # hanging the whole battery); the elapsed check stays as the tighter
 # in-bound assertion.
 t0=$(date +%s)
-"$watchdog" 10 dune exec --root "$ROOT" test/surface.exe -- gate-check "$ROOT"/test/fixtures/b-deferred-div.tot > /dev/null 2>&1
+"$watchdog" "$FAST" dune exec --root "$ROOT" test/surface.exe -- gate-check "$ROOT"/test/fixtures/b-deferred-div.tot > /dev/null 2>&1
 c3=$?
 t1=$(date +%s)
 elapsed=$((t1 - t0))
@@ -176,7 +233,7 @@ elapsed=$((t1 - t0))
 # in dev/M3-FIXES-LOG.md: exit 124 under a 10s watchdog). Requires
 # exit 0, the pinned computed line, AND the coarse 5s bound.
 t0=$(date +%s)
-out=$("$watchdog" 30 dune exec --root "$ROOT" test/surface.exe -- gate-run "$ROOT"/test/fixtures/x3-div-chain.tot 2>&1)
+out=$("$watchdog" "$MED" dune exec --root "$ROOT" test/surface.exe -- gate-run "$ROOT"/test/fixtures/x3-div-chain.tot 2>&1)
 c4=$?
 t1=$(date +%s)
 elapsed=$((t1 - t0))
@@ -191,7 +248,7 @@ elapsed=$((t1 - t0))
 # `tot check` diverge. Requires exit 0 under the watchdog; exit 124
 # is a FAIL (pre-fix this same command exited 124, recorded in
 # dev/M3-FIXES-LOG.md as the mutation confirmation).
-"$watchdog" 5 dune exec --root "$ROOT" bin/tot.exe -- check "$ROOT"/test/fixtures/x1-nested-div.tot > /dev/null 2>&1
+"$watchdog" "$FAST" dune exec --root "$ROOT" bin/tot.exe -- check "$ROOT"/test/fixtures/x1-nested-div.tot > /dev/null 2>&1
 c5=$?
 [ "$c5" -eq 0 ] && echo PASS-CHECK-NESTED-DIV \
   || { echo "FAIL-CHECK-NESTED-DIV (exit=$c5)"; exit 1; }
@@ -203,11 +260,11 @@ c5=$?
 # regex = ask) and the hang fixture exited 124 under the watchdog.
 # Both must now exit 0 with an EMPTY stdout envelope (allow prints
 # nothing); stderr is discarded so a dune status line cannot leak in.
-out=$("$watchdog" 5 dune exec --root "$ROOT" bin/tot.exe -- run "$ROOT"/test/fixtures/x12-dead-abort.tot 2> /dev/null)
+out=$("$watchdog" "$FAST" dune exec --root "$ROOT" bin/tot.exe -- run "$ROOT"/test/fixtures/x12-dead-abort.tot 2> /dev/null)
 cda=$?
 { [ "$cda" -eq 0 ] && [ -z "$out" ]; } && echo PASS-RUN-DEADCODE-ABORT \
   || { printf '%s\n' "$out"; echo "FAIL-RUN-DEADCODE-ABORT (exit=$cda)"; exit 1; }
-out=$("$watchdog" 5 dune exec --root "$ROOT" bin/tot.exe -- run "$ROOT"/test/fixtures/x13-dead-hang.tot 2> /dev/null)
+out=$("$watchdog" "$FAST" dune exec --root "$ROOT" bin/tot.exe -- run "$ROOT"/test/fixtures/x13-dead-hang.tot 2> /dev/null)
 cdh=$?
 { [ "$cdh" -eq 0 ] && [ -z "$out" ]; } && echo PASS-RUN-DEADCODE-HANG \
   || { printf '%s\n' "$out"; echo "FAIL-RUN-DEADCODE-HANG (exit=$cdh)"; exit 1; }
@@ -251,7 +308,7 @@ code=$?
 # dev/M3-FIXES-LOG.md), and a spawn of a nonexistent binary returns
 # the cannot-exec sentinel triple cleanly (the in-process B3 suite
 # case pins the no-descriptor-growth half).
-out=$("$watchdog" 15 dune exec --root "$ROOT" test/surface.exe -- gate-run "$ROOT"/test/fixtures/x8-proc-bigstderr.tot 2>&1)
+out=$("$watchdog" "$MED" dune exec --root "$ROOT" test/surface.exe -- gate-run "$ROOT"/test/fixtures/x8-proc-bigstderr.tot 2>&1)
 code=$?
 { [ "$code" -eq 0 ] \
   && printf '%s\n' "$out" | rg -qx 'CODE=0' \
@@ -305,7 +362,7 @@ code=$?
 # user file and never fires any prim, so a watchdog kill here is a
 # REGRESSION (exit 124 is a FAIL), exactly what the old
 # accept-both-outcomes line could not detect.
-"$watchdog" 5 dune exec --root "$ROOT" test/surface.exe -- gate-check "$ROOT"/test/fixtures/c-regex-pathological.tot > /dev/null 2>&1
+"$watchdog" "$FAST" dune exec --root "$ROOT" test/surface.exe -- gate-check "$ROOT"/test/fixtures/c-regex-pathological.tot > /dev/null 2>&1
 pcode=$?
 [ "$pcode" -eq 0 ] && echo PASS-C-REGEX-PATHOLOGICAL \
   || { echo "FAIL-C-REGEX-PATHOLOGICAL (exit=$pcode, want 0: check must not run the regex)"; exit 1; }
@@ -318,7 +375,7 @@ pcode=$?
 # regression) and is a FAIL. The Div classification stays provenance,
 # never a termination proof: run mode hanging without the external
 # watchdog is exactly why the wrapper exists.
-"$watchdog" 5 dune exec --root "$ROOT" test/surface.exe -- gate-run "$ROOT"/test/fixtures/c-regex-pathological.tot > /dev/null 2>&1
+"$watchdog" "$FAST" dune exec --root "$ROOT" test/surface.exe -- gate-run "$ROOT"/test/fixtures/c-regex-pathological.tot > /dev/null 2>&1
 rcode=$?
 [ "$rcode" -eq 124 ] && echo PASS-C-REGEX-PATHOLOGICAL-RUN \
   || { echo "FAIL-C-REGEX-PATHOLOGICAL-RUN (exit=$rcode, want 124: the pathological regex must actually run)"; exit 1; }
@@ -371,7 +428,10 @@ tot_scratch=$(mktemp -d "${TMPDIR:-/tmp}/tot-gate-d-bin.XXXXXX")
 # included), so red runs no longer accumulate scratch dirs in TMPDIR.
 # Single quotes: $cache_scratch resolves at exit time, after its own
 # mktemp below.
-trap 'rm -rf "$tot_scratch" "$cache_scratch"' EXIT
+# M5 Stage C: the M5C scratch (generated chains/classes fixtures)
+# rides the same trap; $m5c_scratch resolves at exit time, empty and
+# harmless on any exit before its own mktemp below.
+trap 'rm -rf "$tot_scratch" "$cache_scratch" "$m5c_scratch" "$m5d_scratch" "$m5e_scratch"' EXIT
 cp "$ROOT"/_build/default/bin/tot.exe "$tot_scratch/tot"
 # M3 fixes, C4' (C0, 2026-09-01): chmod ONLY the scratch copy; the
 # tracked examples/guard.tot carries its own executable bit in the
@@ -390,7 +450,17 @@ out=$("$guard" < "$fx/allow.json"); code=$?
   || { printf '%s\n' "$out"; echo "FAIL-D-GUARD-ALLOW (exit=$code)"; exit 1; }
 
 out=$("$guard" < "$fx/deny.json"); code=$?
-want='{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"house rule: use rg instead of grep and sd instead of sed"}}'
+# M5 Stage D (plan D3): the deny reason now echoes the blocked
+# command (bounded at 2000 bytes, quoted by the Stage A JSON
+# escaper), so the expected envelope is per-payload.  Raw TAB,
+# NEWLINE and CR in a command arrive on the wire as their two-
+# character escapes; the single-quoted strings below carry those
+# backslashes literally.
+want='{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"house rule: use rg instead of grep and sd instead of sed (command: grep foo /tmp/x)"}}'
+want_path='{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"house rule: use rg instead of grep and sd instead of sed (command:  /usr/bin/grep foo /tmp/x)"}}'
+want_tab='{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"house rule: use rg instead of grep and sd instead of sed (command: \t/usr/bin/grep\t-r x /)"}}'
+want_nl='{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"house rule: use rg instead of grep and sd instead of sed (command: \ngrep x)"}}'
+want_ts='{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"house rule: use rg instead of grep and sd instead of sed (command: grep\tx)"}}'
 { [ "$code" -eq 2 ] && [ "$out" = "$want" ]; } && echo PASS-D-GUARD-DENY \
   || { printf '%s\n' "$out"; echo "FAIL-D-GUARD-DENY (exit=$code)"; exit 1; }
 
@@ -400,7 +470,7 @@ want='{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"
 # token. Pre-fix this payload was ALLOWED, exit 0 (both bypass shapes
 # recorded in dev/M3-FIXES-LOG.md).
 out=$("$guard" < "$fx/deny-path.json"); code=$?
-{ [ "$code" -eq 2 ] && [ "$out" = "$want" ]; } && echo PASS-D-GUARD-DENY-PATH \
+{ [ "$code" -eq 2 ] && [ "$out" = "$want_path" ]; } && echo PASS-D-GUARD-DENY-PATH \
   || { printf '%s\n' "$out"; echo "FAIL-D-GUARD-DENY-PATH (exit=$code)"; exit 1; }
 
 # M3 fixes round 4 (sign-off finding): firstToken split on the SPACE
@@ -417,9 +487,9 @@ out=$("$guard" < "$fx/deny-tab.json"); code=$?
 out_nl=$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"\ngrep x"}}' | "$guard"); code_nl=$?
 out_ts=$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"grep\tx"}}' | "$guard"); code_ts=$?
 out_ok=$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"rg\tx"}}' | "$guard"); code_ok=$?
-{ [ "$code" -eq 2 ] && [ "$out" = "$want" ] \
-  && [ "$code_nl" -eq 2 ] && [ "$out_nl" = "$want" ] \
-  && [ "$code_ts" -eq 2 ] && [ "$out_ts" = "$want" ] \
+{ [ "$code" -eq 2 ] && [ "$out" = "$want_tab" ] \
+  && [ "$code_nl" -eq 2 ] && [ "$out_nl" = "$want_nl" ] \
+  && [ "$code_ts" -eq 2 ] && [ "$out_ts" = "$want_ts" ] \
   && [ "$code_ok" -eq 0 ] && [ -z "$out_ok" ]; } \
   && echo PASS-D-GUARD-DENY-TAB \
   || {
@@ -450,8 +520,8 @@ out2=$("$guard" < "$fx/garbage.json"); code2=$?
 # (SPEC section 6): an ordinary def named mian, script mode, exit 0.
 # M3 fixes round 2 (ctxcat id 18): "$watchdog", never bare `timeout`
 # (which is gtimeout-only on stock macOS and would 127 every check).
-out=$("$watchdog" 5 "$tot_scratch/tot" check "$fx/x10-main-bad-type.tot" 2>&1); mc1=$?
-out2=$("$watchdog" 5 "$tot_scratch/tot" run "$fx/x10-main-bad-type.tot" 2>&1); mc2=$?
+out=$("$watchdog" "$FAST" "$tot_scratch/tot" check "$fx/x10-main-bad-type.tot" 2>&1); mc1=$?
+out2=$("$watchdog" "$FAST" "$tot_scratch/tot" run "$fx/x10-main-bad-type.tot" 2>&1); mc2=$?
 { [ "$mc1" -eq 1 ] && [ "$mc2" -eq 1 ] \
   && printf '%s\n' "$out" | rg -q 'main is a reserved driver name' \
   && printf '%s\n' "$out2" | rg -q 'main is a reserved driver name' \
@@ -459,7 +529,7 @@ out2=$("$watchdog" 5 "$tot_scratch/tot" run "$fx/x10-main-bad-type.tot" 2>&1); m
   && echo PASS-D-MAIN-BADTYPE \
   || { printf '%s\n%s\n' "$out" "$out2"; echo "FAIL-D-MAIN-BADTYPE (exit=$mc1/$mc2)"; exit 1; }
 
-out=$("$watchdog" 5 "$tot_scratch/tot" run "$fx/x11-main-misspelled.tot" 2>&1); mc3=$?
+out=$("$watchdog" "$FAST" "$tot_scratch/tot" run "$fx/x11-main-misspelled.tot" 2>&1); mc3=$?
 { [ "$mc3" -eq 0 ] && printf '%s\n' "$out" | rg -q '^def mian : \(IO Verdict\)$'; } \
   && echo PASS-D-MAIN-MISSPELLED \
   || { printf '%s\n' "$out"; echo "FAIL-D-MAIN-MISSPELLED (exit=$mc3)"; exit 1; }
@@ -560,7 +630,7 @@ rm -f "$cache_file.bad"
 nohome_scratch=$(mktemp -d "${TMPDIR:-/tmp}/tot-gate-nohome.XXXXXX")
 ( cd "$nohome_scratch" \
     && env -u HOME -u TOT_CACHE_DIR TOT_PRELUDE="$ROOT"/stdlib/prelude.tot \
-      "$watchdog" 15 "$tot_scratch/tot" run "$ROOT"/test/fixtures/x2-prelude-run.tot \
+      "$watchdog" "$MED" "$tot_scratch/tot" run "$ROOT"/test/fixtures/x2-prelude-run.tot \
       > stdout.txt 2> stderr.txt )
 nhcode=$?
 nh_lines=$(rg -c '' "$nohome_scratch/stderr.txt")
@@ -592,7 +662,7 @@ noexe_scratch=$(mktemp -d "${TMPDIR:-/tmp}/tot-gate-noexe.XXXXXX")
 cp "$ROOT"/_build/default/bin/tot.exe "$noexe_scratch/tot-noread"
 chmod 111 "$noexe_scratch/tot-noread"
 env TOT_CACHE_DIR="$noexe_scratch/cache" TOT_PRELUDE="$ROOT"/stdlib/prelude.tot \
-  "$watchdog" 15 "$noexe_scratch/tot-noread" run "$ROOT"/test/fixtures/x2-prelude-run.tot \
+  "$watchdog" "$MED" "$noexe_scratch/tot-noread" run "$ROOT"/test/fixtures/x2-prelude-run.tot \
   > /dev/null 2> "$noexe_scratch/stderr.txt"
 nxcode=$?
 nx_lines=$(rg -c '' "$noexe_scratch/stderr.txt")
@@ -660,7 +730,7 @@ v2_md5=$(md5hex "$exeid_scratch/v2")
 cat "$exeid_scratch/v1" > "$exeid_scratch/tot"
 chmod 555 "$exeid_scratch/tot"
 env TOT_CACHE_DIR="$exeid_scratch/cache" TOT_PRELUDE="$ROOT"/stdlib/prelude.tot \
-  "$watchdog" 15 "$exeid_scratch/tot" run "$ROOT"/test/fixtures/x2-prelude-run.tot \
+  "$watchdog" "$MED" "$exeid_scratch/tot" run "$ROOT"/test/fixtures/x2-prelude-run.tot \
   > /dev/null 2> "$exeid_scratch/e1.txt"
 e1code=$?
 blobs1=$(command ls "$exeid_scratch/cache" 2> /dev/null | rg -c '^prelude-.*\.bin$')
@@ -692,9 +762,9 @@ tot_size=$(wc -c < "$exeid_scratch/tot" | tr -d ' ')
 # failing loudly. cache-probe is a SEPARATE dir from "$exeid_scratch/
 # cache", so the blobs1/blobs2 counts below are untouched.
 patched_out=$(env TOT_CACHE_DIR="$exeid_scratch/cache-probe" TOT_PRELUDE="$ROOT"/stdlib/prelude.tot \
-  "$watchdog" 15 "$exeid_scratch/tot" check "$exeid_scratch/absent.tot" 2>&1)
+  "$watchdog" "$MED" "$exeid_scratch/tot" check "$exeid_scratch/absent.tot" 2>&1)
 env TOT_CACHE_DIR="$exeid_scratch/cache" TOT_PRELUDE="$ROOT"/stdlib/prelude.tot \
-  "$watchdog" 15 "$exeid_scratch/tot" run "$ROOT"/test/fixtures/x2-prelude-run.tot \
+  "$watchdog" "$MED" "$exeid_scratch/tot" run "$ROOT"/test/fixtures/x2-prelude-run.tot \
   > /dev/null 2> "$exeid_scratch/e2.txt"
 e2code=$?
 blobs2=$(command ls "$exeid_scratch/cache" 2> /dev/null | rg -c '^prelude-.*\.bin$')
@@ -745,11 +815,11 @@ blobs2=${blobs2:-0}
 # residual, deliberately, not an untested claim.
 mkdir -p "$exeid_scratch/cache2"
 memo1=$(env TOT_CACHE_DIR="$exeid_scratch/cache2" TOT_PRELUDE="$ROOT"/stdlib/prelude.tot \
-    TOT_CACHE_VERIFY=1 "$watchdog" 15 "$exeid_scratch/v1" run \
+    TOT_CACHE_VERIFY=1 "$watchdog" "$MED" "$exeid_scratch/v1" run \
     "$ROOT"/test/fixtures/x2-prelude-run.tot 2>&1 1> /dev/null)
 m1code=$?
 memo2=$(env TOT_CACHE_DIR="$exeid_scratch/cache2" TOT_PRELUDE="$ROOT"/stdlib/prelude.tot \
-    TOT_CACHE_VERIFY=1 "$watchdog" 15 "$exeid_scratch/v1" run \
+    TOT_CACHE_VERIFY=1 "$watchdog" "$MED" "$exeid_scratch/v1" run \
     "$ROOT"/test/fixtures/x2-prelude-run.tot 2>&1 1> /dev/null)
 m2code=$?
 { [ "$m1code" -eq 0 ] && [ "$m2code" -eq 0 ] \
@@ -774,7 +844,7 @@ unset TOT_CACHE_DIR TOT_CACHE_VERIFY TOT_PRELUDE
 # (params and the length index erase; only the two runtime-kept
 # arguments per vcons survive erasure).
 m4a_vec_err=$(mktemp "${TMPDIR:-/tmp}/tot-gate-m4a-vec-err.XXXXXX")
-out=$("$watchdog" 30 dune exec --root "$ROOT" test/surface.exe -- gate-run "$ROOT"/test/fixtures/m4a-vec.tot 2> "$m4a_vec_err")
+out=$("$watchdog" "$MED" dune exec --root "$ROOT" test/surface.exe -- gate-run "$ROOT"/test/fixtures/m4a-vec.tot 2> "$m4a_vec_err")
 code=$?
 { [ "$code" -eq 0 ] && printf '%s\n' "$out" | rg -qx '\(\(vcons zero\) \(\(vcons \(succ zero\)\) vnil\)\)'; } \
   && { rm -f "$m4a_vec_err"; echo PASS-M4A-VEC; } \
@@ -782,7 +852,7 @@ code=$?
 
 # M4 Stage A gate (iii): a wrong-index constructor (VecB A, omitting the
 # index) is Bad_ctor, naming the expected index count.
-out=$("$watchdog" 30 dune exec --root "$ROOT" test/surface.exe -- gate-check "$ROOT"/test/fixtures/m4a-vec-badindex.tot 2>&1)
+out=$("$watchdog" "$MED" dune exec --root "$ROOT" test/surface.exe -- gate-check "$ROOT"/test/fixtures/m4a-vec-badindex.tot 2>&1)
 code=$?
 { [ "$code" -ne 0 ] && printf '%s\n' "$out" | rg -q 'applied to its parameters and 1 index expression'; } \
   && echo PASS-M4A-VEC-BADIX \
@@ -791,7 +861,7 @@ code=$?
 # M4 Stage A gate (iv), first fence: a w-carrying single constructor
 # (Box) stays Erased_use -- the subsingleton criterion's "every
 # constructor argument at quantity 0" clause.
-out=$("$watchdog" 30 dune exec --root "$ROOT" test/surface.exe -- gate-check "$ROOT"/test/fixtures/m4a-box.tot 2>&1)
+out=$("$watchdog" "$MED" dune exec --root "$ROOT" test/surface.exe -- gate-check "$ROOT"/test/fixtures/m4a-box.tot 2>&1)
 code=$?
 { [ "$code" -ne 0 ] && printf '%s\n' "$out" | rg -q 'erased variable b used at runtime'; } \
   && echo PASS-M4A-BOX \
@@ -801,7 +871,7 @@ code=$?
 # (SX) stays Erased_use -- the subsingleton criterion's "not self-
 # recursive" clause, not a quantity; SX itself is still ACCEPTED (only
 # the eliminating def sxLoop is rejected).
-out=$("$watchdog" 30 dune exec --root "$ROOT" test/surface.exe -- gate-check "$ROOT"/test/fixtures/m4a-sx.tot 2>&1)
+out=$("$watchdog" "$MED" dune exec --root "$ROOT" test/surface.exe -- gate-check "$ROOT"/test/fixtures/m4a-sx.tot 2>&1)
 code=$?
 { [ "$code" -ne 0 ] && printf '%s\n' "$out" | rg -q 'erased variable s used at runtime'; } \
   && echo PASS-M4A-SX \
@@ -811,7 +881,7 @@ code=$?
 # stays Erased_use -- the subsingleton criterion's "at most one
 # constructor" clause; this is the "leave failing" half Gate A pairs
 # against m4a-box.tot's and m4a-sx.tot's own flips.
-out=$("$watchdog" 30 dune exec --root "$ROOT" test/surface.exe -- gate-check "$ROOT"/test/fixtures/m4a-ese-neg.tot 2>&1)
+out=$("$watchdog" "$MED" dune exec --root "$ROOT" test/surface.exe -- gate-check "$ROOT"/test/fixtures/m4a-ese-neg.tot 2>&1)
 code=$?
 { [ "$code" -ne 0 ] && printf '%s\n' "$out" | rg -q 'erased variable b used at runtime'; } \
   && echo PASS-M4A-ESE-NEG \
@@ -820,7 +890,7 @@ code=$?
 # M4 Stage A gate (vi): Fording (encoding an index as a uniform
 # parameter) stays blocked; vpnil fails the result-head rule before
 # define_ind's ctor fold ever reaches vpcons.
-out=$("$watchdog" 30 dune exec --root "$ROOT" test/surface.exe -- gate-check "$ROOT"/test/fixtures/m4a-fording.tot 2>&1)
+out=$("$watchdog" "$MED" dune exec --root "$ROOT" test/surface.exe -- gate-check "$ROOT"/test/fixtures/m4a-fording.tot 2>&1)
 code=$?
 { [ "$code" -ne 0 ] && printf '%s\n' "$out" | rg -q 'applied to its parameters and 0 index expressions'; } \
   && echo PASS-M4A-FORDING \
@@ -829,7 +899,7 @@ code=$?
 # M4 Stage B gate (ii): subst0/castNat check end to end under the
 # bootstrapped prelude, pinning the exact printed lines Stage C's own
 # erasure gate later relies on (subst0 erases to the identity).
-out=$("$watchdog" 30 dune exec --root "$ROOT" test/surface.exe -- gate-check "$ROOT"/test/fixtures/m4b-subst-erases.tot 2>&1)
+out=$("$watchdog" "$MED" dune exec --root "$ROOT" test/surface.exe -- gate-check "$ROOT"/test/fixtures/m4b-subst-erases.tot 2>&1)
 code=$?
 want=$'def symNat : (0 m : Nat) -> (0 n : Nat) -> (0 h : (((Eq Nat) m) n)) -> (((Eq Nat) n) m)\nsymNat : (0 m : Nat) -> (0 n : Nat) -> (0 h : (((Eq Nat) m) n)) -> (((Eq Nat) n) m)\ndef castNat : (0 P : (w _ : Nat) -> Type 0) -> (0 a : Nat) -> (0 b : Nat) -> (0 h : (((Eq Nat) a) b)) -> (w _ : (P a)) -> (P b)\ncastNat : (0 P : (w _ : Nat) -> Type 0) -> (0 a : Nat) -> (0 b : Nat) -> (0 h : (((Eq Nat) a) b)) -> (w _ : (P a)) -> (P b)'
 { [ "$code" -eq 0 ] && [ "$out" = "$want" ]; } \
@@ -838,7 +908,7 @@ want=$'def symNat : (0 m : Nat) -> (0 n : Nat) -> (0 h : (((Eq Nat) m) n)) -> ((
 
 # M4 Stage B gate (iii): natDecEq computes both a yes and a no; a Dec
 # scrutinee drives a Bool (sameArity), exact readback "true".
-out=$("$watchdog" 30 dune exec --root "$ROOT" test/surface.exe -- gate-run "$ROOT"/test/fixtures/m4b-deceq-runs.tot 2>&1)
+out=$("$watchdog" "$MED" dune exec --root "$ROOT" test/surface.exe -- gate-run "$ROOT"/test/fixtures/m4b-deceq-runs.tot 2>&1)
 code=$?
 want=$'def sameArity : Bool\ntrue'
 { [ "$code" -eq 0 ] && [ "$out" = "$want" ]; } \
@@ -851,10 +921,10 @@ want=$'def sameArity : Bool\ntrue'
 # cannot exhibit both an ok fold and a later hard error's message in
 # its own stdout (a fold-error short-circuits before any of the
 # earlier lines print).
-out=$("$watchdog" 30 dune exec --root "$ROOT" test/surface.exe -- gate-check "$ROOT"/test/fixtures/m4b-axiom.tot 2>&1)
+out=$("$watchdog" "$MED" dune exec --root "$ROOT" test/surface.exe -- gate-check "$ROOT"/test/fixtures/m4b-axiom.tot 2>&1)
 code=$?
 want=$'axiom myAx : (((Eq Nat) zero) zero)\nmyAx : (((Eq Nat) zero) zero)'
-out2=$("$watchdog" 30 dune exec --root "$ROOT" test/surface.exe -- gate-check "$ROOT"/test/fixtures/m4b-axiom-runtime.tot 2>&1)
+out2=$("$watchdog" "$MED" dune exec --root "$ROOT" test/surface.exe -- gate-check "$ROOT"/test/fixtures/m4b-axiom-runtime.tot 2>&1)
 code2=$?
 { [ "$code" -eq 0 ] && [ "$out" = "$want" ] \
   && [ "$code2" -ne 0 ] && printf '%s\n' "$out2" | rg -q 'axiom myAx used at runtime'; } \
@@ -866,10 +936,10 @@ code2=$?
 # asserted (B9's own instruction), since the flag's whole point is the
 # difference. Driven through the real bin/tot.exe CLI (the driver flag
 # lives there, not in test/surface.exe's gate-check/gate-run).
-out=$("$watchdog" 30 dune exec --root "$ROOT" bin/tot.exe -- check "$ROOT"/test/fixtures/m4b-noaxioms.tot 2>&1)
+out=$("$watchdog" "$MED" dune exec --root "$ROOT" bin/tot.exe -- check "$ROOT"/test/fixtures/m4b-noaxioms.tot 2>&1)
 code=$?
 want=$'axiom bogus : (((Eq Nat) zero) (succ zero))\nbogus : (((Eq Nat) zero) (succ zero))'
-out2=$("$watchdog" 30 dune exec --root "$ROOT" bin/tot.exe -- check --no-axioms "$ROOT"/test/fixtures/m4b-noaxioms.tot 2>&1)
+out2=$("$watchdog" "$MED" dune exec --root "$ROOT" bin/tot.exe -- check --no-axioms "$ROOT"/test/fixtures/m4b-noaxioms.tot 2>&1)
 code2=$?
 { [ "$code" -eq 0 ] && [ "$out" = "$want" ] \
   && [ "$code2" -ne 0 ] && printf '%s\n' "$out2" | rg -q -- '--no-axioms'; } \
@@ -881,7 +951,7 @@ code2=$?
 # the real interpreter, under a 10s watchdog: a regression that
 # re-introduces a self-reference into subst0's erased body (or otherwise
 # breaks the runtime guard) shows up as exit 124, never a silent hang.
-out=$("$watchdog" 10 dune exec --root "$ROOT" test/surface.exe -- gate-run "$ROOT"/test/fixtures/m4c-frozen.tot 2>&1)
+out=$("$watchdog" "$FAST" dune exec --root "$ROOT" test/surface.exe -- gate-run "$ROOT"/test/fixtures/m4c-frozen.tot 2>&1)
 code=$?
 want='(succ zero)'
 { [ "$code" -eq 0 ] && [ "$out" = "$want" ]; } \
@@ -901,7 +971,7 @@ printf '%s\n' "$surface_out" | rg -q '^PASS C4: subst0 erases to the identity an
 # M4 Stage D, Gate D (i): "member String auto cmd flagged" typechecks,
 # resolves and runs -- the flagged/isFlagged pair with auto, plus one
 # "inst EqD String" call site, through gate-run's real prelude bootstrap.
-out=$("$watchdog" 30 dune exec --root "$ROOT" test/surface.exe -- gate-run "$ROOT"/test/fixtures/m4d-classes.tot 2>&1)
+out=$("$watchdog" "$MED" dune exec --root "$ROOT" test/surface.exe -- gate-run "$ROOT"/test/fixtures/m4d-classes.tot 2>&1)
 code=$?
 want=$'def flagged : (List String)\ndef isFlagged : (w _ : String) -> Bool\ntrue\nfalse'
 { [ "$code" -eq 0 ] && [ "$out" = "$want" ]; } \
@@ -910,7 +980,7 @@ want=$'def flagged : (List String)\ndef isFlagged : (w _ : String) -> Bool\ntrue
 
 # M4 Stage D, Gate D (ii): coherence. A duplicate instance key is
 # Duplicate_global at definition time, message containing "inst$".
-out=$("$watchdog" 30 dune exec --root "$ROOT" test/surface.exe -- gate-check "$ROOT"/test/fixtures/m4d-dup-instance.tot 2>&1)
+out=$("$watchdog" "$MED" dune exec --root "$ROOT" test/surface.exe -- gate-check "$ROOT"/test/fixtures/m4d-dup-instance.tot 2>&1)
 code=$?
 { [ "$code" -ne 0 ] && printf '%s\n' "$out" | rg -q 'duplicate global inst\$'; } \
   && echo PASS-M4D-COHERENCE \
@@ -920,13 +990,13 @@ code=$?
 # one-line type error, and the default stays 1. Driven through the real
 # bin/tot.exe CLI (the flag lives there), matching PASS-M4B-NOAXIOMS'
 # own precedent.
-# M4 fixes round 2 (ctxcat id 6): under "$watchdog" 30, like every other
+# M4 fixes round 2 (ctxcat id 6): under the MED tier, like every other
 # CLI gate in this block. The checker can be driven to unbounded work,
 # so an unguarded invocation turns a hang into an indefinite stall with
 # no FAIL marker instead of a loud exit 124.
-out=$("$watchdog" 30 dune exec --root "$ROOT" bin/tot.exe -- check "$ROOT"/test/fixtures/m4d-serror-exit.tot 2>&1)
+out=$("$watchdog" "$MED" dune exec --root "$ROOT" bin/tot.exe -- check "$ROOT"/test/fixtures/m4d-serror-exit.tot 2>&1)
 code=$?
-out2=$("$watchdog" 30 dune exec --root "$ROOT" bin/tot.exe -- check --serror-exit 3 "$ROOT"/test/fixtures/m4d-serror-exit.tot 2>&1)
+out2=$("$watchdog" "$MED" dune exec --root "$ROOT" bin/tot.exe -- check --serror-exit 3 "$ROOT"/test/fixtures/m4d-serror-exit.tot 2>&1)
 code2=$?
 { [ "$code" -eq 1 ] && [ "$code2" -eq 3 ] && [ "$out" = "$out2" ]; } \
   && echo PASS-M4D-SERROR-EXIT \
@@ -936,18 +1006,18 @@ code2=$?
 # (m4d-nomain.tot defines "mian", not "main") and the default behavior
 # is unchanged (SPEC's misspelled-main residual, PASS-D-MAIN-MISSPELLED,
 # stays a twin of this gate: unflagged, this exact fixture shape exits
-# 0). M4 fixes round 2 (ctxcat id 6): under "$watchdog" 30.
+# 0). M4 fixes round 2 (ctxcat id 6): under the MED tier.
 # M4 fixes round 3 (ctxcat r3 id 3): the CHECK-mode leg is pinned too.
 # --require-main is a verdict about the file's CONTENT, so it fires
 # uniformly in both verbs by design (surface/run.ml's main_epilogue
 # doc comment says so now); the finding read the flag's motivating
 # consumer, a shebang wrapper, as its scope. Without this leg nothing
 # stopped a later "gate it on exec" change from passing the battery.
-out=$("$watchdog" 30 dune exec --root "$ROOT" bin/tot.exe -- run "$ROOT"/test/fixtures/m4d-nomain.tot 2>&1)
+out=$("$watchdog" "$MED" dune exec --root "$ROOT" bin/tot.exe -- run "$ROOT"/test/fixtures/m4d-nomain.tot 2>&1)
 code=$?
-out2=$("$watchdog" 30 dune exec --root "$ROOT" bin/tot.exe -- run --require-main "$ROOT"/test/fixtures/m4d-nomain.tot 2>&1)
+out2=$("$watchdog" "$MED" dune exec --root "$ROOT" bin/tot.exe -- run --require-main "$ROOT"/test/fixtures/m4d-nomain.tot 2>&1)
 code2=$?
-out3=$("$watchdog" 30 dune exec --root "$ROOT" bin/tot.exe -- check --require-main "$ROOT"/test/fixtures/m4d-nomain.tot 2>&1)
+out3=$("$watchdog" "$MED" dune exec --root "$ROOT" bin/tot.exe -- check --require-main "$ROOT"/test/fixtures/m4d-nomain.tot 2>&1)
 code3=$?
 { [ "$code" -eq 0 ] && [ "$code2" -ne 0 ] && [ "$code3" -ne 0 ] \
     && printf '%s\n' "$out2" | rg -q 'this file must define a driver main' \
@@ -962,10 +1032,10 @@ code3=$?
 # M4 Stage D, Gate D (vii): examples/guard-classes.tot checks and runs
 # end to end -- the class layer (EqD/member/auto) plus two Eq proofs
 # (agreeOnTrue by computation, denyStable by pure congruence).
-# M4 fixes round 2 (ctxcat id 6): under "$watchdog" 30.
-out=$("$watchdog" 30 dune exec --root "$ROOT" bin/tot.exe -- check "$ROOT"/examples/guard-classes.tot 2>&1)
+# M4 fixes round 2 (ctxcat id 6): under the MED tier.
+out=$("$watchdog" "$MED" dune exec --root "$ROOT" bin/tot.exe -- check "$ROOT"/examples/guard-classes.tot 2>&1)
 code=$?
-out2=$("$watchdog" 30 dune exec --root "$ROOT" bin/tot.exe -- run "$ROOT"/examples/guard-classes.tot 2>&1)
+out2=$("$watchdog" "$MED" dune exec --root "$ROOT" bin/tot.exe -- run "$ROOT"/examples/guard-classes.tot 2>&1)
 code2=$?
 want=$'def verdictOfDanger : (w _ : Bool) -> Verdict\ndef verdictOfDanger2 : (w _ : Bool) -> Verdict\ndef agreeOnTrue : (((Eq Verdict) (verdictOfDanger true)) (verdictOfDanger2 true))\nagreeOnTrue : (((Eq Verdict) (deny "use rg / sd")) (deny "use rg / sd"))\ndef denyStable : (w cmd : String) -> (0 h : (((Eq String) cmd) "grep")) -> (0 flag : (w _ : String) -> Bool) -> (((Eq Verdict) (verdictOfDanger (flag cmd))) (verdictOfDanger (flag "grep")))\ndenyStable : (w cmd : String) -> (0 h : (((Eq String) cmd) "grep")) -> (0 flag : (w _ : String) -> Bool) -> (((Eq Verdict) match (flag cmd) as _ return Verdict with | true => (deny "use rg / sd") | false => allow end) match (flag "grep") as _ return Verdict with | true => (deny "use rg / sd") | false => allow end)\ndef flagged : (List String)\ndef isFlagged : (w _ : String) -> Bool\ntrue\nfalse'
 { [ "$code" -eq 0 ] && [ "$code2" -eq 0 ] && [ "$out2" = "$want" ]; } \
@@ -982,7 +1052,7 @@ want=$'def verdictOfDanger : (w _ : Bool) -> Verdict\ndef verdictOfDanger2 : (w 
 # Term.Ann, so before the fix each of these died with a Bad_ctor whose
 # stated reason (arity) had nothing to do with the real cause. Exact
 # output pinned, so a silent re-rejection cannot hide here.
-out=$("$watchdog" 30 dune exec --root "$ROOT" bin/tot.exe -- check "$ROOT"/test/fixtures/m4fix-ann-ctor.tot 2>&1)
+out=$("$watchdog" "$MED" dune exec --root "$ROOT" bin/tot.exe -- check "$ROOT"/test/fixtures/m4fix-ann-ctor.tot 2>&1)
 code=$?
 want=$'data AnnFoo : Type 0\nctor annMk : AnnFoo\ndata AnnBox : (0 A : Type 0) -> Type 0\nctor annBox : (0 A : Type 0) -> (w _ : A) -> (AnnBox A)'
 { [ "$code" -eq 0 ] && [ "$out" = "$want" ]; } \
@@ -993,7 +1063,7 @@ want=$'data AnnFoo : Type 0\nctor annMk : AnnFoo\ndata AnnBox : (0 A : Type 0) -
 # ban ITSELF (Bad_ctor, naming the index expressions), instead of
 # slipping past the raw check into elaboration, where the error used to
 # arrive as an unrelated "no instance found for Nat".
-out=$("$watchdog" 30 dune exec --root "$ROOT" bin/tot.exe -- check "$ROOT"/test/fixtures/m4fix-auto-index.tot 2>&1)
+out=$("$watchdog" "$MED" dune exec --root "$ROOT" bin/tot.exe -- check "$ROOT"/test/fixtures/m4fix-auto-index.tot 2>&1)
 code=$?
 { [ "$code" -ne 0 ] && printf '%s\n' "$out" | rg -q 'invalid constructor autoIdx' \
     && printf '%s\n' "$out" | rg -q 'index expression' \
@@ -1006,7 +1076,7 @@ code=$?
 # that cannot afford it is a reachable false negative, not a backstop:
 # before the fix this exact file died with "instance resolution for
 # (FC4 Bool) exceeded its fuel".
-out=$("$watchdog" 30 dune exec --root "$ROOT" bin/tot.exe -- run "$ROOT"/test/fixtures/m4fix-inst-binders.tot 2>&1)
+out=$(gate_timed "$MED" M4FIX-INST-BINDERS dune exec --root "$ROOT" bin/tot.exe -- run "$ROOT"/test/fixtures/m4fix-inst-binders.tot)
 code=$?
 { [ "$code" -eq 0 ] && printf '%s\n' "$out" | rg -qx 'true' \
     && ! printf '%s\n' "$out" | rg -q 'fuel'; } \
@@ -1026,7 +1096,7 @@ code=$?
 # build or an editor's dune RPC holding the lock is enough). The F2
 # gates below run "$ROOT"/_build/default/bin/tot.exe for the same
 # reason; every gate above has already forced that binary to be built.
-out=$("$watchdog" 15 "$ROOT"/_build/default/bin/tot.exe check "$ROOT"/test/fixtures/m4fix-nest26.tot 2>&1)
+out=$("$watchdog" "$MED" "$ROOT"/_build/default/bin/tot.exe check "$ROOT"/test/fixtures/m4fix-nest26.tot 2>&1)
 code=$?
 want=$'def nest26 : Bool\nnest26 : Bool'
 { [ "$code" -eq 0 ] && [ "$out" = "$want" ]; } \
@@ -1048,7 +1118,7 @@ want=$'def nest26 : Bool\nnest26 : Bool'
 # the ambient mode makes the failing path O(depth^2). Budget 10s, so the
 # pre-fix cost clears it by 1.8x; the exact diagnosis is pinned as well,
 # because a FAST WRONG error is not a fix. Built binary, as above.
-out=$("$watchdog" 10 "$ROOT"/_build/default/bin/tot.exe check "$ROOT"/test/fixtures/m4fix-nest26-ill.tot 2>&1)
+out=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check "$ROOT"/test/fixtures/m4fix-nest26-ill.tot 2>&1)
 code=$?
 { [ "$code" -eq 1 ] \
     && printf '%s\n' "$out" | rg -q 'match branches do not fit the declaration: expected false, found <none>'; } \
@@ -1061,7 +1131,7 @@ code=$?
 # inferred the whole subterm and the missing motive failed at both
 # modes. Measured on the round-1 binary: 0.41s at depth 22, 5.79s at 26,
 # so about 80s at 30 -- 8x this gate's own budget.
-out=$("$watchdog" 10 "$ROOT"/_build/default/bin/tot.exe check "$ROOT"/test/fixtures/m4fix-nest30-nomotive.tot 2>&1)
+out=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check "$ROOT"/test/fixtures/m4fix-nest30-nomotive.tot 2>&1)
 code=$?
 { [ "$code" -eq 1 ] \
     && printf '%s\n' "$out" | rg -q "cannot infer a type for a match without 'as \.\. return'"; } \
@@ -1092,7 +1162,7 @@ code=$?
 # Two DIFFERENT classes on the same type variable, nesting 30. Work is
 # quadratic in the nesting, fuel was linear in it: rejected from nesting
 # 6 up. Measured after the memo: 0.052s.
-out=$("$watchdog" 15 "$ROOT"/_build/default/bin/tot.exe run "$ROOT"/test/fixtures/m4fix-inst-twoclass.tot 2>&1)
+out=$(gate_timed "$MED" M4FIX-INST-TWOCLASS "$ROOT"/_build/default/bin/tot.exe run "$ROOT"/test/fixtures/m4fix-inst-twoclass.tot)
 code=$?
 { [ "$code" -eq 0 ] && printf '%s\n' "$out" | rg -qx 'true'; } \
   && echo PASS-M4FIX-INST-TWOCLASS \
@@ -1103,7 +1173,7 @@ code=$?
 # distinct sub-goal with it. Round 2 rejected this from nesting 4 up.
 # Measured after the memo: 1.03s, of which the resolution itself is a
 # small fraction (the rest is the 65k-node emitted dictionary).
-out=$("$watchdog" 20 "$ROOT"/_build/default/bin/tot.exe run "$ROOT"/test/fixtures/m4fix-inst-spec16.tot 2>&1)
+out=$(gate_timed "$MED" M4FIX-INST-SPEC16 "$ROOT"/_build/default/bin/tot.exe run "$ROOT"/test/fixtures/m4fix-inst-spec16.tot)
 code=$?
 { [ "$code" -eq 0 ] && printf '%s\n' "$out" | rg -qx 'true'; } \
   && echo PASS-M4FIX-INST-SPEC16 \
@@ -1115,7 +1185,7 @@ code=$?
 # is the file that proves the round-2 budget was not bounding an
 # exponential blow-up. Measured after the memo: 0.046s, so the 15s
 # budget is 300x headroom and a 124 means a real regression.
-out=$("$watchdog" 15 "$ROOT"/_build/default/bin/tot.exe run "$ROOT"/test/fixtures/m4fix-inst-chains.tot 2>&1)
+out=$(gate_timed "$MED" M4FIX-INST-CHAINS "$ROOT"/_build/default/bin/tot.exe run "$ROOT"/test/fixtures/m4fix-inst-chains.tot)
 code=$?
 { [ "$code" -eq 0 ] && printf '%s\n' "$out" | rg -qx 'true'; } \
   && echo PASS-M4FIX-INST-CHAINS \
@@ -1129,7 +1199,7 @@ code=$?
 # nesting 6 (the exact shape round 2 first rejected) and the SAME class
 # twice at nesting 3. BOTH values pinned, so a fix that resolves one and
 # drops the other fails here.
-out=$("$watchdog" 15 "$ROOT"/_build/default/bin/tot.exe run "$ROOT"/test/fixtures/m4fix-inst-small-reach.tot 2>&1)
+out=$(gate_timed "$MED" M4FIX-INST-SMALL-REACH "$ROOT"/_build/default/bin/tot.exe run "$ROOT"/test/fixtures/m4fix-inst-small-reach.tot)
 code=$?
 { [ "$code" -eq 0 ] \
     && [ "$(printf '%s\n' "$out" | rg -cx 'true')" = "2" ]; } \
@@ -1146,7 +1216,7 @@ code=$?
 # the head PBox and reads the SECOND dictionary, so a head-only memo
 # answers with the FIRST and the file computes `zero` (or fails the
 # candidate re-check) instead of `(succ zero)`. Exact value pinned.
-out=$("$watchdog" 15 "$ROOT"/_build/default/bin/tot.exe run "$ROOT"/test/fixtures/m4fix-inst-memo-key.tot 2>&1)
+out=$(gate_timed "$MED" M4FIX-INST-MEMO-KEY "$ROOT"/_build/default/bin/tot.exe run "$ROOT"/test/fixtures/m4fix-inst-memo-key.tot)
 code=$?
 { [ "$code" -eq 0 ] && printf '%s\n' "$out" | rg -qx '\(succ zero\)'; } \
   && echo PASS-M4FIX-INST-MEMO-KEY \
@@ -1157,7 +1227,7 @@ code=$?
 # unwinds App without stripping, so round 1's outer strip_ann never
 # reached the head and head_ok was false: a Bad_ctor on a term the
 # elaborator accepts in every other position. Exact output pinned.
-out=$("$watchdog" 30 "$ROOT"/_build/default/bin/tot.exe check "$ROOT"/test/fixtures/m4fix-ann-head.tot 2>&1)
+out=$("$watchdog" "$MED" "$ROOT"/_build/default/bin/tot.exe check "$ROOT"/test/fixtures/m4fix-ann-head.tot 2>&1)
 code=$?
 want=$'data AVec : (0 _ : Nat) -> Type 0\nctor avnil : (AVec zero)\ndata ABox : (0 A : Type 0) -> Type 0\nctor abx : (0 A : Type 0) -> (w _ : A) -> (ABox A)\nAVec : (0 _ : Nat) -> Type 0'
 { [ "$code" -eq 0 ] && [ "$out" = "$want" ]; } \
@@ -1169,7 +1239,7 @@ want=$'data AVec : (0 _ : Nat) -> Type 0\nctor avnil : (AVec zero)\ndata ABox : 
 # family. `(Nat : Type 0) zero` strips to Global "Nat", not BVec, so
 # this stays a Bad_ctor naming BVec's own result shape -- rejected for
 # the intended reason, not for arity and not by accident.
-out=$("$watchdog" 30 "$ROOT"/_build/default/bin/tot.exe check "$ROOT"/test/fixtures/m4fix-ann-head-neg.tot 2>&1)
+out=$("$watchdog" "$MED" "$ROOT"/_build/default/bin/tot.exe check "$ROOT"/test/fixtures/m4fix-ann-head-neg.tot 2>&1)
 code=$?
 { [ "$code" -eq 1 ] \
     && printf '%s\n' "$out" | rg -q 'invalid constructor bvnil: constructor must end in BVec applied to its parameters and 1 index expression'; } \
@@ -1187,7 +1257,7 @@ code=$?
 # rejected the scrutinee with Axiom_runtime_use, and `boom : Nat` became
 # a runtime def whose erased body is the erasure residue. The fallback
 # is now guarded on Erased_use, the one class it exists for.
-out=$("$watchdog" 15 "$ROOT"/_build/default/bin/tot.exe check "$ROOT"/test/fixtures/m4fix-axiom-empty.tot 2>&1)
+out=$("$watchdog" "$MED" "$ROOT"/_build/default/bin/tot.exe check "$ROOT"/test/fixtures/m4fix-axiom-empty.tot 2>&1)
 code=$?
 { [ "$code" -eq 1 ] \
     && printf '%s\n' "$out" | rg -q 'axiom ff used at runtime: axioms are usable only at quantity 0'; } \
@@ -1199,7 +1269,7 @@ code=$?
 # shapes (zero-constructor Empty, the all-erased Eq/refl, the all-erased
 # Unit). The prelude's exfalso, subst0 and J0 are these shapes, so this
 # is the half a too-eager narrowing would break. Exact output pinned.
-out=$("$watchdog" 15 "$ROOT"/_build/default/bin/tot.exe check "$ROOT"/test/fixtures/m4fix-absurd.tot 2>&1)
+out=$("$watchdog" "$MED" "$ROOT"/_build/default/bin/tot.exe check "$ROOT"/test/fixtures/m4fix-absurd.tot 2>&1)
 code=$?
 want=$'def absurdNat : (0 e : Empty) -> Nat\ndef substNat : (0 a : Nat) -> (0 b : Nat) -> (0 h : (((Eq Nat) a) b)) -> (w _ : Nat) -> Nat\ndef unitPeek : (0 u : Unit) -> Nat\nabsurdNat : (0 e : Empty) -> Nat'
 { [ "$code" -eq 0 ] && [ "$out" = "$want" ]; } \
@@ -1211,7 +1281,7 @@ want=$'def absurdNat : (0 e : Empty) -> Nat\ndef substNat : (0 a : Nat) -> (0 b 
 # `zero zero` is Not_a_function "Nat" at the ambient mode; the narrowed
 # guard returns it directly instead of re-inferring at Zero, and the
 # message is byte-identical to the round-3 one.
-out=$("$watchdog" 15 "$ROOT"/_build/default/bin/tot.exe check "$ROOT"/test/fixtures/m4fix-scrut-notfun.tot 2>&1)
+out=$("$watchdog" "$MED" "$ROOT"/_build/default/bin/tot.exe check "$ROOT"/test/fixtures/m4fix-scrut-notfun.tot 2>&1)
 code=$?
 { [ "$code" -eq 1 ] && printf '%s\n' "$out" | rg -q 'not a function type: Nat'; } \
   && echo PASS-M4FIX-SCRUT-NOTFUN \
@@ -1222,7 +1292,7 @@ code=$?
 # every level (round 1, ctxcat id 8), so all three spellings already
 # checked and the finding is refuted on behaviour. This is the missing
 # regression pin. Exact output.
-out=$("$watchdog" 30 "$ROOT"/_build/default/bin/tot.exe check "$ROOT"/test/fixtures/m4fix-ann-whole.tot 2>&1)
+out=$("$watchdog" "$MED" "$ROOT"/_build/default/bin/tot.exe check "$ROOT"/test/fixtures/m4fix-ann-whole.tot 2>&1)
 code=$?
 want=$'data WFoo : (0 A : Type 0) -> (0 _ : Nat) -> Type 0\nctor wmk : (0 A : Type 0) -> (0 x : Nat) -> ((WFoo A) x)\ndata XFoo : (0 A : Type 0) -> (0 _ : Nat) -> Type 0\nctor xmk : (0 A : Type 0) -> (0 x : Nat) -> ((XFoo A) x)\ndata YFoo : (0 A : Type 0) -> (0 _ : Nat) -> Type 0\nctor ymk : (0 A : Type 0) -> (0 x : Nat) -> ((YFoo A) x)\nWFoo : (0 A : Type 0) -> (0 _ : Nat) -> Type 0'
 { [ "$code" -eq 0 ] && [ "$out" = "$want" ]; } \
@@ -1232,7 +1302,7 @@ want=$'data WFoo : (0 A : Type 0) -> (0 _ : Nat) -> Type 0\nctor wmk : (0 A : Ty
 # ctxcat r4 id 4, the NEGATIVE half: a genuinely wrong codomain under
 # the SAME whole-type annotation still fails Bad_ctor, so the positive
 # above is not passing because the shape stopped being checked.
-out=$("$watchdog" 30 "$ROOT"/_build/default/bin/tot.exe check "$ROOT"/test/fixtures/m4fix-ann-whole-neg.tot 2>&1)
+out=$("$watchdog" "$MED" "$ROOT"/_build/default/bin/tot.exe check "$ROOT"/test/fixtures/m4fix-ann-whole-neg.tot 2>&1)
 code=$?
 { [ "$code" -eq 1 ] \
     && printf '%s\n' "$out" | rg -q 'invalid constructor zbad: constructor must end in ZBad applied to its parameters and 1 index expression'; } \
@@ -1245,9 +1315,9 @@ code=$?
 # index; the positive elaborates only under that reading and the
 # negative, which needs the swapped reading, must fail with a Bool/Nat
 # mismatch. Both halves in one marker, so neither can pass alone.
-out=$("$watchdog" 15 "$ROOT"/_build/default/bin/tot.exe check "$ROOT"/test/fixtures/m4fix-motive-order.tot 2>&1)
+out=$("$watchdog" "$MED" "$ROOT"/_build/default/bin/tot.exe check "$ROOT"/test/fixtures/m4fix-motive-order.tot 2>&1)
 code=$?
-outn=$("$watchdog" 15 "$ROOT"/_build/default/bin/tot.exe check "$ROOT"/test/fixtures/m4fix-motive-order-neg.tot 2>&1)
+outn=$("$watchdog" "$MED" "$ROOT"/_build/default/bin/tot.exe check "$ROOT"/test/fixtures/m4fix-motive-order-neg.tot 2>&1)
 coden=$?
 want=$'data Tw : (0 _ : Nat) -> (0 _ : Bool) -> Type 0\nctor tw : ((Tw zero) true)\ndef TwP : (w _ : Nat) -> (w _ : Bool) -> Type 0\ndef twOrder : (0 n : Nat) -> (0 b : Bool) -> (0 t : ((Tw n) b)) -> ((TwP n) b)\ntwOrder : (0 n : Nat) -> (0 b : Bool) -> (0 t : ((Tw n) b)) -> Nat'
 { [ "$code" -eq 0 ] && [ "$out" = "$want" ] && [ "$coden" -eq 1 ] \
@@ -1267,7 +1337,7 @@ want=$'data Tw : (0 _ : Nat) -> (0 _ : Bool) -> Type 0\nctor tw : ((Tw zero) tru
 # L = 1667 resolves at 9996, L = 1668 fails at 10002). inst_fuel now
 # also scales with term_size. Exact value pinned; the failure branch is
 # tailed because the fixture prints one line per declaration.
-out=$("$watchdog" 30 "$ROOT"/_build/default/bin/tot.exe run "$ROOT"/test/fixtures/m4fix-inst-wide.tot 2>&1)
+out=$(gate_timed "$MED" M4FIX-INST-WIDE "$ROOT"/_build/default/bin/tot.exe run "$ROOT"/test/fixtures/m4fix-inst-wide.tot)
 code=$?
 { [ "$code" -eq 0 ] && [ "$(printf '%s\n' "$out" | rg -cx 'zero')" = "1" ] \
     && ! printf '%s\n' "$out" | rg -q 'fuel'; } \
@@ -1294,7 +1364,13 @@ code=$?
 # (python3 dev/gen-inst-fuel.py classes 61, run, expect exit 1) whenever
 # inst_fuel or build_instance's charge accounting changes, and lower K
 # here if the margin goes negative.
-out=$("$watchdog" 60 "$ROOT"/_build/default/bin/tot.exe run "$ROOT"/test/fixtures/m4fix-inst-classes.tot 2>&1)
+# M5 Stage C (2026-09-02): inst_fuel gained the (1 + class_count)
+# factor and dev/bisect-inst-classes.sh re-bisected this shape to
+# NOLEAF<=488 (61, 122, 244 and 488 all resolve), so the 60/61 leaf
+# recorded above is STALE; PASS-M5C-CLASSES-61 and
+# PASS-M5C-LEAF-MARGIN carry the new pins.  This fixture and its
+# marker stay: a gate that got cheaper to pass is still a gate.
+out=$(gate_timed "$SLOW" M4FIX-INST-CLASSES "$ROOT"/_build/default/bin/tot.exe run "$ROOT"/test/fixtures/m4fix-inst-classes.tot)
 code=$?
 { [ "$code" -eq 0 ] && [ "$(printf '%s\n' "$out" | rg -cx 'zero')" = "1" ] \
     && ! printf '%s\n' "$out" | rg -q 'fuel'; } \
@@ -1339,13 +1415,13 @@ mm_write "$mm_scratch/small.tot" 300
 mm_write "$mm_scratch/large.tot" 900
 printf 'data MMKey : Type 0 := | mmKey : MMKey\ndata MMWrap (0 A : Type 0) : Type 0 := | mmWrap : A -> MMWrap A\ndef mmA : MMWrap MMKey -> MMKey := fun z => mmKey\ndef mmB : MMKey -> MMKey := fun z => mmKey\ndef mmBad : MMWrap MMKey -> MMKey := mmB\n' \
   > "$mm_scratch/short.tot"
-"$watchdog" 30 "$ROOT"/_build/default/bin/tot.exe check "$mm_scratch/small.tot" \
+"$watchdog" "$MED" "$ROOT"/_build/default/bin/tot.exe check "$mm_scratch/small.tot" \
   > "$mm_scratch/o1" 2> "$mm_scratch/e1"
 mm_c1=$?
-"$watchdog" 30 "$ROOT"/_build/default/bin/tot.exe check "$mm_scratch/large.tot" \
+"$watchdog" "$MED" "$ROOT"/_build/default/bin/tot.exe check "$mm_scratch/large.tot" \
   > "$mm_scratch/o2" 2> "$mm_scratch/e2"
 mm_c2=$?
-"$watchdog" 30 "$ROOT"/_build/default/bin/tot.exe check "$mm_scratch/short.tot" \
+"$watchdog" "$MED" "$ROOT"/_build/default/bin/tot.exe check "$mm_scratch/short.tot" \
   > "$mm_scratch/o3" 2> "$mm_scratch/e3"
 mm_c3=$?
 mm_len1=$(awk '{ if (length($0) > m) m = length($0) } END { print m + 0 }' "$mm_scratch/e1")
@@ -1402,7 +1478,7 @@ oneread_scratch=$(mktemp -d "${TMPDIR:-/tmp}/tot-gate-oneread.XXXXXX")
 printf 'def oneReadOk : Bool := true\n' > "$oneread_scratch/target.tot"
 oneread_out=$(env TOT_PRELUDE="$oneread_scratch/absent-prelude.tot" \
   TOT_CACHE_DIR="$oneread_scratch/cache" \
-  "$watchdog" 15 "$ROOT"/_build/default/bin/tot.exe check --serror-exit 0 \
+  "$watchdog" "$MED" "$ROOT"/_build/default/bin/tot.exe check --serror-exit 0 \
   "$oneread_scratch/target.tot" 2>&1 > "$oneread_scratch/out")
 oneread_code=$?
 { [ "$oneread_calls" -eq 0 ] && [ "$oneread_srcs" -eq 3 ] \
@@ -1436,10 +1512,10 @@ rm -rf "$oneread_scratch"
 # printed the line on stdout and, under --serror-exit 0, exited 0.
 f2_scratch=$(mktemp -d "${TMPDIR:-/tmp}/tot-gate-f2.XXXXXX")
 f2_missing="$f2_scratch/no-such-file.tot"
-"$watchdog" 15 "$ROOT"/_build/default/bin/tot.exe check --serror-exit 0 "$f2_missing" \
+"$watchdog" "$MED" "$ROOT"/_build/default/bin/tot.exe check --serror-exit 0 "$f2_missing" \
   > "$f2_scratch/out1" 2> "$f2_scratch/err1"
 f2c1=$?
-"$watchdog" 15 "$ROOT"/_build/default/bin/tot.exe check "$f2_missing" \
+"$watchdog" "$MED" "$ROOT"/_build/default/bin/tot.exe check "$f2_missing" \
   > "$f2_scratch/out2" 2> "$f2_scratch/err2"
 f2c2=$?
 { [ "$f2c1" -eq 1 ] && [ "$f2c2" -eq 1 ] \
@@ -1493,7 +1569,7 @@ f2_sibling() {
   f2_path=$1
   f2_msg=$2
   shift 2
-  "$watchdog" 15 "$ROOT"/_build/default/bin/tot.exe check "$@" "$f2_path" \
+  "$watchdog" "$MED" "$ROOT"/_build/default/bin/tot.exe check "$@" "$f2_path" \
     > "$f2_scratch/out5" 2> "$f2_scratch/err5"
   f2c5=$?
   { [ "$f2c5" -eq 1 ] && [ ! -s "$f2_scratch/out5" ] \
@@ -1531,7 +1607,7 @@ chmod 700 "$f2_unread"
 # take the target file's contract: stdout EMPTY, one driver line on
 # stderr, the literal exit 1, OUTSIDE the --serror-exit mapping. Each
 # case is probed twice, bare and with --serror-exit 0, under
-# "$watchdog" 15 so a re-blocking open is a loud 124 rather than a
+# "$watchdog" "$MED" so a re-blocking open is a loud 124 rather than a
 # stalled battery. The unreadable case carries the same root guard as
 # the sibling block above (ctxcat r3 id 1).
 pre_scratch=$(mktemp -d "${TMPDIR:-/tmp}/tot-gate-prelude.XXXXXX")
@@ -1553,7 +1629,7 @@ pre_probe() {
   pre_path=$1
   pre_msg=$2
   shift 2
-  env TOT_PRELUDE="$pre_path" "$watchdog" 15 "$ROOT"/_build/default/bin/tot.exe check "$@" \
+  env TOT_PRELUDE="$pre_path" "$watchdog" "$MED" "$ROOT"/_build/default/bin/tot.exe check "$@" \
     "$pre_ok" > "$pre_scratch/out" 2> "$pre_scratch/err"
   pre_code=$?
   { [ "$pre_code" -eq 1 ] && [ ! -s "$pre_scratch/out" ] \
@@ -1583,10 +1659,10 @@ rm -rf "$pre_scratch"
 
 # audit F2, the flag surface: an unknown flag and a pathless invocation
 # both report on STDERR and exit 2, with stdout untouched.
-"$watchdog" 15 "$ROOT"/_build/default/bin/tot.exe check --bogus-flag /dev/null \
+"$watchdog" "$MED" "$ROOT"/_build/default/bin/tot.exe check --bogus-flag /dev/null \
   > "$f2_scratch/out3" 2> "$f2_scratch/err3"
 f2c3=$?
-"$watchdog" 15 "$ROOT"/_build/default/bin/tot.exe check \
+"$watchdog" "$MED" "$ROOT"/_build/default/bin/tot.exe check \
   > "$f2_scratch/out4" 2> "$f2_scratch/err4"
 f2c4=$?
 { [ "$f2c3" -eq 2 ] && [ "$f2c4" -eq 2 ] \
@@ -1601,6 +1677,798 @@ f2c4=$?
     exit 1
   }
 rm -rf "$f2_scratch"
+
+# ---------------------------------------------------------------------
+# M5 STAGE A (plan section A10): JSON conformance, the strict-json
+# posture, and the two fence pins.  Eight legs, each with a mutation
+# proof recorded in dev/M5-BUILD-LOG.md.  Every leg wears the numeric
+# watchdog literal 30 (the MED value Stage D's tier conversion maps 30
+# to); Stage D's conversion list gains these sites.
+#
+# The cache legs above unset TOT_PRELUDE.  Every guard and tot-copy
+# invocation below needs the explicit override again (the PATH-shim
+# COPY of tot cannot resolve the prelude from its own location; the
+# same reason the export at the top of Gate D exists).  Re-exported
+# here and unset again at the end of this section, so the environment
+# the downstream legs see is exactly what it was before.
+# ---------------------------------------------------------------------
+export TOT_PRELUDE="$ROOT"/stdlib/prelude.tot
+
+# PASS-M5A-BYPASS (pin 13).  The headline exploit: a banned binary
+# spelled through a \uXXXX escape used to fall open to allow (exit 0,
+# empty stdout, measured at M4 HEAD, plan A0 rows 1, 9, 10, 12).  All
+# four escaped spellings must now decode and DENY with the exact
+# house-rule envelope.  MUTATION PROOF: delete the '\\' :: 'u' arm from
+# Interp.json_string_body; all four flip back to exit 0, empty stdout.
+# M5 Stage D (plan D3): the echoed-command suffix lands here too;
+# each decoded payload has its own expected envelope (the pair and
+# bmp fixtures decode to raw UTF-8 on the wire, >= 0x80 unescaped).
+m5a_want='{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"house rule: use rg instead of grep and sd instead of sed (command: grep foo)"}}'
+# deny.json's envelope again ($want is a reused name upstream and no
+# longer holds Gate D's value by the time this section runs)
+m5a_want_deny='{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"house rule: use rg instead of grep and sd instead of sed (command: grep foo /tmp/x)"}}'
+m5a_want_pair='{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"house rule: use rg instead of grep and sd instead of sed (command: grep 😀)"}}'
+m5a_want_bmp='{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"house rule: use rg instead of grep and sd instead of sed (command: grep é)"}}'
+m5a_o1=$("$watchdog" "$MED" "$guard" < "$fx/m5a-bypass.json"); m5a_c1=$?
+m5a_o2=$("$watchdog" "$MED" "$guard" < "$fx/m5a-pair.json"); m5a_c2=$?
+m5a_o3=$("$watchdog" "$MED" "$guard" < "$fx/m5a-bmp.json"); m5a_c3=$?
+m5a_o4=$("$watchdog" "$MED" "$guard" < "$fx/m5a-name-esc.json"); m5a_c4=$?
+{ [ "$m5a_c1" -eq 2 ] && [ "$m5a_o1" = "$m5a_want" ] \
+  && [ "$m5a_c2" -eq 2 ] && [ "$m5a_o2" = "$m5a_want_pair" ] \
+  && [ "$m5a_c3" -eq 2 ] && [ "$m5a_o3" = "$m5a_want_bmp" ] \
+  && [ "$m5a_c4" -eq 2 ] && [ "$m5a_o4" = "$m5a_want" ]; } \
+  && echo PASS-M5A-BYPASS \
+  || {
+    printf '%s\n%s\n%s\n%s\n' "$m5a_o1" "$m5a_o2" "$m5a_o3" "$m5a_o4"
+    echo "FAIL-M5A-BYPASS (exit=$m5a_c1/$m5a_c2/$m5a_c3/$m5a_c4)"
+    exit 1
+  }
+
+# PASS-M5A-FIXTURE-BYTES.  The bypass fixture must still carry the
+# LITERAL six characters \u0067 (the authoring path once normalised a
+# typed escape to a plain "grep foo", which already denies at M4 HEAD,
+# turning PASS-M5A-BYPASS into a vacuous pass; plan A7).  Asserted on
+# rg's EXIT STATUS, never on absent output.  MUTATION PROOF: rewrite
+# the fixture with a decoded g; rg exits 1 and this leg fails.
+"$watchdog" "$MED" rg -c '\\u0067rep' "$fx/m5a-bypass.json" > /dev/null 2>&1 \
+  && echo PASS-M5A-FIXTURE-BYTES \
+  || { echo "FAIL-M5A-FIXTURE-BYTES (the fixture lost its literal backslash-u escape)"; exit 1; }
+
+# PASS-M5A-ENVELOPE-VALID (pin 13).  Two rewired call sites, one leg,
+# two mutation proofs, because one site must not certify the other.
+# (a) The verdict ENVELOPE (surface/effect.ml): a deny message
+# carrying a raw CR and a raw 0x01 must render as \r and \u0001, and
+# the whole line must satisfy a CONFORMING parser (python3
+# json.loads); at M4 HEAD json.loads rejected it (plan A0 row 15).
+# MUTATION PROOF (a): revert the envelope site to Pp.escape_string;
+# json.loads exits 1.
+# (b) The SERIALIZER's jstr site (lib/interp.ml): jsonSerialize on a
+# CR-carrying string must emit the two-character escape \r, never the
+# raw byte, and the emitted text must satisfy json.loads.  The plan's
+# round-trip NONE oracle is unbuildable against this repo: a raw C0
+# byte inside a string body still PARSES (deliberate non-change 1 of
+# plan A2, re-probed 2026-09-02), so the second jsonParse cannot
+# return none and only the emitted BYTES discriminate.  Conflict note
+# in dev/M5-BUILD-LOG.md; the mutation is unchanged, the oracle half
+# is replaced, the leg is not shrunk.  MUTATION PROOF (b): revert the
+# jstr site to Pp.escape_string; the line loses the literal \r (a raw
+# CR is not the two-character sequence) and json.loads exits 1.
+printf 'def main : IO Verdict := pureIO Verdict (deny "a\\rb\001c")\n' > "$tot_scratch/m5a-envelope.tot"
+m5a_env=$("$watchdog" "$MED" "$tot_scratch/tot" run "$tot_scratch/m5a-envelope.tot"); m5a_envc=$?
+printf '%s' "$m5a_env" | python3 -c 'import json,sys; json.loads(sys.stdin.read())' > /dev/null 2>&1; m5a_pyc=$?
+printf 'def main : IO Verdict :=\n  let* String Verdict s := pureIO String (jsonSerialize (jstr "x\\ry")) in\n  let* Unit Verdict u := printLine s in\n  pureIO Verdict allow\n' > "$tot_scratch/m5a-ser.tot"
+m5a_ser=$("$watchdog" "$MED" "$tot_scratch/tot" run "$tot_scratch/m5a-ser.tot"); m5a_serc=$?
+printf '%s' "$m5a_ser" | python3 -c 'import json,sys; json.loads(sys.stdin.read())' > /dev/null 2>&1; m5a_serpy=$?
+{ [ "$m5a_envc" -eq 2 ] && [ "$m5a_pyc" -eq 0 ] \
+  && printf '%s' "$m5a_env" | rg -qF '\r' \
+  && printf '%s' "$m5a_env" | rg -qF '\u0001' \
+  && [ "$m5a_serc" -eq 0 ] && [ "$m5a_serpy" -eq 0 ] \
+  && printf '%s' "$m5a_ser" | rg -qF '\r'; } \
+  && echo PASS-M5A-ENVELOPE-VALID \
+  || {
+    printf '%s\n%s\n' "$m5a_env" "$m5a_ser"
+    echo "FAIL-M5A-ENVELOPE-VALID (exit=$m5a_envc py=$m5a_pyc ser=$m5a_serc serpy=$m5a_serpy)"
+    exit 1
+  }
+
+# PASS-M5A-LONE-SURROGATE (pin 13).  The six non-conforming escape
+# shapes each fail the WHOLE parse, and with the flag OFF the guard
+# still falls open: exit 0, EMPTY stdout, for every one.  The guard
+# half alone would be VACUOUS under a parser that silently ACCEPTED a
+# lone surrogate (an accepted \ud800 command still allows), so the leg
+# also requires the suite's DIRECT parse assertion, M5A-J7, replayed
+# in the kernel-suite output captured at the top of this battery.
+# MUTATION PROOF: drop the two surrogate guards in the parser's \u
+# arm; M5A-J7 fails (json_parse_top "\"\\ud800\"" returns Some), the
+# suite goes red, and this leg's rg on the replay finds no PASS line.
+m5a_lsok=1
+for m5a_f in m5a-lone-hi m5a-lone-lo m5a-short m5a-nonhex m5a-hi-plain m5a-hi-nonlow; do
+  m5a_lo=$("$watchdog" "$MED" "$guard" < "$fx/$m5a_f.json"); m5a_lc=$?
+  { [ "$m5a_lc" -eq 0 ] && [ -z "$m5a_lo" ]; } || { printf '%s: exit=%s out=[%s]\n' "$m5a_f" "$m5a_lc" "$m5a_lo"; m5a_lsok=0; }
+done
+{ [ "$m5a_lsok" -eq 1 ] \
+  && printf '%s\n' "$main_out" | rg -q '^PASS M5A-J7'; } \
+  && echo PASS-M5A-LONE-SURROGATE \
+  || { echo "FAIL-M5A-LONE-SURROGATE"; exit 1; }
+
+# PASS-M5A-FENCE-PI (pin 15, amendment A5).  A self-recursive
+# occurrence under a Pi CODOMAIN keeps self_rec = true, so PXf stays
+# outside zero_eliminable and eliminating it at mode w is Erased_use.
+# The control fixture (same shape, no self recursion) pins the flip
+# target: it already exits 0 (plan A0 row 24).  MUTATION PROOF: change
+# lib/totality.ml's Pi arm to walk the DOMAIN only; self_rec goes
+# false and this leg fails.  OBSERVED route (Stage A build log,
+# re-proved 2026-09-03): the mutated tree still rejects the fixture,
+# but on the structural termination guard, so the exit stays nonzero
+# and the leg flips on the missing 'erased variable px' text, not on
+# the plan's predicted exit 0.  NOT a
+# mutation: skipping Pi DOMAINS, refuted by strict positivity (no
+# admissible declaration has a domain occurrence; plan A5 conflict
+# note, probe A0 row 23).
+m5a_pi=$("$watchdog" "$MED" dune exec --root "$ROOT" test/surface.exe -- gate-check "$fx/m5a-fence-pi.tot" 2>&1); m5a_pic=$?
+m5a_pictl=$("$watchdog" "$MED" dune exec --root "$ROOT" test/surface.exe -- gate-check "$fx/m5a-fence-pi-ctl.tot" 2>&1); m5a_pictlc=$?
+{ [ "$m5a_pic" -ne 0 ] \
+  && printf '%s\n' "$m5a_pi" | rg -q 'erased variable px used at runtime' \
+  && [ "$m5a_pictlc" -eq 0 ]; } \
+  && echo PASS-M5A-FENCE-PI \
+  || {
+    printf '%s\n%s\n' "$m5a_pi" "$m5a_pictl"
+    echo "FAIL-M5A-FENCE-PI (exit=$m5a_pic/$m5a_pictlc)"
+    exit 1
+  }
+
+# PASS-M5A-PARAM-LEVEL (pin 16, amendment A5).  The parameter-level
+# predicativity exemption (lib/check.ml discards the inferred
+# parameter level) is what makes Acc check; the index and
+# constructor-argument bounds still bite.  Three fixtures, three
+# mutation proofs, no leg certifying another: (1) bound the parameter
+# fold like the index fold; the POSITIVE fixture fails (PBox and Acc
+# both reject).  (2) drop the constructor-argument bound; KBad checks
+# and the pinned Bad_ctor text disappears.  (3) drop the index bound;
+# IBad checks.
+m5a_pl=$("$watchdog" "$MED" dune exec --root "$ROOT" test/surface.exe -- gate-check "$fx/m5a-param-level.tot" 2>&1); m5a_plc=$?
+m5a_pn=$("$watchdog" "$MED" dune exec --root "$ROOT" test/surface.exe -- gate-check "$fx/m5a-param-level-neg.tot" 2>&1); m5a_pnc=$?
+m5a_in=$("$watchdog" "$MED" dune exec --root "$ROOT" test/surface.exe -- gate-check "$fx/m5a-index-level-neg.tot" 2>&1); m5a_inc=$?
+{ [ "$m5a_plc" -eq 0 ] \
+  && [ "$m5a_pnc" -ne 0 ] \
+  && printf '%s\n' "$m5a_pn" | rg -q 'invalid constructor kmk: constructor argument lives above the declared universe' \
+  && [ "$m5a_inc" -ne 0 ] \
+  && printf '%s\n' "$m5a_in" | rg -q 'inductive IBad: index t lives above the declared universe'; } \
+  && echo PASS-M5A-PARAM-LEVEL \
+  || {
+    printf '%s\n%s\n%s\n' "$m5a_pl" "$m5a_pn" "$m5a_in"
+    echo "FAIL-M5A-PARAM-LEVEL (exit=$m5a_plc/$m5a_pnc/$m5a_inc)"
+    exit 1
+  }
+
+# PASS-M5A-STRICT-DENY (pin 20, amendment A2).  Under --strict-json a
+# payload that is not one well-formed JSON value DENIES with exit 2
+# and the fixed reason string.  garbage.json is obvious garbage; the
+# lone-surrogate payload proves the flag covers a NON-CONFORMING
+# payload the \u work still refuses, not only non-JSON.  MUTATION
+# PROOF: make the strict guard in Effect.dispatch unconditional false;
+# both runs flip to exit 0, empty stdout (the M4 HEAD posture, plan A0
+# rows 26 and 3).
+m5a_sdwant='{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"strict-json: stdin is not a single well-formed JSON value"}}'
+m5a_sd1=$("$watchdog" "$MED" "$tot_scratch/tot" run --strict-json "$guard" < "$fx/garbage.json"); m5a_sd1c=$?
+m5a_sd2=$("$watchdog" "$MED" "$tot_scratch/tot" run --strict-json "$guard" < "$fx/m5a-lone-hi.json"); m5a_sd2c=$?
+{ [ "$m5a_sd1c" -eq 2 ] && [ "$m5a_sd1" = "$m5a_sdwant" ] \
+  && [ "$m5a_sd2c" -eq 2 ] && [ "$m5a_sd2" = "$m5a_sdwant" ]; } \
+  && echo PASS-M5A-STRICT-DENY \
+  || {
+    printf '%s\n%s\n' "$m5a_sd1" "$m5a_sd2"
+    echo "FAIL-M5A-STRICT-DENY (exit=$m5a_sd1c/$m5a_sd2c)"
+    exit 1
+  }
+
+# PASS-M5A-STRICT-ALLOW (pin 20).  Three assertions: (a) the flag does
+# not disturb a real allow, (b) nor a real deny, and (c) WITHOUT the
+# flag the garbage payload still falls open, byte-identical to M4
+# HEAD.  MUTATION PROOF: default opts.strict_json to true in
+# bin/tot.ml; assertion (c) fails (the unflagged garbage run prints
+# the strict-json envelope and exits 2).  This is the leg that keeps
+# "default off" honest; the deny legs alone cannot see a changed
+# default.
+m5a_sa1=$("$watchdog" "$MED" "$tot_scratch/tot" run --strict-json "$guard" < "$fx/allow.json"); m5a_sa1c=$?
+m5a_sa2=$("$watchdog" "$MED" "$tot_scratch/tot" run --strict-json "$guard" < "$fx/deny.json"); m5a_sa2c=$?
+m5a_sa3=$("$watchdog" "$MED" "$tot_scratch/tot" run "$guard" < "$fx/garbage.json"); m5a_sa3c=$?
+{ [ "$m5a_sa1c" -eq 0 ] && [ -z "$m5a_sa1" ] \
+  && [ "$m5a_sa2c" -eq 2 ] && [ "$m5a_sa2" = "$m5a_want_deny" ] \
+  && [ "$m5a_sa3c" -eq 0 ] && [ -z "$m5a_sa3" ]; } \
+  && echo PASS-M5A-STRICT-ALLOW \
+  || {
+    printf '%s\n%s\n%s\n' "$m5a_sa1" "$m5a_sa2" "$m5a_sa3"
+    echo "FAIL-M5A-STRICT-ALLOW (exit=$m5a_sa1c/$m5a_sa2c/$m5a_sa3c)"
+    exit 1
+  }
+
+# end of the M5 Stage A section: restore the unset the cache legs left
+unset TOT_PRELUDE
+
+# ---- M5 Stage B (plan B11): instance term sharing.  Five legs.  The
+# watchdog literals below are literals on purpose: the named tiers are
+# Stage D's contents, and PASS-M5D-TIERS rewrites all five.
+
+# PASS-M5B-SHIFT (pin 2).  The three Term.shift kernel cases, replayed
+# from the captured kernel-suite output (the PASS-A-LITERALS pattern).
+# MUTATION PROOFS (plan B11): (1) motive cutoff dropped to
+# cutoff + |m_idx| flips M5B2; (2) branch cutoff replaced by cutoff + 1
+# flips M5B3; (3) an unconditional Var (i + by) flips M5B1.
+{ printf '%s\n' "$main_out" | rg -q '^PASS M5B1: ' \
+    && printf '%s\n' "$main_out" | rg -q '^PASS M5B2: ' \
+    && printf '%s\n' "$main_out" | rg -q '^PASS M5B3: '; } \
+  && echo PASS-M5B-SHIFT \
+  || { echo "FAIL-M5B-SHIFT"; exit 1; }
+
+# PASS-M5B-SHARE-SIZE (pins 1, 3, 4).  Machine-independent, from the
+# same capture: M5B4 checks Term.Auto against SC (SBox^16 Bool) and
+# asserts the emitted nest's term_size < 4000 (measured 694 on
+# 2026-09-02; the un-shared M4 tree is T(16) = 458714 by the plan B0
+# recurrence).  MUTATION PROOF: inline the ISlot arm of islot_term
+# (materialize the entry's own term instead of a Var), which is exactly
+# the M4 tree; the printed term_size explodes and the < 4000 assertion
+# fails.
+printf '%s\n' "$main_out" | rg -q '^PASS M5B4: ' \
+  && echo PASS-M5B-SHARE-SIZE \
+  || { printf '%s\n' "$main_out" | rg 'M5B4'; echo "FAIL-M5B-SHARE-SIZE"; exit 1; }
+
+# PASS-M5B-FUEL-REACHABLE (pin 5 boundary).  Two legs, both through
+# `tot run`, so the only path into resolve_auto is the production call
+# site (lib/check.ml, the Term.Auto arm) with
+# inst_start (inst_fuel globals expected_t): an inst_start-1 unit test
+# stays green for ANY bound and duplicates D7/D7b/D7c.  Measured
+# 2026-09-02 on the Stage B binary: K = 60 resolved (exit 0, `zero`,
+# 0.176s) and K = 61 reported the exact fuel line at exit 1.
+# M5 Stage C (conflict note C-C3, 2026-09-02): the C-B2 handoff that
+# stood here said Stage C re-bisects K and regenerates both fixtures
+# at the new leaf with this oracle unchanged.  The measurement refutes
+# the mechanism: with inst_fuel multiplied by 1 + class_count, charge
+# and bound are BOTH about quadratic in K on this shape, and
+# dev/bisect-inst-classes.sh reports NOLEAF<=488 (61, 122, 244 and 488
+# all resolve; K = 976 breaches the 8 MB file ceiling), so NO
+# affordable K rejects and the old negative oracle is impossible on
+# any committed input.  Per plan section 5 rule 4 the INTENT survives
+# and the mechanism moves: both fixtures keep their committed bytes
+# (there is no new leaf to regenerate at), the K = 61 leaf fixture now
+# must RESOLVE (that flip is the class-count factor working, the M4
+# fuel line for this exact file is recorded in the Stage C build log),
+# and the exact-fuel-line coverage lives in PASS-M5C-CLASSES-61's
+# mutation, which drops the factor and observes this very file's old
+# exit-1 line.  MUTATION PROOFS: (1) charge fuel on a memo HIT
+# (Stage B M5, recorded); (2) Stage C: drop the (1 + class_count)
+# factor from inst_fuel; the K = 61 half exits 1 with the fuel line
+# and this leg goes red.
+out=$(gate_timed "$MED" M5B-FUEL-REACHABLE-UNDER "$ROOT"/_build/default/bin/tot.exe run \
+  "$ROOT"/test/fixtures/m5b-inst-fuel-under.tot)
+code=$?
+out2=$(gate_timed "$MED" M5B-FUEL-REACHABLE-LEAF "$ROOT"/_build/default/bin/tot.exe run \
+  "$ROOT"/test/fixtures/m5b-inst-fuel-leaf.tot)
+code2=$?
+{ [ "$code" -eq 0 ] && [ "$(printf '%s\n' "$out" | rg -cx 'zero')" = "1" ] \
+    && ! printf '%s\n' "$out" | rg -q 'fuel' \
+    && [ "$code2" -eq 0 ] && [ "$(printf '%s\n' "$out2" | rg -cx 'zero')" = "1" ] \
+    && ! printf '%s\n' "$out2" | rg -q 'fuel'; } \
+  && echo PASS-M5B-FUEL-REACHABLE \
+  || { printf '%s\n' "$out" "$out2" | tail -n 3; echo "FAIL-M5B-FUEL-REACHABLE (exit=$code/$code2)"; exit 1; }
+
+# PASS-M5B-RUNTIME-IDENTITY (pin 6).  Four files, each pinned to the
+# exact runtime line the M4 HEAD binary printed on 2026-09-02 (plan B0
+# probes P4, P10, P11, P13): the nest must never change a VALUE, only a
+# term's shape.  The memo-key file is here precisely because its value
+# depends on WHICH dictionary a slot names; the zero-dict file is the
+# 0-quantity dictionary binder whose ELet survives erasure (plan B5
+# property 4; the COST half is Stage D's measurement).  MUTATION
+# PROOFS: (1) materialize ISlot j as Var (i - 1); memo-key stops
+# printing (succ zero) or the re-check rejects.  (2) see the build log
+# (the plan's shift-Var mutation is refuted on closed fixtures and
+# replaced by Var (i - j), which mis-scopes every nest).  (3) re-derive
+# on a memo HIT; no flip HERE (this leg pins output, not cost) and
+# PASS-M5B-BRANCHING-20 is the leg that fails on the cost.
+# NOT a leg here: chains-800 (plan B12).  gen-inst-chains.py 8 800 has
+# no duplicate (class, key) pair, so sharing cannot help it, and the
+# per-slot type annotation may make it slightly slower.  It is Stage
+# C's check-budget evidence (P12: exit 124 at M4 HEAD); generate it in
+# Stage C, not here.
+ri_fail=0
+for f in m5b-inst-branching-20 m5b-inst-chains-8-40 m5b-inst-zero-dict; do
+  out=$(gate_timed "$MED" "M5B-RUNTIME-IDENTITY-$f" "$ROOT"/_build/default/bin/tot.exe run "$ROOT"/test/fixtures/$f.tot)
+  code=$?
+  { [ "$code" -eq 0 ] && printf '%s\n' "$out" | rg -qx 'true'; } \
+    || { printf '%s\n' "$out" | tail -n 2; echo "runtime-identity $f (exit=$code)"; ri_fail=1; }
+done
+out=$(gate_timed "$MED" M5B-RUNTIME-IDENTITY-m4fix-inst-memo-key "$ROOT"/_build/default/bin/tot.exe run "$ROOT"/test/fixtures/m4fix-inst-memo-key.tot)
+code=$?
+{ [ "$code" -eq 0 ] && printf '%s\n' "$out" | rg -qxF '(succ zero)'; } \
+  || { printf '%s\n' "$out" | tail -n 2; echo "runtime-identity m4fix-inst-memo-key (exit=$code)"; ri_fail=1; }
+[ "$ri_fail" -eq 0 ] \
+  && echo PASS-M5B-RUNTIME-IDENTITY \
+  || { echo "FAIL-M5B-RUNTIME-IDENTITY"; exit 1; }
+
+# ---- M5 Stage C (plan C10): the check budget, the class-count fuel
+# factor, and the driver contract.  Seven legs.  Watchdog literals stay
+# literals on purpose (Stage D's named tiers rewrite them).  The
+# scratch rides the Gate D EXIT trap.
+m5c_scratch=$(mktemp -d "${TMPDIR:-/tmp}/tot-gate-m5c.XXXXXX")
+m5c_bin="$ROOT"/_build/default/bin/tot.exe
+python3 "$ROOT"/dev/gen-inst-chains.py 8 800 > "$m5c_scratch/chains800.tot"
+python3 "$ROOT"/dev/gen-inst-chains.py 8 100 > "$m5c_scratch/chains100.tot"
+python3 "$ROOT"/dev/gen-inst-fuel.py classes 61 > "$m5c_scratch/cls61.tot"
+python3 "$ROOT"/dev/gen-inst-fuel.py classes 122 > "$m5c_scratch/cls122.tot"
+printf 'def m5cq : Bool := true\n' > "$m5c_scratch/trivial.tot"
+
+# PASS-M5C-BUDGET-FIRES (pins 10, 19; plan C10).  The 800-box chain
+# (measured on M4 HEAD: exit 124 after 60s with BOTH channels empty,
+# the no-verdict state this stage replaces) under a 1 ms budget gives
+# a VERDICT: the reserved exit 3, an EMPTY stdout, and ONE exact
+# stderr line naming the CONFIGURED milliseconds.  Leg 2 adds
+# --serror-exit 0: the budget verdict stays OUTSIDE the mapping, so a
+# fail-open install cannot turn a no-verdict into an allow (conflict
+# note C12.2: --serror-exit 3 is a shipped configuration, so the LINE,
+# not the code alone, is the discriminator, and both legs assert it).
+# The 30s watchdog is the REACH requirement: the budget cuts only
+# between poll sites, so a 124 here means the chains cost sits inside
+# a single non-polling call; do not widen this oracle to accept 124.
+# MUTATION PROOFS (plan C10): (1) delete the is_check_budget arm from
+# run_file's ladder; the cutoff falls through to the script-error arm
+# (leg 2 exits 0, leg 1's stderr takes the <path>:<loc>: shape).
+# (2) return serror_exit instead of the literal 3 in the budget arm;
+# leg 2 exits 0.
+bf_want="$m5c_scratch/chains800.tot: check budget exhausted (1 ms)"
+bf_out=$("$watchdog" "$MED" "$m5c_bin" check --check-budget-ms 1 \
+  "$m5c_scratch/chains800.tot" 2> "$m5c_scratch/bf1.err")
+bf_code=$?
+bf_err=$(cat "$m5c_scratch/bf1.err")
+bf2_out=$("$watchdog" "$MED" "$m5c_bin" check --check-budget-ms 1 --serror-exit 0 \
+  "$m5c_scratch/chains800.tot" 2> "$m5c_scratch/bf2.err")
+bf2_code=$?
+bf2_err=$(cat "$m5c_scratch/bf2.err")
+{ [ "$bf_code" -eq 3 ] && [ -z "$bf_out" ] && [ "$bf_err" = "$bf_want" ] \
+    && [ "$bf2_code" -eq 3 ] && [ -z "$bf2_out" ] && [ "$bf2_err" = "$bf_want" ]; } \
+  && echo PASS-M5C-BUDGET-FIRES \
+  || {
+    printf '%s\n%s\n' "$bf_err" "$bf2_err"
+    echo "FAIL-M5C-BUDGET-FIRES (exit=$bf_code/$bf2_code)"
+    exit 1
+  }
+
+# PASS-M5C-BUDGET-QUIET (pin 11; plan C10).  No false positive hides
+# behind the FIRES leg.  (a) The 100-box chain (same generator, same
+# instance table, same poll sites as the 800-box file; 0.65s measured
+# on M4 HEAD) under a 60000 ms budget: exit 0 and stdout
+# byte-identical to the no-flag run.  The 800-box file itself cannot
+# afford a quiet leg (conflict note C12.3: its completion time is
+# above 400s by extrapolation).  (b) A trivial one-def target under a
+# 1 ms budget: exit 0, empty stderr -- the deadline is captured AFTER
+# the prelude bootstrap (bin/tot.ml builds the budget after
+# cached_state_of_src returns), and the warm bootstrap alone costs
+# about 10 ms of CPU, ten times this budget.  FLAKE CONTROL (plan
+# C10): leg (b) ran 20 times before this marker was committed,
+# 20 of 20 exit 0 (2026-09-02, under ambient build load).
+# MUTATION PROOFS: (1) make the driver poll answer true
+# unconditionally; leg (a) exits 3.  (2) capture the deadline BEFORE
+# the bootstrap (build the budget in check_or_run); leg (b) exits 3
+# (see the build log for the observed mechanism note).
+bq_a1=$("$watchdog" "$MED" "$m5c_bin" check --check-budget-ms 60000 \
+  "$m5c_scratch/chains100.tot" 2> "$m5c_scratch/qa1.err")
+bq_c1=$?
+bq_a0=$("$watchdog" "$MED" "$m5c_bin" check "$m5c_scratch/chains100.tot" 2> "$m5c_scratch/qa0.err")
+bq_c0=$?
+bq_b=$("$watchdog" "$MED" "$m5c_bin" check --check-budget-ms 1 \
+  "$m5c_scratch/trivial.tot" 2> "$m5c_scratch/qb.err")
+bq_cb=$?
+{ [ "$bq_c1" -eq 0 ] && [ "$bq_c0" -eq 0 ] && [ "$bq_a1" = "$bq_a0" ] \
+    && [ "$bq_cb" -eq 0 ] && [ ! -s "$m5c_scratch/qb.err" ]; } \
+  && echo PASS-M5C-BUDGET-QUIET \
+  || {
+    cat "$m5c_scratch/qa1.err" "$m5c_scratch/qb.err"
+    echo "FAIL-M5C-BUDGET-QUIET (exit=$bq_c1/$bq_c0/$bq_cb)"
+    exit 1
+  }
+
+# PASS-M5C-DETERMINISM (pin 11; plan C10).  With no flag, with
+# --check-budget-ms 0 (off IS the default, the pin-11 leg) and with
+# --check-budget-ms 60000, each corpus file under each verb produces
+# byte-identical stdout, stderr and exit code -- the binary compared
+# against ITSELF, so no committed golden bytes and nothing to rot.
+# stdin is /dev/null on every run so the two guard-shaped files stay
+# deterministic in run mode.  MUTATION PROOFS (plan C10): (1) default
+# check_budget_ms to 1; the no-flag run of the 100-box chain exits 3
+# while the 60000 run exits 0.  (2) treat ms = 0 as a zero-millisecond
+# deadline instead of Budget.unlimited (ms <= 0 -> ms < 0); the
+# --check-budget-ms 0 run of the chain exits 3 and the triples differ.
+det_fail=0
+for det_f in "$ROOT"/examples/church.tot "$ROOT"/examples/guard-classes.tot \
+  "$ROOT"/test/fixtures/m4fix-inst-small-reach.tot \
+  "$ROOT"/test/fixtures/m4fix-inst-chains.tot "$m5c_scratch/chains100.tot"; do
+  for det_v in check run; do
+    det_o0=$("$watchdog" "$MED" "$m5c_bin" "$det_v" "$det_f" \
+      < /dev/null 2> "$m5c_scratch/det0.err")
+    det_c0=$?
+    det_oz=$("$watchdog" "$MED" "$m5c_bin" "$det_v" --check-budget-ms 0 "$det_f" \
+      < /dev/null 2> "$m5c_scratch/detz.err")
+    det_cz=$?
+    det_ob=$("$watchdog" "$MED" "$m5c_bin" "$det_v" --check-budget-ms 60000 "$det_f" \
+      < /dev/null 2> "$m5c_scratch/detb.err")
+    det_cb=$?
+    det_e0=$(cat "$m5c_scratch/det0.err")
+    det_ez=$(cat "$m5c_scratch/detz.err")
+    det_eb=$(cat "$m5c_scratch/detb.err")
+    { [ "$det_c0" -eq "$det_cz" ] && [ "$det_c0" -eq "$det_cb" ] \
+        && [ "$det_o0" = "$det_oz" ] && [ "$det_o0" = "$det_ob" ] \
+        && [ "$det_e0" = "$det_ez" ] && [ "$det_e0" = "$det_eb" ]; } \
+      || { echo "determinism $det_f $det_v (exit=$det_c0/$det_cz/$det_cb)"; det_fail=1; }
+  done
+done
+[ "$det_fail" -eq 0 ] \
+  && echo PASS-M5C-DETERMINISM \
+  || { echo "FAIL-M5C-DETERMINISM"; exit 1; }
+
+# PASS-M5C-CLASSES-61 (pin 12; plan C10).  The measured M4 leaf, PAID:
+# the classes-61 shape that reported "exceeded its fuel" at exit 1 in
+# 0.16s on M4 HEAD (plan N1, the exact line recorded in the build log)
+# now resolves under the class-count factor.  The shape of
+# PASS-M4FIX-INST-CLASSES, one class higher.  MUTATION PROOF (plan
+# C10): drop the (1 + class_count) factor from inst_fuel; exit 1 with
+# the N1 line -- not a prediction, the measured M4 HEAD behavior of
+# this exact command.
+c61_out=$(gate_timed "$SLOW" M5C-CLASSES-61 "$m5c_bin" run "$m5c_scratch/cls61.tot")
+c61_code=$?
+{ [ "$c61_code" -eq 0 ] && [ "$(printf '%s\n' "$c61_out" | rg -cx 'zero')" = "1" ] \
+    && ! printf '%s\n' "$c61_out" | rg -q 'fuel'; } \
+  && echo PASS-M5C-CLASSES-61 \
+  || { printf '%s\n' "$c61_out" | tail -n 3; echo "FAIL-M5C-CLASSES-61 (exit=$c61_code)"; exit 1; }
+
+# PASS-M5C-LEAF-MARGIN (pin 12; plan C7/C10).  Runs the bisection's
+# recorded pin, not the search (dev/bisect-inst-classes.sh is the
+# development instrument; the search costs ~110s).  MEASURED
+# 2026-09-02 on this binary, under ambient build load:
+#   PROBE K=61  bytes=121645  secs=0.74  RESOLVES
+#   PROBE K=122 bytes=461560  secs=1.17  RESOLVES
+#   PROBE K=244 bytes=1875784 secs=10.60 RESOLVES
+#   PROBE K=488 bytes=7561960 secs=97.58 RESOLVES
+#   VERDICT: NOLEAF<=488 (no rejecting K inside the search bound)
+# No leaf, so per pin 12 no margin is invented: the pin is the largest
+# K that RESOLVED inside the search bound subject to the two
+# affordability ceilings (file <= 1 MB, run <= 10 s), which is K = 122
+# (461,560 bytes, 1.17s; K = 244 breaches BOTH at 1.9 MB and 10.60s).
+# The BINDING constraint is the 1 MB file ceiling.  RE-MEASUREMENT
+# RECIPE (preamble 6.3): re-run `zsh dev/bisect-inst-classes.sh` after
+# any change to inst_fuel or to build_instance's charge accounting,
+# and re-pin K here from its MARGIN-PIN line.  MUTATION PROOFS (plan
+# C10): (1) the pin-at-the-leaf mutation is NOT executable in the
+# NOLEAF case (there is no leaf to pin at; recorded in the build log
+# per preamble 6.2); (2) the immediately checkable one: drop the
+# (1 + class_count) factor; this leg fails at exit 1 with the fuel
+# line, since K = 122 is far above the M4 leaf of 60.
+lm_out=$(gate_timed "$SLOW" M5C-LEAF-MARGIN "$m5c_bin" run "$m5c_scratch/cls122.tot")
+lm_code=$?
+{ [ "$lm_code" -eq 0 ] && [ "$(printf '%s\n' "$lm_out" | rg -cx 'zero')" = "1" ] \
+    && ! printf '%s\n' "$lm_out" | rg -q 'fuel'; } \
+  && echo PASS-M5C-LEAF-MARGIN \
+  || { printf '%s\n' "$lm_out" | tail -n 3; echo "FAIL-M5C-LEAF-MARGIN (exit=$lm_code)"; exit 1; }
+
+# PASS-M5C-REQUIRE-MAIN-DRIVER (pin 21, amendment A3; plan C10).  A
+# mainless target takes the DRIVER contract in all four invocations
+# (check/run, bare and under --serror-exit 0): exit 1, EMPTY stdout,
+# and stderr equal byte for byte to the UNCHANGED Serror text behind
+# the tight ":" separator (pin P21's verbatim text and the M4-HEAD
+# text; a widened "<path>: " here would pin a change P21 forbids).  On
+# M4 HEAD the two --serror-exit 0 invocations exited 0, which a hook
+# reads as allow; that is the behavior A3 removes.  MUTATION PROOF
+# (plan C10): restore serror_exit in the missing-main arm; the two
+# --serror-exit 0 legs exit 0, the measured M4 behavior.
+rm_want="$ROOT/test/fixtures/m4d-nomain.tot:this file must define a driver main, and it does not"
+rm1_out=$("$watchdog" "$MED" "$m5c_bin" check --require-main \
+  "$ROOT"/test/fixtures/m4d-nomain.tot 2> "$m5c_scratch/rm1.err")
+rm1_code=$?
+rm1_err=$(cat "$m5c_scratch/rm1.err")
+rm2_out=$("$watchdog" "$MED" "$m5c_bin" check --require-main --serror-exit 0 \
+  "$ROOT"/test/fixtures/m4d-nomain.tot 2> "$m5c_scratch/rm2.err")
+rm2_code=$?
+rm2_err=$(cat "$m5c_scratch/rm2.err")
+rm3_out=$("$watchdog" "$MED" "$m5c_bin" run --require-main \
+  "$ROOT"/test/fixtures/m4d-nomain.tot 2> "$m5c_scratch/rm3.err")
+rm3_code=$?
+rm3_err=$(cat "$m5c_scratch/rm3.err")
+rm4_out=$("$watchdog" "$MED" "$m5c_bin" run --require-main --serror-exit 0 \
+  "$ROOT"/test/fixtures/m4d-nomain.tot 2> "$m5c_scratch/rm4.err")
+rm4_code=$?
+rm4_err=$(cat "$m5c_scratch/rm4.err")
+{ [ "$rm1_code" -eq 1 ] && [ -z "$rm1_out" ] && [ "$rm1_err" = "$rm_want" ] \
+    && [ "$rm2_code" -eq 1 ] && [ -z "$rm2_out" ] && [ "$rm2_err" = "$rm_want" ] \
+    && [ "$rm3_code" -eq 1 ] && [ -z "$rm3_out" ] && [ "$rm3_err" = "$rm_want" ] \
+    && [ "$rm4_code" -eq 1 ] && [ -z "$rm4_out" ] && [ "$rm4_err" = "$rm_want" ]; } \
+  && echo PASS-M5C-REQUIRE-MAIN-DRIVER \
+  || {
+    printf '%s\n%s\n%s\n%s\n' "$rm1_err" "$rm2_err" "$rm3_err" "$rm4_err"
+    echo "FAIL-M5C-REQUIRE-MAIN-DRIVER (exit=$rm1_code/$rm2_code/$rm3_code/$rm4_code)"
+    exit 1
+  }
+
+# PASS-M5C-REQUIRE-MAIN-OK (pin 21; plan C10).  The anti-overreach
+# half: A3 moves the MAINLESS verdict out of the --serror-exit mapping
+# and nothing else.  (1) A target WITH a main still checks clean under
+# --require-main --serror-exit 0 (without this leg the DRIVER leg
+# passes on a binary that rejects every file).  (2) An ordinary script
+# error (unknown name zzz) KEEPS the mapping: exit 0 under
+# --serror-exit 0 with the same one-line stderr, before and after
+# Stage C (plan N9).  MUTATION PROOF (plan C10): widen the driver arm
+# from is_missing_main to every Serror; leg (2) exits 1 instead of 0.
+ok1_out=$("$watchdog" "$MED" "$m5c_bin" check --require-main --serror-exit 0 \
+  "$ROOT"/examples/guard.tot 2> "$m5c_scratch/ok1.err")
+ok1_code=$?
+ok1_err=$(cat "$m5c_scratch/ok1.err")
+ok2_out=$("$watchdog" "$MED" "$m5c_bin" check --require-main --serror-exit 0 \
+  "$ROOT"/test/fixtures/m4d-serror-exit.tot 2> "$m5c_scratch/ok2.err")
+ok2_code=$?
+ok2_err=$(cat "$m5c_scratch/ok2.err")
+ok2_want="$ROOT/test/fixtures/m4d-serror-exit.tot:1:7: unknown name zzz"
+{ [ "$ok1_code" -eq 0 ] && [ -z "$ok1_err" ] \
+    && [ "$ok2_code" -eq 0 ] && [ "$ok2_err" = "$ok2_want" ]; } \
+  && echo PASS-M5C-REQUIRE-MAIN-OK \
+  || {
+    printf '%s\n%s\n' "$ok1_err" "$ok2_err"
+    echo "FAIL-M5C-REQUIRE-MAIN-OK (exit=$ok1_code/$ok2_code)"
+    exit 1
+  }
+
+# ---------------------------------------------------------------------
+# M5 STAGE D (plan sections D1, D2, D5, D9): named tiers, the
+# measurement log, the guard echo, the rewrap port and the
+# hole-anchor measurement.  Six legs, each with a mutation proof
+# recorded in dev/M5-BUILD-LOG.md.  Every Stage D leg sits BEFORE the
+# PASS-M4FIX-INST-BRANCHING block (plan D0-3: that leg's comment says
+# nothing cheap may depend on it, and it stays true; only its
+# round-5 sibling PASS-M5B-BRANCHING-20 sits after it, Stage B's
+# placement).  The scratch rides the Gate D EXIT trap.
+# ---------------------------------------------------------------------
+m5d_scratch=$(mktemp -d "${TMPDIR:-/tmp}/tot-gate-m5d.XXXXXX")
+m5d_bin="$ROOT"/_build/default/bin/tot.exe
+
+# Plan D5: the hole-anchor measurement runs FIRST so its ANCHORS line
+# is in $GATE_LOG before PASS-M5D-HOLE-ANCHORS and
+# PASS-M5D-MEASURE-LOG read it.  The site list (the hand-audit
+# channel) goes to scratch, not to battery stdout; run
+# `python3 dev/hole-anchors.py` bare to read it.
+"$watchdog" "$MED" python3 "$ROOT"/dev/hole-anchors.py --log "$GATE_LOG" \
+  > "$m5d_scratch/hole-sites.txt" 2>&1 \
+  || { cat "$m5d_scratch/hole-sites.txt"; echo "FAIL-M5D-HOLE-ANCHORS (classifier run failed)"; exit 1; }
+
+# PASS-M5D-TIERS (pin 17; plan D9, D0-2).  Assertion 1 is pin 17's
+# oracle EXACTLY as the pin words it: no numeric watchdog literal
+# survives, asserted on EXIT STATUS.  Assertions 2 and 3 are the
+# positive counts, because an absence assertion alone is satisfied by
+# an empty file: N direct tier uses plus 2 BITE_S calibration uses
+# pin the live population (18 more perf runs go through gate_timed
+# and are pinned by PASS-M5D-MEASURE-LOG's name list, not here).
+# N = 122 is a LIVE literal: any stage that adds a direct
+# watchdog-plus-tier use raises N by the number it added, measured
+# with `rg -c '"\$watchdog" "\$(FAST|MED|SLOW|SUITE)"' dev/gates.sh`
+# before and after, and records both numbers in dev/M5-BUILD-LOG.md.
+# M5 Stage E raised it 116 -> 122: its three legs add six direct tier
+# uses (1 SLOW + 5 FAST), measured with the recipe above before and
+# after the edit.
+# Do not soften -eq to -ge: -ge would stop the delete-one-leg
+# mutation from flipping, and that mutation is why the count exists.
+# MUTATION PROOFS (plan D9): (1) restore one numeric literal; nolit
+# goes 0.  (2) delete one tier leg; tiers drops below N.  (3) rename
+# BITE_S to a numeral in the calibration legs; bites goes 0 AND
+# nolit goes 0.
+rg -q '"\$watchdog" [0-9]' "$ROOT/dev/gates.sh"; m5d_nolit=$?
+m5d_tiers=$(rg -c '"\$watchdog" "\$(FAST|MED|SLOW|SUITE)"' "$ROOT/dev/gates.sh")
+m5d_bites=$(rg -c '"\$watchdog" "\$BITE_S"' "$ROOT/dev/gates.sh")
+{ [ "$m5d_nolit" -eq 1 ] && [ "$m5d_tiers" -eq 122 ] && [ "$m5d_bites" -eq 2 ] \
+  && [ -s "$ROOT/dev/gates.sh" ]; } \
+  && echo PASS-M5D-TIERS \
+  || { echo "FAIL-M5D-TIERS (nolit=$m5d_nolit tiers=$m5d_tiers bites=$m5d_bites)"; exit 1; }
+
+# PASS-M5D-TIER-BITES (plan D9).  Leg (a): a REAL tot leg gets cut at
+# a tier value: the Stage C chains-800 fixture (generated above into
+# $m5c_scratch, reused per plan D8; without a budget flag it exceeds
+# 60 s with no verdict, SPEC section 6) under FAST is a certain cut
+# at exit 124 (probe P26 pins 124 for the GNU coreutils timeout on
+# this machine).  Leg (b), calibration: BITE_S must cut a 3 s sleeper
+# AND a never-terminating tail -f (probe P26's own shape; this second
+# calibration use is what the plan's bites=2 count names, conflict
+# note in dev/M5-BUILD-LOG.md), FAST must NOT cut the sleeper, and
+# the tier ladder is ordered.  Leg cost is about 15 s: 10 for (a),
+# 1 + 1 + 3 for (b); that price buys a real cut plus a cheap
+# calibration, stated here so nobody trims it silently.  MUTATION
+# PROOFS (plan D9): (1) raise the sleeper calibration from BITE_S to
+# FAST; b goes 124 to 0.  (2) BITE_S=5; same flip.  Stated because
+# it does NOT flip: raising leg (a) from FAST to SLOW keeps a = 124
+# (the fixture exceeds 120 s too), which is why leg (b) exists.
+m5d_tb_a=$("$watchdog" "$FAST" "$m5d_bin" check "$m5c_scratch/chains800.tot" 2>&1); m5d_a=$?
+"$watchdog" "$BITE_S" sleep 3; m5d_b=$?
+"$watchdog" "$BITE_S" tail -f /dev/null; m5d_b2=$?
+"$watchdog" "$FAST" sleep 3; m5d_c=$?
+{ [ "$m5d_a" -eq 124 ] && [ "$m5d_b" -eq 124 ] && [ "$m5d_b2" -eq 124 ] && [ "$m5d_c" -eq 0 ] \
+  && [ "$BITE_S" -lt "$FAST" ] && [ "$FAST" -lt "$MED" ] \
+  && [ "$MED" -lt "$SLOW" ] && [ "$SLOW" -le "$SUITE" ]; } \
+  && echo PASS-M5D-TIER-BITES \
+  || { printf '%s\n' "$m5d_tb_a"; echo "FAIL-M5D-TIER-BITES (a=$m5d_a b=$m5d_b b2=$m5d_b2 c=$m5d_c)"; exit 1; }
+
+# PASS-M5D-GUARD-ECHO (plan D9; depends on Stage A pin 13 and D3).
+# The guard emits an envelope carrying an escaped control byte, and
+# the SAME binary parses it back and re-emits it byte-identically.
+# Four assertions at once: the guard denies (c1 = 2); the readback
+# denies with the same reason, so the envelope re-parses (c2 = 2 and
+# e2 = e1); the control byte is ESCAPED on the wire (searched as
+# u0001 WITHOUT its backslash: three quoting layers sit over one
+# assertion); and no raw 0x01 survives (raw = 1).  Keep both of the
+# last two: the five characters u0001 could in principle come from
+# the echoed command, and the fixed payload plus the raw-byte check
+# close that hole together.  At M4 HEAD this payload produced empty
+# stdout at exit 0 (probe P51), so the leg was red until Stage A
+# landed the parser and Stage D landed the echo.  MUTATION PROOFS
+# (plan D9): (1) revert render_verdict's escaper to
+# Pp.escape_string; raw goes 0, c2 goes 0, e2 empties.  (2) drop the
+# (command: ...) echo from guard.tot; the u0001 assertion fails.
+# (3) readback returns allow on a successful parse; c2 goes 0 and e2
+# empties.
+m5d_payload='{"tool_name":"Bash","tool_input":{"command":"grep \u0001x"}}'
+m5d_e1=$(printf '%s' "$m5d_payload" | "$watchdog" "$FAST" "$m5d_bin" run "$ROOT"/examples/guard.tot); m5d_c1=$?
+m5d_e2=$(printf '%s' "$m5d_e1" | "$watchdog" "$FAST" "$m5d_bin" run "$ROOT"/test/fixtures/m5d-echo-readback.tot); m5d_c2=$?
+printf '%s' "$m5d_e1" | LC_ALL=C rg -q $'\x01'; m5d_raw=$?
+{ [ "$m5d_c1" -eq 2 ] && [ "$m5d_c2" -eq 2 ] && [ "$m5d_e2" = "$m5d_e1" ] \
+  && printf '%s' "$m5d_e1" | rg -q 'u0001' && [ "$m5d_raw" -eq 1 ]; } \
+  && echo PASS-M5D-GUARD-ECHO \
+  || { printf '%s\n' "$m5d_e1"; echo "FAIL-M5D-GUARD-ECHO (c1=$m5d_c1 c2=$m5d_c2 raw=$m5d_raw)"; exit 1; }
+
+# PASS-M5D-REWRAP-GUARD (plan D9; scope item 10's third hook is a
+# deliverable with its own marker: one marker over two guards cannot
+# say which guard broke, and guard-rewrap.tot can regress to
+# allow-everything without moving a byte of guard.tot's envelope).
+# The rewrap payload (plan W5's heredoc) DENIES at exit 2 with an
+# envelope echoing the offending let line, so a constant-reason
+# deny cannot pass; the allow payload allows at exit 0 with EMPTY
+# stdout, so a deny-everything guard cannot pass; and the guard
+# still type-checks, so a broken port fails loudly rather than
+# quietly at run time.  Keep the fixture and the let-line pattern in
+# step: if the fixture's let line changes, the pattern changes with
+# it.  MUTATION PROOFS (plan D9): (1) rewrapVerdict returns allow
+# unconditionally; rd goes 2 to 0 and deny empties.  (2) drop the
+# .rs test; the ALLOW leg flips (ra goes 0 to 2).  (3) drop the echo
+# from the deny reason; the let-line assertion fails.
+m5d_deny=$("$watchdog" "$FAST" "$m5d_bin" run "$ROOT"/examples/guard-rewrap.tot \
+  < "$ROOT"/test/fixtures/m5d-rewrap-deny.json); m5d_rd=$?
+m5d_allow=$("$watchdog" "$FAST" "$m5d_bin" run "$ROOT"/examples/guard-rewrap.tot \
+  < "$ROOT"/test/fixtures/m5d-rewrap-allow.json); m5d_ra=$?
+m5d_chk=$("$watchdog" "$FAST" "$m5d_bin" check "$ROOT"/examples/guard-rewrap.tot 2>&1); m5d_rc=$?
+{ [ "$m5d_rd" -eq 2 ] && [ "$m5d_ra" -eq 0 ] && [ -z "$m5d_allow" ] && [ "$m5d_rc" -eq 0 ] \
+  && printf '%s' "$m5d_deny" | rg -q '"permissionDecision":"deny"' \
+  && printf '%s' "$m5d_deny" | rg -q 'let a = h\(\)\?;'; } \
+  && echo PASS-M5D-REWRAP-GUARD \
+  || { printf '%s\n%s\n%s\n' "$m5d_deny" "$m5d_allow" "$m5d_chk"; \
+       echo "FAIL-M5D-REWRAP-GUARD (rd=$m5d_rd ra=$m5d_ra rc=$m5d_rc)"; exit 1; }
+
+# PASS-M5D-HOLE-ANCHORS (plan D9; scope item 11's measurement is a
+# deliverable with its own marker: PASS-M5D-MEASURE-LOG only stops
+# the log's E and SPEC's E from DRIFTING, and both could be absent
+# or wrong together).  Four assertions at once: the ANCHORS line
+# EXISTS in $GATE_LOG and matches its schema; the corpus is
+# non-empty; the three buckets SUM to the total; and the total
+# equals dev/hole-anchors.py --count-sites, an INDEPENDENT walk that
+# never calls the classifier and never reads the log (a count
+# derived from the classification would agree by construction and
+# prove nothing).  MUTATION PROOFS (plan D9): (1) drop the ANCHORS
+# line from the script's output; anchors empties.  (2) classify one
+# site into no bucket leaving total alone; the sum check fails.
+# (3) drop one site from the CLASSIFIER walk only; sum and total
+# move together and the sites comparison fails.
+m5d_anchors=$(rg -o '^ANCHORS total=[0-9]+ expected-type-only=[0-9]+ argument-driven=[0-9]+ neither=[0-9]+$' "$GATE_LOG")
+m5d_at=$(printf '%s' "$m5d_anchors" | rg -o 'total=[0-9]+'              | rg -o '[0-9]+')
+m5d_ae=$(printf '%s' "$m5d_anchors" | rg -o 'expected-type-only=[0-9]+' | rg -o '[0-9]+')
+m5d_aa=$(printf '%s' "$m5d_anchors" | rg -o 'argument-driven=[0-9]+'    | rg -o '[0-9]+')
+m5d_an=$(printf '%s' "$m5d_anchors" | rg -o 'neither=[0-9]+'            | rg -o '[0-9]+')
+m5d_sites=$("$watchdog" "$MED" python3 "$ROOT"/dev/hole-anchors.py --count-sites)
+{ [ -n "$m5d_anchors" ] && [ "$m5d_at" -gt 0 ] \
+  && [ "$((m5d_ae + m5d_aa + m5d_an))" -eq "$m5d_at" ] && [ "$m5d_at" -eq "$m5d_sites" ]; } \
+  && echo PASS-M5D-HOLE-ANCHORS \
+  || { printf '%s\n' "$m5d_anchors"; \
+       echo "FAIL-M5D-HOLE-ANCHORS (t=$m5d_at e=$m5d_ae a=$m5d_aa n=$m5d_an sites=$m5d_sites)"; exit 1; }
+
+# PASS-M5D-MEASURE-LOG (verdict item 6; plan D9).  Four assertions
+# against $GATE_LOG, run after every UPSTREAM perf leg: the schema'd
+# MEASURE line count equals 18; the LC_ALL=C-sorted name set equals
+# the pinned literal below (a LITERAL on purpose: deriving it by
+# counting gate_timed call sites would drop both numbers together
+# when a wrapper is deleted, the exact vacuity this gate exists to
+# refuse); the log's expected-type-only number equals SPEC.md's, so
+# the SPEC number cannot drift from the script that produced it; and
+# every wrapped leg exited 0.  The two DOWNSTREAM wrapped legs
+# (M4FIX-INST-BRANCHING and M5B-BRANCHING-20, the file's last two by
+# the round-5 placement plan D0-3 preserves) log AFTER this gate
+# runs; their MEASURE lines are for the operator via the battery-end
+# GATE-LOG line, not for this assertion.  A leg with several CLI
+# runs logs one MEASURE line per run under a marker-prefixed name
+# (recorded in dev/M5-BUILD-LOG.md).  MUTATION PROOFS (plan D9):
+# (1) delete one gate_timed wrapper; the log loses one line and one
+# name.  (2) move SPEC's expected-type-only by one; logE and specE
+# differ.  (3) print elapsed=%d instead of %.3f; the schema count
+# goes 0.
+m5d_lines=$(rg -c '^MEASURE [A-Za-z0-9-]+ tier=[0-9]+ elapsed=[0-9]+\.[0-9]{3} exit=[0-9]+$' "$GATE_LOG")
+m5d_okexit=$(rg -c '^MEASURE [A-Za-z0-9-]+ tier=[0-9]+ elapsed=[0-9]+\.[0-9]{3} exit=0$' "$GATE_LOG")
+m5d_names=$(rg -o '^MEASURE [A-Za-z0-9-]+' "$GATE_LOG" | rg -o '[A-Za-z0-9-]+$' | LC_ALL=C sort | tr '\n' ' ')
+m5d_wantnames='M4FIX-INST-BINDERS M4FIX-INST-CHAINS M4FIX-INST-CLASSES M4FIX-INST-MEMO-KEY M4FIX-INST-SMALL-REACH M4FIX-INST-SPEC16 M4FIX-INST-TWOCLASS M4FIX-INST-WIDE M5B-FUEL-REACHABLE-LEAF M5B-FUEL-REACHABLE-UNDER M5B-RUNTIME-IDENTITY-m4fix-inst-memo-key M5B-RUNTIME-IDENTITY-m5b-inst-branching-20 M5B-RUNTIME-IDENTITY-m5b-inst-chains-8-40 M5B-RUNTIME-IDENTITY-m5b-inst-zero-dict M5C-CLASSES-61 M5C-LEAF-MARGIN SUITE-KERNEL SUITE-SURFACE '
+m5d_logE=$(rg -o 'expected-type-only=[0-9]+' "$GATE_LOG")
+m5d_specE=$(rg -o 'expected-type-only=[0-9]+' "$ROOT/SPEC.md")
+{ [ "$m5d_lines" -eq 18 ] && [ "$m5d_okexit" -eq 18 ] \
+  && [ "$m5d_names" = "$m5d_wantnames" ] \
+  && [ -n "$m5d_logE" ] && [ "$m5d_logE" = "$m5d_specE" ]; } \
+  && echo PASS-M5D-MEASURE-LOG \
+  || { cat "$GATE_LOG"; \
+       echo "FAIL-M5D-MEASURE-LOG (lines=$m5d_lines ok=$m5d_okexit names=[$m5d_names] logE=$m5d_logE specE=$m5d_specE)"; exit 1; }
+
+# ---------------------------------------------------------------------
+# M5 Stage E (SPIKE): well-founded recursion behind --experimental-wf
+# (plan E8).  Three legs, each with a mutation proof recorded in
+# dev/M5-BUILD-LOG.md.  Placement (Stage E adjudication of the D12
+# item 11 caveat, conflict note C-E3 in dev/M5-BUILD-LOG.md): the
+# Stage E legs sit BEFORE the two branching legs, so the branching
+# pair stays the file's timing-sensitive tail exactly as Stage D left
+# it; the Stage B placement of PASS-M5B-BRANCHING-20 after
+# PASS-M4FIX-INST-BRANCHING is kept as a recorded no-change.  The
+# scratch rides the Gate D EXIT trap.
+# ---------------------------------------------------------------------
+m5e_scratch=$(mktemp -d "${TMPDIR:-/tmp}/tot-gate-e.XXXXXX")
+
+# Gate E (i), PASS-M5E-DEFAULT-IDENTITY. Without the flag the driver's
+# whole check corpus is byte-identical to the transcript committed at
+# Stage D exit, and accRec still fails the shipped guard.
+"$watchdog" "$SLOW" "$ROOT"/dev/gen-m5e-transcript.sh > "$m5e_scratch"/m5e-now.txt 2>&1
+code=$?
+out2=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/test/fixtures/m5e-acc.tot 2>&1)
+code2=$?
+{ [ "$code" -eq 0 ] && [ "$code2" -eq 1 ] \
+    && diff -q "$ROOT"/dev/m5e-default-transcript.txt "$m5e_scratch"/m5e-now.txt > /dev/null \
+    && printf '%s\n' "$out2" \
+       | rg -q 'm5e-acc\.tot:5:1: recursive definition accRec failed the structural termination guard'; } \
+  && echo PASS-M5E-DEFAULT-IDENTITY \
+  || {
+    diff "$ROOT"/dev/m5e-default-transcript.txt "$m5e_scratch"/m5e-now.txt | head -40
+    printf '%s\n' "$out2"
+    echo "FAIL-M5E-DEFAULT-IDENTITY (exit=$code/$code2)"
+    exit 1
+  }
+
+# Gate E (ii), PASS-M5E-ACC-CHECKS. The Acc plus accRec worked example
+# checks at exit 0 under the flag, with the exact five-line output
+# (plan E4, confirmed byte for byte against the built binary before
+# this gate was committed).
+out=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  --experimental-wf "$ROOT"/test/fixtures/m5e-acc.tot 2>&1)
+code=$?
+want=$'data Acc : (0 A : Type 0) -> (0 R : (w _ : A) -> (w _ : A) -> Type 0) -> (0 _ : A) -> Type 0\nctor acc : (0 A : Type 0) -> (0 R : (w _ : A) -> (w _ : A) -> Type 0) -> (w x : A) -> (w _ : (w y : A) -> (w _ : ((R y) x)) -> (((Acc A) R) y)) -> (((Acc A) R) x)\ndef LtNat : (w _ : Nat) -> (w _ : Nat) -> Type 0\ndef accRec : (0 A : Type 0) -> (0 R : (w _ : A) -> (w _ : A) -> Type 0) -> (0 P : (w _ : A) -> Type 0) -> (w _ : (w x : A) -> (w _ : (w y : A) -> (w _ : ((R y) x)) -> (P y)) -> (P x)) -> (w x : A) -> (w _ : (((Acc A) R) x)) -> (P x)\ndef accZero : (((Acc Nat) LtNat) zero)'
+{ [ "$code" -eq 0 ] && [ "$out" = "$want" ]; } \
+  && echo PASS-M5E-ACC-CHECKS \
+  || { printf '%s\n' "$out"; echo "FAIL-M5E-ACC-CHECKS (exit=$code)"; exit 1; }
+
+# Gate E (iii), PASS-M5E-WITNESS-REJECTED. Three legs. Leg (a) proves the
+# flag is LIVE, so a dead flag cannot make legs (b) and (c) pass by
+# accident. Leg (b) is amendment A4's pinned negative. Leg (c) shows the
+# prototype changes nothing about this file.
+outa=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  --experimental-wf "$ROOT"/test/fixtures/m5e-acc.tot 2>&1)
+codea=$?
+outb=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  --experimental-wf "$ROOT"/test/fixtures/m5e-witness.tot 2>&1)
+codeb=$?
+outc=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/test/fixtures/m5e-witness.tot 2>&1)
+codec=$?
+wantw='m5e-witness.tot:2:1: recursive definition bad failed the structural termination guard'
+{ [ "$codea" -eq 0 ] && [ "$codeb" -eq 1 ] && [ "$codec" -eq 1 ] \
+    && printf '%s\n' "$outb" | rg -q -- "$wantw" \
+    && printf '%s\n' "$outc" | rg -q -- "$wantw" \
+    && [ "$outb" = "$outc" ]; } \
+  && echo PASS-M5E-WITNESS-REJECTED \
+  || {
+    printf '%s\n%s\n%s\n' "$outa" "$outb" "$outc"
+    echo "FAIL-M5E-WITNESS-REJECTED (exit=$codea/$codeb/$codec)"
+    exit 1
+  }
 
 # ctxcat id 5: an instance with TWO dictionary binders on the SAME type
 # variable. Round 1's fuel bounded the depth of one resolution PATH,
@@ -1633,11 +2501,34 @@ rm -rf "$f2_scratch"
 # marker at all sits downstream of it and the round-4 claim is now true
 # as stated. It is the most expensive and the most timing-sensitive leg
 # here, which is exactly why nothing cheap may depend on it.
-out=$("$watchdog" 60 "$ROOT"/_build/default/bin/tot.exe run "$ROOT"/test/fixtures/m4fix-inst-branching.tot 2>&1)
+out=$(gate_timed "$SLOW" M4FIX-INST-BRANCHING "$ROOT"/_build/default/bin/tot.exe run "$ROOT"/test/fixtures/m4fix-inst-branching.tot)
 code=$?
 { [ "$code" -eq 0 ] && printf '%s\n' "$out" | rg -qx 'true'; } \
   && echo PASS-M4FIX-INST-BRANCHING \
   || { printf '%s\n' "$out"; echo "FAIL-M4FIX-INST-BRANCHING (exit=$code)"; exit 1; }
 
+# PASS-M5B-BRANCHING-20 (pin 1, the perf leg).  M5 Stage B: the depth
+# the M4 round-4 re-scope retreated from, restored.  MEASUREMENT
+# RECIPE (preamble 6.3): `time _build/default/bin/tot.exe run
+# test/fixtures/m5b-inst-branching-20.tot`; on the M4 HEAD binary this
+# file took 30.188s to run and 31.570s to check (plan B0, P9/P10),
+# and with the Stage B let-nest it measured 0.034s on 2026-09-02, so
+# the 10s budget is about 300x the measured cost: a hang detector, not
+# a performance gate.  MUTATION PROOF: inline islot_term's ISlot arm
+# (the SHARE-SIZE mutation, the M4 tree); this leg times out at exit
+# 124 with no `true` line.  M4 round-5 lesson: this is the most
+# timing-sensitive leg in the file, so it is the LAST leg, with no
+# marker downstream of it.
+out=$(gate_timed "$FAST" M5B-BRANCHING-20 "$ROOT"/_build/default/bin/tot.exe run \
+  "$ROOT"/test/fixtures/m5b-inst-branching-20.tot)
+code=$?
+{ [ "$code" -eq 0 ] && printf '%s\n' "$out" | rg -qx 'true'; } \
+  && echo PASS-M5B-BRANCHING-20 \
+  || { printf '%s\n' "$out" | tail -n 3; echo "FAIL-M5B-BRANCHING-20 (exit=$code)"; exit 1; }
+
 # scratch dir removal now rides the EXIT trap installed at Gate D's top
+# M5 Stage D (plan D2): where the per-leg measurements landed; the
+# operator reads it after a green run, next to the caller's GATE-EXIT
+# line.
+echo "GATE-LOG=$GATE_LOG"
 exit 0

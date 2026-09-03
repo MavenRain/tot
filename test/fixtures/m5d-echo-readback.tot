@@ -1,0 +1,21 @@
+-- M5 Stage D (plan D8, gate PASS-M5D-GUARD-ECHO): the readback half
+-- of the envelope round trip.  Reads ONE deny envelope on stdin,
+-- parses it with the same jsonParse the guard uses, extracts
+-- hookSpecificOutput.permissionDecisionReason, and re-emits it as its
+-- OWN deny.  Failure paths allow.  2026-09-03: this pins reason
+-- TRANSPORT only; PASS-M5A-ENVELOPE-VALID pins JSON conformance.
+def main : IO Verdict :=
+  let* String Verdict raw := readStdin in
+  let* (Option Json) Verdict parsed := liftIO (Option Json) (jsonParse raw) in
+  match parsed with
+  | none => pureIO Verdict allow
+  | some env =>
+      match jsonGet env "hookSpecificOutput" with
+      | none => pureIO Verdict allow
+      | some inner =>
+          match jsonGetString inner "permissionDecisionReason" with
+          | none => pureIO Verdict allow
+          | some reason => pureIO Verdict (deny reason)
+          end
+      end
+  end

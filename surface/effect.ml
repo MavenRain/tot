@@ -20,6 +20,32 @@ let ( let* ) = Result.bind
 type outcome =
   | Done of Interp.v
   | Exited of int
+  | Rejected of string
+      (** M5 Stage A: [--strict-json] refused the payload at the
+          [readStdin] boundary.  The payload is the DENY reason the
+          driver renders.  Reached only under the flag. *)
+
+(** M5 Stage A, pin 20: the one deny reason [--strict-json] ever
+    emits.  A module-level constant so the gate
+    (PASS-M5A-STRICT-DENY) and the code share one spelling. *)
+let strict_json_reason : string = "strict-json: stdin is not a single well-formed JSON value"
+
+(** The hook-protocol verdict envelope, one line, no trailing spaces.
+    M5 Stage A: lifted out of [render_verdict] so the [Rejected]
+    epilogue arm in [Run.run_verdict_main] shares the exact rendering,
+    and quoting [msg] through the JSON escaper (pin 13): the source
+    escaper left \r, \b, \f and the rest of C0 raw, so a deny message
+    carrying one produced an envelope a conforming JSON parser
+    rejects, and a hook that cannot decode a deny falls back to its
+    decode-error posture, which is fail-open. *)
+let envelope (decision : string) (msg : string) : string =
+  Printf.sprintf
+    "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"%s\",\"permissionDecisionReason\":%s}}"
+    decision (Json_escape.string msg)
+
+(** The deny half of [envelope], the shape [Run.run_verdict_main]'s
+    [Rejected] arm renders (M5 Stage A). *)
+let deny_envelope (msg : string) : string = envelope "deny" msg
 
 (* ---- procRun host helpers (M3 fixes, B3: C8 + C16 + C9) ---- *)
 
@@ -128,29 +154,34 @@ let require_action (v : Interp.v) : (Interp.io_action, Error.t) result =
     [dispatch] in order. [IOBind]'s continuation [k] runs only when the
     inner action produced an ordinary value; an [Exited] short circuits
     the whole walk, so [k] never runs after an [exitWith] (matching the
-    epilogue's own "explicit exitWith wins" rule, Stage D D4). *)
-let rec run_io (eglobals : Interp.globals) (action : Interp.io_action) :
+    epilogue's own "explicit exitWith wins" rule, Stage D D4).
+    M5 Stage A: [~strict_json] threads the driver's [--strict-json]
+    policy down to the ONE dispatch arm that reads raw stdin; a
+    [Rejected] outcome short circuits exactly like [Exited], so no
+    continuation ever sees a refused payload. *)
+let rec run_io ~(strict_json : bool) (eglobals : Interp.globals) (action : Interp.io_action) :
     (outcome, Error.t) result =
   match action with
   | Interp.IOPure v -> Ok (Done v)
   | Interp.IOBind (m, k) ->
       let* mv = require_action m in
-      let* inner = run_io eglobals mv in
+      let* inner = run_io ~strict_json eglobals mv in
       (match inner with
       | Exited c -> Ok (Exited c)
+      | Rejected reason -> Ok (Rejected reason)
       | Done rv ->
           let* kv = Interp.apply eglobals k rv in
           let* kv_action = require_action kv in
-          run_io eglobals kv_action)
-  | Interp.IONative (prim, args) -> dispatch eglobals prim args
+          run_io ~strict_json eglobals kv_action)
+  | Interp.IONative (prim, args) -> dispatch ~strict_json eglobals prim args
 
 (** Fire one native effect prim on its (already fully applied) argument
     values. [eglobals] is unused by every Stage B case (none of the
     four OS prims needs to look anything up); kept in the signature so
     later stages' natives (e.g. [procRun]) can use it without a
     signature change. *)
-and dispatch (_eglobals : Interp.globals) (prim : Prim.t) (args : Interp.v list) :
-    (outcome, Error.t) result =
+and dispatch ~(strict_json : bool) (_eglobals : Interp.globals) (prim : Prim.t)
+    (args : Interp.v list) : (outcome, Error.t) result =
   let describe (a : Interp.v) : string =
     match a with
     | Interp.VLit (Literal.LString _) -> "String"
@@ -199,7 +230,14 @@ and dispatch (_eglobals : Interp.globals) (prim : Prim.t) (args : Interp.v list)
          tot-level error (M3 fixes round 2, ctxcat id 13: named, never
          a bare [with _]) *)
       let s = match In_channel.input_all stdin with exception Sys_error _ -> "" | s -> s in
-      Ok (Done (Interp.VLit (Literal.LString s)))
+      (* M5 Stage A: under --strict-json the payload must parse as one
+         JSON value BEFORE the script sees it.  Interp.json_parse_top
+         is the same parser jsonParse fires, so the flag can never
+         admit bytes the script would then reject, or the reverse. *)
+      (match () with
+      | () when strict_json && Option.is_none (Interp.json_parse_top s) ->
+          Ok (Rejected strict_json_reason)
+      | () -> Ok (Done (Interp.VLit (Literal.LString s))))
   | Prim.Print_line, [ a ] ->
       let* s = str_arg a in
       (* the one raw stdout write; a host failure ([Sys_error], e.g. a
@@ -363,17 +401,14 @@ and dispatch (_eglobals : Interp.globals) (prim : Prim.t) (args : Interp.v list)
     epilogue calls this ONLY on the [Done] half of a [run_io] outcome:
     an [Exited] outcome (an explicit [exitWith] reached first) short
     circuits before ever reaching a [Verdict] value at all, so it never
-    calls this function -- see [Run.run_verdict_main]. [Pp.escape_string]
-    (Stage A's shared string escaper, reused here exactly as its own
-    doc comment anticipates) both quotes and escapes [msg]. A [VCon]
+    calls this function -- see [Run.run_verdict_main]. M5 Stage A: the
+    module-level [envelope] above both quotes and escapes [msg]
+    through the JSON escaper; [Pp.escape_string] is the SOURCE escaper
+    and is no longer used here (pin 13; M4's subset claim was false
+    for \r, \b, \f and the rest of C0). A [VCon]
     head other than these three is a total backstop: a checked
     [IO Verdict] program cannot reach it. *)
 let render_verdict (v : Interp.v) : (string option * int, Error.t) result =
-  let envelope (decision : string) (msg : string) : string =
-    Printf.sprintf
-      "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"%s\",\"permissionDecisionReason\":%s}}"
-      decision (Pp.escape_string msg)
-  in
   match v with
   | Interp.VCon ("allow", []) -> Ok (None, 0)
   | Interp.VCon ("ask", [ Interp.VLit (Literal.LString msg) ]) -> Ok (Some (envelope "ask" msg), 1)

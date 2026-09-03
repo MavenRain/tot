@@ -1,0 +1,5 @@
+-- The OTHER two telescopes stay bounded.  A ctor argument at "Type 0"
+-- on a level-0 family is Bad_ctor (lib/check.ml:1806); an INDEX at
+-- "Type 0" is Index_above_universe (lib/check.ml:1591).  The exemption
+-- is parameter-only, and this file is the fence that says so.
+data KBad : Type 0 := | kmk : (0 a : Type 0) -> KBad

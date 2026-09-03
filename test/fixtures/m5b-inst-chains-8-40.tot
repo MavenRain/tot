@@ -1,0 +1,38 @@
+-- M5 Stage B (plan B9): 8 INDEPENDENT dictionary chains over
+-- (WBox^40 Bool).  GENERATED (dev/gen-inst-chains.py 8 40); edit
+-- the generator, not this file.  Every (class, key) pair here is
+-- DISTINCT, so the Stage B let-nest has nothing to share and this file
+-- pins the OUTPUT of an unshared shape instead (measured on the M4
+-- HEAD binary 2026-09-02: exit 0, `true`, 0.108s; plan B0 probe P11).
+-- The 800-box variant is Stage C's check-budget evidence, deliberately
+-- NOT generated here (plan B12).
+class W1 (0 A : Type 0) := { w1 : Bool }
+class W2 (0 A : Type 0) := { w2 : Bool }
+class W3 (0 A : Type 0) := { w3 : Bool }
+class W4 (0 A : Type 0) := { w4 : Bool }
+class W5 (0 A : Type 0) := { w5 : Bool }
+class W6 (0 A : Type 0) := { w6 : Bool }
+class W7 (0 A : Type 0) := { w7 : Bool }
+class W8 (0 A : Type 0) := { w8 : Bool }
+class WR (0 A : Type 0) := { wr : Bool }
+data WBox (0 A : Type 0) : Type 0 := | wbox : A -> WBox A
+instance : W1 Bool := mkW1 Bool true
+instance : (0 A : Type 0) -> W1 A -> W1 (WBox A) := fun A d => mkW1 (WBox A) true
+instance : W2 Bool := mkW2 Bool true
+instance : (0 A : Type 0) -> W2 A -> W2 (WBox A) := fun A d => mkW2 (WBox A) true
+instance : W3 Bool := mkW3 Bool true
+instance : (0 A : Type 0) -> W3 A -> W3 (WBox A) := fun A d => mkW3 (WBox A) true
+instance : W4 Bool := mkW4 Bool true
+instance : (0 A : Type 0) -> W4 A -> W4 (WBox A) := fun A d => mkW4 (WBox A) true
+instance : W5 Bool := mkW5 Bool true
+instance : (0 A : Type 0) -> W5 A -> W5 (WBox A) := fun A d => mkW5 (WBox A) true
+instance : W6 Bool := mkW6 Bool true
+instance : (0 A : Type 0) -> W6 A -> W6 (WBox A) := fun A d => mkW6 (WBox A) true
+instance : W7 Bool := mkW7 Bool true
+instance : (0 A : Type 0) -> W7 A -> W7 (WBox A) := fun A d => mkW7 (WBox A) true
+instance : W8 Bool := mkW8 Bool true
+instance : (0 A : Type 0) -> W8 A -> W8 (WBox A) := fun A d => mkW8 (WBox A) true
+instance : WR Bool := mkWR Bool true
+instance : (0 A : Type 0) -> W1 A -> W2 A -> W3 A -> W4 A -> W5 A -> W6 A -> W7 A -> W8 A -> WR (WBox A) := fun A d1 d2 d3 d4 d5 d6 d7 d8 => mkWR (WBox A) true
+def joinedChains : Bool := wr (WBox (WBox (WBox (WBox (WBox (WBox (WBox (WBox (WBox (WBox (WBox (WBox (WBox (WBox (WBox (WBox (WBox (WBox (WBox (WBox (WBox (WBox (WBox (WBox (WBox (WBox (WBox (WBox (WBox (WBox (WBox (WBox (WBox (WBox (WBox (WBox (WBox (WBox (WBox (WBox Bool)))))))))))))))))))))))))))))))))))))))) auto
+eval joinedChains

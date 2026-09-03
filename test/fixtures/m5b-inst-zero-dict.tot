@@ -1,0 +1,6 @@
+class ZC (0 A : Type 0) := { zc : Bool }
+data ZBox (0 A : Type 0) : Type 0 := | zbox : A -> ZBox A
+instance : ZC Bool := mkZC Bool true
+instance : (0 A : Type 0) -> (0 d : ZC A) -> ZC (ZBox A) := fun A d => mkZC (ZBox A) true
+def zq : Bool := zc (ZBox (ZBox Bool)) auto
+eval zq

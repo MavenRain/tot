@@ -13,15 +13,26 @@ type ctx = {
   env : Value.t list;
   locals : (string * Quantity.t * Value.t) list;
   size : int;
+  budget : Budget.t;
+      (** M5 Stage C (pin 8): the driver's cutoff.  Defaults to
+          [Budget.unlimited] in [empty_ctx], so every existing caller
+          of [empty_ctx] compiles and behaves unchanged. *)
 }
 
-let empty_ctx : ctx = { env = []; locals = []; size = 0 }
+let empty_ctx : ctx = { env = []; locals = []; size = 0; budget = Budget.unlimited }
+
+(** M5 Stage C: the root context for one driver invocation. *)
+let root_ctx (budget : Budget.t) : ctx = { empty_ctx with budget }
 
 let bind (x : string) (q : Quantity.t) (ty : Value.t) (ctx : ctx) : ctx =
-  { env = Value.var ctx.size :: ctx.env; locals = (x, q, ty) :: ctx.locals; size = ctx.size + 1 }
+  { ctx with env = Value.var ctx.size :: ctx.env;
+             locals = (x, q, ty) :: ctx.locals;
+             size = ctx.size + 1 }
 
 let bind_def (x : string) (ty : Value.t) (v : Value.t) (ctx : ctx) : ctx =
-  { env = v :: ctx.env; locals = (x, Quantity.Many, ty) :: ctx.locals; size = ctx.size + 1 }
+  { ctx with env = v :: ctx.env;
+             locals = (x, Quantity.Many, ty) :: ctx.locals;
+             size = ctx.size + 1 }
 
 let pp_value (globals : Global.t) (size : int) (v : Value.t) : string =
   Eval.quote globals size v
@@ -425,37 +436,67 @@ let rec pi_arity (t : Term.t) : int =
     is not a TIME budget, so a large legitimate resolution buys wall
     clock with no verdict at all, which is the check-budget debt and M5
     hash consing, not a fuel-formula debt. *)
-let inst_fuel (globals : Global.t) (expected_t : Term.t) : int =
-  let max_binders =
-    Global.StringMap.fold
-      (fun (name : string) (entry : Global.entry) (acc : int) ->
-        let is_instance =
-          String.length name >= 5 && String.equal (String.sub name 0 5 (* @total-accessor *)) "inst$"
-        in
-        if is_instance then Int.max acc (pi_arity (Global.entry_ty entry)) else acc)
-      globals 0
-  in
-  let per_key = (2 * max_binders) + 2 in
-  Int.max
-    (Int.max 10000 (16 * ((1 + term_depth expected_t) * per_key)))
-    (8 * term_size expected_t * per_key)
+(** M5 Stage C: the CLASS half of a mangled instance name,
+    ["inst$" ^ cls ^ "$" ^ key] (see [resolve_auto]).  [None] for every
+    other global.
 
-(** M4 Stage D: the [Term.Global] name at the head of [t]'s application
-    spine.  Every [build_instance] accumulator starts as [Term.Global]
-    and only ever grows by [Term.App], so the head is always [Global] in
-    practice;  the other arms are a total backstop for a shape this
-    function's own callers never actually produce. *)
-let instance_head_name (t : Term.t) : string =
-  let head, _args = Totality.spine t [] in
-  match head with
-  | Term.Global g -> g
-  | Term.Var _ | Term.Univ _ | Term.Pi (_, _, _, _)
-  | Term.Lam (_, _, _)
-  | Term.App (_, _, _)
-  | Term.Let (_, _, _, _)
-  | Term.Ann (_, _)
-  | Term.Lit _ | Term.Auto | Term.Match _ ->
-      "<instance>"
+    Total, and total for a reason that is checkable: a surface
+    identifier is letters, digits, underscore and prime
+    (`surface/lexer.ml`'s [is_ident_start] / [is_ident_char]), so it
+    can hold no '$'.  A mangled name therefore holds exactly two, and
+    the class is what lies between them.  The code does not RELY on
+    that count.  It takes the LAST '$', so a name with more separators
+    still yields a defined answer instead of an exception. *)
+let instance_class_of (name : string) : string option =
+  let is_mangled =
+    String.length name > 5 && String.equal (String.sub name 0 5 (* @total-accessor *)) "inst$"
+  in
+  match (is_mangled, String.rindex_opt name '$') with
+  | false, (None | Some _) -> None
+  | true, None -> None
+  | true, Some j -> (
+      match () with
+      | () when j <= 4 -> None
+      | () -> Some (String.sub name 5 (j - 5) (* @total-accessor *)))
+
+(** M5 Stage C: ONE pass over the table for BOTH numbers the bound
+    needs.  M4 folded the whole table per [Term.Auto] to find
+    [max_binders];  the class count rides that same fold rather than
+    doubling it. *)
+let inst_table_stats (globals : Global.t) : int * int =
+  let max_binders, classes =
+    Global.StringMap.fold
+      (fun (name : string) (entry : Global.entry)
+           (((acc : int), (seen : unit Global.StringMap.t)) as st) ->
+        instance_class_of name
+        |> Option.fold
+             ~none:st
+             ~some:(fun (cls : string) ->
+               ( Int.max acc (pi_arity (Global.entry_ty entry)),
+                 Global.StringMap.add cls () seen )))
+      globals
+      (0, Global.StringMap.empty)
+  in
+  (max_binders, Global.StringMap.cardinal classes)
+
+(** M5 Stage C (pin 12): the round-5 shape above, multiplied by
+    [1 + class_count], where the count is the number of DISTINCT class
+    components of [inst$] mangled names in the table (there is no class
+    registry; a class is an ordinary [Ind], so the count is a property
+    of the INSTANCE TABLE, which is where the round-5 comment above
+    already places it).  The factor is measured, not proved: on the
+    [classes K] generated shape the charge and this bound are BOTH
+    about quadratic in K, so the leaf is re-bisected
+    (dev/bisect-inst-classes.sh), never asserted gone. *)
+let inst_fuel (globals : Global.t) (expected_t : Term.t) : int =
+  let max_binders, class_count = inst_table_stats globals in
+  let per_key = (2 * max_binders) + 2 in
+  let round5 =
+    Int.max
+      (Int.max 10000 (16 * ((1 + term_depth expected_t) * per_key)))
+      (8 * term_size expected_t * per_key)
+  in
+  (1 + class_count) * round5
 
 (** M4 fixes round 3 (opus R3-1): the instance memo's carrier.  Keyed by
     a STRING, because the key half of a (class, key) pair is a
@@ -536,29 +577,111 @@ let inst_key_enc (t : Term.t) : string =
 let inst_memo_key (cls : string) (key_t : Term.t) : string =
   string_of_int (String.length cls) ^ ":" ^ cls ^ inst_key_enc key_t
 
-(** M4 fixes round 3 (opus R3-1, R3-6): everything ONE [Term.Auto]
-    resolution threads through itself.  Immutable, passed in and
-    returned updated exactly as round 2 threaded the bare fuel; there
-    is no mutable state anywhere in the walk.
+(** M5 Stage B (pin 4): one instance application, with its dictionary
+    arguments named by SLOT NUMBER instead of by de Bruijn index.  A
+    slot number is an index into [inst_state.entries] in DEFINITION
+    order, and it never changes as the walk proceeds; a de Bruijn index
+    for the same slot depends on how many lets finally enclose the use
+    site, which the walk does not know until it ends.  [islot_term]
+    converts one to the other, once, at materialization. *)
+type islot = IHead of string | IApp of Quantity.t * islot * iarg
+and iarg = IType of Term.t | ISlot of int
 
-    - [fuel] is the backstop, see [inst_fuel].
-    - [memo] maps an [inst_memo_key] to the instance application that
-      key already resolved to, DURING THIS resolution only. Scoping it
-      to one [Term.Auto] is what makes it sound without an invalidation
-      rule: [globals] and [ctx] are invariant across the whole walk
-      (every recursive call forwards both unchanged), so a key that
-      resolved once resolves identically again.
-    - [goal] is the ORIGINAL query value, carried only so [Inst_depth]
-      can name what the user actually asked for. Round 2 rendered
-      [ity], the instance type at the point the budget ran out, which
-      after partial peeling is a Pi telescope naming neither the user's
-      goal nor an unresolvable one (opus R3-6). Kept as a [Value.t], not
-      a rendered string, so [pp_value] runs on the failure path only. *)
-type inst_state = { fuel : int; memo : Term.t InstMemo.t; goal : Value.t }
+(** The instance name at the head of an [islot] spine.  This REPLACES
+    [instance_head_name] (M4, lib/check.ml:448), whose argument was the
+    [Term.t] accumulator this stage retypes.  The [Inst_bad_shape]
+    payload text is unchanged, so no pinned error string moves. *)
+let rec islot_head (s : islot) : string =
+  match s with IHead g -> g | IApp (_q, f, _a) -> islot_head f
+
+(** M5 Stage B (pin 4): entry [i] is materialized under [i] enclosing
+    lets, so an ambient-scoped type travels [i] binders inward and a
+    slot [j] is [i - 1 - j] binders back.  Both formulas are the same
+    formula: the body of the whole nest is entry [n] with no [Let] of
+    its own. *)
+let rec islot_term (i : int) (s : islot) : Term.t =
+  match s with
+  | IHead g -> Term.Global g
+  | IApp (q, f, a) ->
+      let a_t =
+        match a with
+        | IType t -> Term.shift ~cutoff:0 ~by:i t
+        | ISlot j -> Term.Var (i - 1 - j)
+      in
+      Term.App (q, islot_term i f, a_t)
+
+(** M5 Stage B (pin 3): one entry of the local [let]-nest.
+    - [e_ty] is the entry's own type, [App (q_cls, Global cls, key_t)],
+      in the AMBIENT scope.  [materialize] shifts it.
+    - [e_def] is the instance application with slot numbers (pin 4).
+    - [e_val] is the entry's VALUE, built while the walk runs.  It is
+      what makes a memo HIT free: pin 5 says [build_instance] never
+      re-evaluates a cached term, and this field is where the value it
+      would have re-derived already lives. *)
+type inst_entry = { e_ty : Term.t; e_def : islot; e_val : Value.t }
+
+(** The value already computed for slot [j].  [entries] is in reverse
+    definition order, so slot [j] sits at list position
+    [List.length entries - 1 - j].  [List.nth_opt] is the total
+    combinator (the same one lib/eval.ml:49 and the [m_idx] walk use);
+    a miss is unreachable, because every slot number this function ever
+    receives was returned by [resolve_auto] for an entry it had just
+    put in the list, and it is reported rather than raised. *)
+let entry_val (entries : inst_entry list) (j : int) : (Value.t, Error.t) result =
+  List.nth_opt entries (List.length entries - 1 - j)
+  |> Option.map (fun (e : inst_entry) -> e.e_val)
+  |> Option.to_result ~none:(Error.Unbound_var j)
+
+(** M4 fixes round 3 (opus R3-1) built this record;  M5 Stage B changes
+    two fields and adds one.
+    - [memo] now maps an [inst_memo_key] to a SLOT NUMBER, not to a
+      term.  The soundness argument is M4's, unchanged: [globals] and
+      [ctx] are invariant across one resolution, so a key that resolved
+      once resolves identically again.
+    - [entries] is in REVERSE definition order, which is dependency
+      order: an entry can only reference slots that already existed
+      when it was created.
+    - [fuel] and [goal] are unchanged, and fuel accounting is
+      unchanged: a HIT still charges nothing. *)
+type inst_state = {
+  fuel : int;
+  memo : int InstMemo.t;
+  entries : inst_entry list;
+  goal : Value.t;
+}
 
 (** The initial state for one [Term.Auto]: full fuel, an EMPTY memo. *)
 let inst_start (fuel : int) (goal : Value.t) : inst_state =
-  { fuel; memo = InstMemo.empty; goal }
+  { fuel; memo = InstMemo.empty; entries = []; goal }
+
+(** M5 Stage B (pin 1): the local [let]-nest, the whole of the sharing
+    change.  [entries] is in REVERSE definition order (pin 3), which is
+    reverse dependency order, so folding it left builds
+
+      let dict$0 : T0 = d0 in .. let dict$(n-1) : T(n-1) = d(n-1) in
+      dict$top
+
+    from the inside out.  [top] is the slot the query itself resolved
+    to; it is [n - 1] for every resolution [resolve_auto] can return,
+    because the last entry created is the one the query asked for.
+    An out-of-range [top] would emit an unbound [Term.Var], which the
+    re-check at lib/check.ml:1002 reports as [Unbound_var]; the
+    function stays total either way and raises nothing. *)
+let materialize (entries : inst_entry list) ~(top : int) : Term.t =
+  let n = List.length entries in
+  let nest, _i =
+    List.fold_left
+      (fun ((acc : Term.t), (i : int)) (e : inst_entry) ->
+        ( Term.Let
+            ( "dict$" ^ string_of_int i,
+              Term.shift ~cutoff:0 ~by:i e.e_ty,
+              islot_term i e.e_def,
+              acc ),
+          i - 1 ))
+      (Term.Var (n - 1 - top), n - 1)
+      entries
+  in
+  nest
 
 (** M4 Stage D (D2): resolve [Term.Auto] against [expected], a total
     function of the expected type VALUE with no search and no
@@ -613,7 +736,7 @@ let inst_start (fuel : int) (goal : Value.t) : inst_state =
     PASS-M4FIX-INST-TWOCLASS, PASS-M4FIX-INST-SPEC-SHAPE,
     PASS-M4FIX-INST-CHAINS and PASS-M4FIX-INST-SMALL-REACH. *)
 let rec resolve_auto (globals : Global.t) (ctx : ctx) (st : inst_state) (expected : Value.t) :
-    (Term.t * inst_state, Error.t) result =
+    (int * Value.t * inst_state, Error.t) result =
   let unresolved () = Error.Inst_unresolved (pp_goal globals ctx.size expected) in
   match expected with
   | Value.VInd (cls, [ av ]) ->
@@ -635,7 +758,7 @@ let rec resolve_auto (globals : Global.t) (ctx : ctx) (st : inst_state) (expecte
       let mangled = "inst$" ^ cls ^ "$" ^ k in
       let* key_t = Eval.quote globals ctx.size av in
       let mkey = inst_memo_key cls key_t in
-      (* A memo HIT returns the term this very resolution already built
+      (* A memo HIT returns the slot this very resolution already built
          for this (class, key) and charges no fuel;  a MISS resolves and
          records. [Result.fold]'s two arms are both functions, so the
          miss path is not evaluated on a hit (the same eagerness trap
@@ -643,7 +766,11 @@ let rec resolve_auto (globals : Global.t) (ctx : ctx) (st : inst_state) (expecte
       InstMemo.find_opt mkey st.memo
       |> Option.to_result ~none:()
       |> Result.fold
-           ~ok:(fun (cached : Term.t) -> Ok (cached, st))
+           ~ok:(fun (j : int) ->
+             (* pin 5: a HIT returns the slot and the CACHED value.  No
+                lookup of the instance, no telescope peel, no eval. *)
+             let* v = entry_val st.entries j in
+             Ok (j, v, st))
            ~error:(fun () ->
              let* d =
                Global.find_def mangled globals
@@ -651,6 +778,7 @@ let rec resolve_auto (globals : Global.t) (ctx : ctx) (st : inst_state) (expecte
                |> Result.map_error (fun () -> unresolved ())
              in
              let* ity = Eval.eval globals [] d.Global.ty in
+             let* head_v = Eval.eval globals [] (Term.Global mangled) in
              let targs =
                match av with
                | Value.VInd (_, ts) -> ts
@@ -660,8 +788,38 @@ let rec resolve_auto (globals : Global.t) (ctx : ctx) (st : inst_state) (expecte
                | Value.VLit _ ->
                    []
              in
-             let* tm, st' = build_instance globals ctx st ity targs (Term.Global mangled) in
-             Ok (tm, { st' with memo = InstMemo.add mkey tm st'.memo }))
+             let* slot_def, def_v, st' =
+               build_instance globals ctx st ity targs (IHead mangled) head_v
+             in
+             (* pin 4: the entry's own type wears the class's OWN
+                parameter quantity, read from its [ind_entry].  The
+                [~none:Quantity.Many] default is unreachable (this arm
+                matched [Value.VInd (cls, [ av ])]), and the re-check
+                overwrites the stamp anyway, so it earns no error. *)
+             let q_cls =
+               Global.find_ind cls globals
+               |> Option.map (fun (ind : Global.ind_entry) -> ind.Global.params)
+               |> Option.map (fun (ps : Global.telescope) -> List.nth_opt ps 0)
+               |> Option.join
+               |> Option.fold ~none:Quantity.Many
+                    ~some:(fun ((q, _x, _t) : Quantity.t * string * Term.t) -> q)
+             in
+             let entry =
+               {
+                 e_ty = Term.App (q_cls, Term.Global cls, key_t);
+                 e_def = slot_def;
+                 e_val = def_v;
+               }
+             in
+             let j = List.length st'.entries in
+             Ok
+               ( j,
+                 def_v,
+                 {
+                   st' with
+                   memo = InstMemo.add mkey j st'.memo;
+                   entries = entry :: st'.entries;
+                 } ))
   | Value.VInd (_, ([] | _ :: _ :: _))
   | Value.VPi (_, _, _, _)
   | Value.VUniv _
@@ -687,10 +845,24 @@ let rec resolve_auto (globals : Global.t) (ctx : ctx) (st : inst_state) (expecte
     [ity] this call happens to hold.
 
     M4 fixes round 4 (opus R4-5): that payload is [elide]d, so the one
-    stderr line the driver contract promises is also a BOUNDED line. *)
+    stderr line the driver contract promises is also a BOUNDED line.
+
+    M5 Stage B (pins 4, 5): the accumulator is an [islot], and a
+    parallel VALUE accumulator [acc_v] rides beside it, seeded with the
+    instance head's own value and advanced one [Eval.apply] per
+    argument.  That is what retires M4's per-argument
+    [Eval.eval globals ctx.env sub] (the old lib/check.ml:725): the
+    value of a resolved sub-dictionary now arrives from the
+    sub-resolution itself, and NbE's own [App] equation
+    (lib/eval.ml:56-59) makes the two spellings the same value. *)
 and build_instance (globals : Global.t) (ctx : ctx) (st : inst_state) (ity : Value.t)
-    (targs : Value.t list) (acc : Term.t) : (Term.t * inst_state, Error.t) result =
+    (targs : Value.t list) (acc : islot) (acc_v : Value.t) :
+    (islot * Value.t * inst_state, Error.t) result =
   match () with
+  (* M5 Stage C (pin 8): the budget arm runs FIRST, deliberately.  A
+     run that is out of time reports the cutoff, not a fuel exhaustion
+     it reached only because the operator waited. *)
+  | () when Budget.exhausted ctx.budget -> Error Error.Check_budget
   | () when st.fuel <= 0 -> Error (Error.Inst_depth (pp_goal globals ctx.size st.goal))
   | () -> (
       match ity with
@@ -702,14 +874,18 @@ and build_instance (globals : Global.t) (ctx : ctx) (st : inst_state) (ity : Val
                   Error
                     (Error.Inst_bad_shape
                        {
-                         name = instance_head_name acc;
+                         name = islot_head acc;
                          reason = "ran out of type arguments while resolving an instance";
                        })
               | t_i :: rest ->
                   let* arg_t = Eval.quote globals ctx.size t_i in
-                  let acc' = Term.App (q, acc, arg_t) in
+                  let acc' = IApp (q, acc, IType arg_t) in
+                  (* the VALUE half applies the ORIGINAL value, never the
+                     quoted-then-re-evaluated one *)
+                  let* acc_v' = Eval.apply globals acc_v t_i in
                   let* next_ity = Eval.app_closure globals clo t_i in
-                  build_instance globals ctx { st with fuel = st.fuel - 1 } next_ity rest acc')
+                  build_instance globals ctx { st with fuel = st.fuel - 1 } next_ity rest acc'
+                    acc_v')
           | Value.VInd (cls_j, [ dv ]) ->
               (* M4 fixes round 2 (ctxcat id 5): the continuation gets
                  the state the SUB-RESOLUTION left, never a second copy
@@ -717,15 +893,16 @@ and build_instance (globals : Global.t) (ctx : ctx) (st : inst_state) (ity : Val
                  (opus R3-1): that state now carries the sub-resolution's
                  memo entries too, so a sibling binder asking the same
                  (class, key) is answered rather than re-derived. *)
-              let* sub, st' =
+              let* j, sub_v, st' =
                 resolve_auto globals ctx
                   { st with fuel = st.fuel - 1 }
                   (Value.VInd (cls_j, [ dv ]))
               in
-              let* sub_v = Eval.eval globals ctx.env sub in
-              let acc' = Term.App (q, acc, sub) in
+              let acc' = IApp (q, acc, ISlot j) in
+              let* acc_v' = Eval.apply globals acc_v sub_v in
               let* next_ity = Eval.app_closure globals clo sub_v in
               build_instance globals ctx { st' with fuel = st'.fuel - 1 } next_ity targs acc'
+                acc_v'
           | Value.VInd (_, ([] | _ :: _ :: _))
           | Value.VPi (_, _, _, _)
           | Value.VLam (_, _)
@@ -735,14 +912,27 @@ and build_instance (globals : Global.t) (ctx : ctx) (st : inst_state) (ity : Val
               Error
                 (Error.Inst_bad_shape
                    {
-                     name = instance_head_name acc;
+                     name = islot_head acc;
                      reason = "instance domain is neither a type binder nor a single-parameter class";
                    }))
       | Value.VUniv _ | Value.VLam (_, _) | Value.VInd (_, _) | Value.VCtor (_, _)
       | Value.VNeutral (_, _) | Value.VLit _ ->
-          Ok (acc, st))
+          Ok (acc, acc_v, st))
 
+(** M5 Stage C (pin 8): one poll per checked node, then the M4 body
+    unchanged.  The wrapper, not the body, is what every recursive call
+    reaches, so "node granularity" is a property of the call graph and
+    not of a list of hand-picked sites. *)
 let rec infer (globals : Global.t) (ctx : ctx) (mode : Quantity.t) (tm : Term.t) :
+    (Term.t * Value.t, Error.t) result =
+  match Budget.exhausted ctx.budget with
+  | true -> Error Error.Check_budget
+  | false -> infer_node globals ctx mode tm
+
+(** The M4 [infer] body, unchanged, under the polling wrapper above.
+    Every recursive call inside still goes through [infer] and [check],
+    so every kernel node polls. *)
+and infer_node (globals : Global.t) (ctx : ctx) (mode : Quantity.t) (tm : Term.t) :
     (Term.t * Value.t, Error.t) result =
   match tm with
   | Term.Var ix ->
@@ -918,7 +1108,16 @@ and infer_univ (globals : Global.t) (ctx : ctx) (tm : Term.t) :
   | Value.VLit _ ->
       Error (Error.Not_a_universe (pp_goal globals ctx.size ty))
 
+(** M5 Stage C (pin 8): [check]'s polling wrapper, the twin of
+    [infer]'s above. *)
 and check (globals : Global.t) (ctx : ctx) (mode : Quantity.t) (tm : Term.t)
+    (expected_v : Value.t) : (Term.t, Error.t) result =
+  match Budget.exhausted ctx.budget with
+  | true -> Error Error.Check_budget
+  | false -> check_node globals ctx mode tm expected_v
+
+(** The M4 [check] body, unchanged, under the polling wrapper above. *)
+and check_node (globals : Global.t) (ctx : ctx) (mode : Quantity.t) (tm : Term.t)
     (expected : Value.t) : (Term.t, Error.t) result =
   match (tm, expected) with
   | Term.Lam (_q, x, body), Value.VPi (q, _y, dom, clo) ->
@@ -994,11 +1193,17 @@ and check (globals : Global.t) (ctx : ctx) (mode : Quantity.t) (tm : Term.t)
          M4 fixes round 3 (opus R3-1): the resolution starts from a
          FRESH [inst_state] -- full fuel and an EMPTY memo -- so the
          memo's soundness argument (invariant [globals] and [ctx]) holds
-         by construction: nothing carries across two [Term.Auto]s. *)
+         by construction: nothing carries across two [Term.Auto]s.
+         M5 Stage B (pins 1, 6): the candidate is the MATERIALIZED
+         let-nest over the walk's entries, one let per distinct
+         (class, key) pair, and the unchanged re-check below is the
+         safety net: a mis-shifted nest is a [Mismatch] or an
+         [Unbound_var] here, never a silently wrong dictionary. *)
       let* expected_t = Eval.quote globals ctx.size expected_v in
-      let* candidate, _st_left =
+      let* top, _top_v, st_end =
         resolve_auto globals ctx (inst_start (inst_fuel globals expected_t) expected_v) expected_v
       in
+      let candidate = materialize st_end.entries ~top in
       check globals ctx mode candidate expected_v
   | ( (Term.Var _ | Term.Univ _ | Term.Pi (_, _, _, _) | Term.App (_, _, _)
       | Term.Ann (_, _) | Term.Global _ | Term.Lit _),
@@ -1251,9 +1456,19 @@ let ensure_fresh (globals : Global.t) (name : string) : (unit, Error.t) result =
     caller ([define_instance]) meets it: [stamped_ty] is
     [infer_univ globals empty_ctx ty]'s own output term, for this same
     [globals] and this same [ty].  Absent it, nothing changes. *)
+(** [rule] (M5 Stage E, SPIKE) selects the totality rule the [rec_]
+    path's guard runs: [Totality.Structural] is the shipped behaviour,
+    [Totality.Structural_wf] the measured prototype behind
+    --experimental-wf.  REQUIRED, not optional, so the compiler
+    enumerates every call site and none can pick up a silent default. *)
 let define ?(rec_ = false) ?(partial = false) ?(stamped_ty : Term.t option)
-    (globals : Global.t) ~(name : string) ~(reducible : bool) ~(ty : Term.t) ~(def : Term.t) :
+    ?(budget : Budget.t = Budget.unlimited) ~(rule : Totality.rule) (globals : Global.t)
+    ~(name : string) ~(reducible : bool) ~(ty : Term.t) ~(def : Term.t) :
     (Global.t, Error.t) result =
+  (* M5 Stage C (pin 8): the root context carries the driver's budget;
+     the [Budget.unlimited] default keeps every existing call site
+     compiling and behaving exactly as it does today. *)
+  let ctx0 = root_ctx budget in
   let* () = ensure_fresh globals name in
   (* M3 Stage C: [partial] is always opaque to conversion, so it can
      never also be [reducible] (decision 10 of the M3 design
@@ -1266,7 +1481,7 @@ let define ?(rec_ = false) ?(partial = false) ?(stamped_ty : Term.t option)
   let* ty' =
     (stamped_ty
     |> Option.fold
-         ~none:(fun () -> Result.map fst (infer_univ globals empty_ctx ty))
+         ~none:(fun () -> Result.map fst (infer_univ globals ctx0 ty))
          ~some:(fun (t : Term.t) () -> Ok t))
       ()
   in
@@ -1318,7 +1533,7 @@ let define ?(rec_ = false) ?(partial = false) ?(stamped_ty : Term.t option)
            })
         globals
     in
-    let* def' = check provisional empty_ctx Quantity.Many def ty_v in
+    let* def' = check provisional ctx0 Quantity.Many def ty_v in
     (* a body with NO occurrence of its own name is not recursive at
        all: skip the structural guard entirely (it would otherwise
        be vacuously satisfied at the first formal, k = 0) and behave
@@ -1331,7 +1546,7 @@ let define ?(rec_ = false) ?(partial = false) ?(stamped_ty : Term.t option)
     let* rec_arg =
       if partial then Ok None
       else if Totality.mentions name def' then
-        Result.map Option.some (Totality.guard ~recname:name def')
+        Result.map Option.some (Totality.guard ~rule ~recname:name def')
       else Ok None
     in
     Ok
@@ -1339,7 +1554,7 @@ let define ?(rec_ = false) ?(partial = false) ?(stamped_ty : Term.t option)
          (Global.Def { Global.ty = ty'; def = def'; reducible; rec_arg; partial })
          globals)
   else
-    let* def' = check globals empty_ctx Quantity.Many def ty_v in
+    let* def' = check globals ctx0 Quantity.Many def ty_v in
     (* the entry stores the STAMPED type and definition *)
     Ok
       (Global.add name
@@ -1350,10 +1565,10 @@ let define ?(rec_ = false) ?(partial = false) ?(stamped_ty : Term.t option)
     public way to grow [Global.t] with a [Prim] entry. It does NOT check
     that [Prim.arity prim] agrees with [ty]; a catalog-level test does
     that instead. *)
-let define_prim (globals : Global.t) ~(name : string) ~(ty : Term.t) ~(prim : Prim.t) :
-    (Global.t, Error.t) result =
+let define_prim ?(budget : Budget.t = Budget.unlimited) (globals : Global.t)
+    ~(name : string) ~(ty : Term.t) ~(prim : Prim.t) : (Global.t, Error.t) result =
   let* () = ensure_fresh globals name in
-  let* ty', _ty_l = infer_univ globals empty_ctx ty in
+  let* ty', _ty_l = infer_univ globals (root_ctx budget) ty in
   Ok (Global.add name (Global.Prim { Global.prim_ty = ty'; prim }) globals)
 
 (** Extend the environment with a postulated statement (M4 Stage B). The
@@ -1362,10 +1577,10 @@ let define_prim (globals : Global.t) ~(name : string) ~(ty : Term.t) ~(prim : Pr
     entry carries no runtime body at all, so an axiom is confined to
     quantity 0 by [infer]'s own [Term.Global] guard above, never by
     anything here. *)
-let define_axiom (globals : Global.t) ~(name : string) ~(ty : Term.t) :
-    (Global.t, Error.t) result =
+let define_axiom ?(budget : Budget.t = Budget.unlimited) (globals : Global.t)
+    ~(name : string) ~(ty : Term.t) : (Global.t, Error.t) result =
   let* () = ensure_fresh globals name in
-  let* ty', _ty_l = infer_univ globals empty_ctx ty in
+  let* ty', _ty_l = infer_univ globals (root_ctx budget) ty in
   Ok (Global.add name (Global.Axiom { Global.ax_ty = ty' }) globals)
 
 (** M4 Stage D (D2): [true] iff [c] is a declared inductive with exactly
@@ -1544,14 +1759,18 @@ let validate_instance_shape (globals : Global.t) ~(name : string) (ty : Term.t) 
     is no separate class-coherence kernel state.  Instances are forced
     [reducible = true]:  they are small constructor values, and proofs
     about method calls want them to compute. *)
-let define_instance (globals : Global.t) ~(name : string) ~(ty : Term.t) ~(def : Term.t) :
-    (Global.t, Error.t) result =
-  let* ty', _ty_l = infer_univ globals empty_ctx ty in
+let define_instance ?(budget : Budget.t = Budget.unlimited) (globals : Global.t)
+    ~(name : string) ~(ty : Term.t) ~(def : Term.t) : (Global.t, Error.t) result =
+  let* ty', _ty_l = infer_univ globals (root_ctx budget) ty in
   let* () = validate_instance_shape globals ~name ty' in
   (* M4 fixes round 1 (ctxcat id 9): install the very artifact the shape
      validator just accepted, rather than a second elaboration of the
      same source type that agrees with it only by determinism. *)
-  define ~reducible:true ~stamped_ty:ty' globals ~name ~ty ~def
+  (* M5 Stage E: an instance body is never a [def rec], so the
+     prototype rule must not be reachable from it; the shipped rule is
+     passed literally. *)
+  define ~reducible:true ~stamped_ty:ty' ~budget ~rule:Totality.Structural globals ~name
+    ~ty ~def
 
 (** Declare an inductive's name, parameters and level. Constructors arrive
     separately via [define_ind] so their types can mention the inductive. *)
@@ -1567,9 +1786,9 @@ let define_instance (globals : Global.t) ~(name : string) ~(ty : Term.t) ~(def :
     section 6 debt). [status] is the caller's choice of initial
     [Global.ctor_status]: [Provisional] for an ordinary [declare_ind],
     [Builtin] for [declare_builtin]. *)
-let declare_ind_status (globals : Global.t) ~(name : string) ~(params : Global.telescope)
-    ~(indices : Global.telescope) ~(level : Level.t) ~(status : Global.ctor_status) :
-    (Global.t, Error.t) result =
+let declare_ind_status ?(budget : Budget.t = Budget.unlimited) (globals : Global.t)
+    ~(name : string) ~(params : Global.telescope) ~(indices : Global.telescope)
+    ~(level : Level.t) ~(status : Global.ctor_status) : (Global.t, Error.t) result =
   let* () = ensure_fresh globals name in
   let* pctx, rev_params_stamped =
     List.fold_left
@@ -1578,7 +1797,7 @@ let declare_ind_status (globals : Global.t) ~(name : string) ~(params : Global.t
         let* ty', _l = infer_univ globals ctx ty in
         let* ty_v = Eval.eval globals ctx.env ty' in
         Ok (bind x q ty_v ctx, (q, x, ty') :: rev_acc))
-      (Ok (empty_ctx, []))
+      (Ok (root_ctx budget, []))
       params
   in
   let params_stamped = List.rev rev_params_stamped in
@@ -1622,9 +1841,10 @@ let declare_ind_status (globals : Global.t) ~(name : string) ~(params : Global.t
     mention the inductive. [indices] is REQUIRED (not optional with a
     [] default), so every existing call site is visited by the
     compiler. *)
-let declare_ind (globals : Global.t) ~(name : string) ~(params : Global.telescope)
-    ~(indices : Global.telescope) ~(level : Level.t) : (Global.t, Error.t) result =
-  declare_ind_status globals ~name ~params ~indices ~level ~status:Global.Provisional
+let declare_ind ?(budget : Budget.t = Budget.unlimited) (globals : Global.t)
+    ~(name : string) ~(params : Global.telescope) ~(indices : Global.telescope)
+    ~(level : Level.t) : (Global.t, Error.t) result =
+  declare_ind_status ~budget globals ~name ~params ~indices ~level ~status:Global.Provisional
 
 (** M4 Stage A: the bootstrap-only entry point for a type former that
     will NEVER be [define_ind]'d (String, Int, Div, IO). Same as
@@ -1639,8 +1859,8 @@ let declare_builtin (globals : Global.t) ~(name : string) ~(params : Global.tele
     Enforces the result-head rule, strict positivity with uniform
     parameters, and the predicative universe bound. On any error the
     caller keeps its pre-declaration globals. *)
-let define_ind (globals : Global.t) ~(name : string) ~(ctors : (string * Term.t) list) :
-    (Global.t, Error.t) result =
+let define_ind ?(budget : Budget.t = Budget.unlimited) (globals : Global.t)
+    ~(name : string) ~(ctors : (string * Term.t) list) : (Global.t, Error.t) result =
   let* ind =
     Global.find_ind name globals |> Option.to_result ~none:(Error.Unbound_global name)
   in
@@ -1662,7 +1882,7 @@ let define_ind (globals : Global.t) ~(name : string) ~(ctors : (string * Term.t)
         let* ctx = acc in
         let* ty_v = Eval.eval globals ctx.env ty in
         Ok (bind x q ty_v ctx))
-      (Ok empty_ctx) ind.Global.params
+      (Ok (root_ctx budget)) ind.Global.params
   in
   (* [no_occur]/[index_expr_clean] closed over this [name]; see their
      top-level definitions above [zero_eliminable] for the reachability

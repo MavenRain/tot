@@ -1,0 +1,10 @@
+-- M5 Stage A, gate PASS-M5A-FENCE-PI (design pin 15).  PXf's single
+-- constructor takes ONE argument, at quantity 0, whose type is a Pi
+-- whose CODOMAIN is PXf itself.  The subsingleton criterion's first
+-- two clauses (one constructor, every argument erased) both hold, so
+-- self_rec is the ONLY thing that keeps zero_eliminable false, and
+-- Totality.mentions finds PXf only because it walks under a Pi.  A
+-- mentions that stops at the Pi node flips self_rec false; observed
+-- 2026-09-03: the reject then moves to the termination guard.
+data PXf : Type 0 := | pxwrap : (0 f : (0 n : Nat) -> PXf) -> PXf
+def rec pxfLoop : (0 px : PXf) -> Nat := fun px => match px with | pxwrap g => pxfLoop (g zero) end

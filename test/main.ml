@@ -113,19 +113,19 @@ let add_def : Term.t =
             } ) )
 
 let build_globals () : (Global.t, Error.t) result =
-  let* g = Check.define Global.empty ~name:"cnat" ~reducible:true ~ty:ty1 ~def:cnat_def in
-  let* g = Check.define g ~name:"czero" ~reducible:true ~ty:cnat ~def:czero_def in
-  let* g = Check.define g ~name:"csucc" ~reducible:true ~ty:csucc_ty ~def:csucc_def in
-  let* g = Check.define g ~name:"cadd" ~reducible:true ~ty:cadd_ty ~def:cadd_def in
-  let* g = Check.define g ~name:"ctwo" ~reducible:true ~ty:cnat ~def:(church 2) in
-  let* g = Check.define g ~name:"cfour" ~reducible:true ~ty:cnat ~def:(church 4) in
-  let* g = Check.define g ~name:"czero_opaque" ~reducible:false ~ty:cnat ~def:czero_def in
+  let* g = Check.define ~rule:Totality.Structural Global.empty ~name:"cnat" ~reducible:true ~ty:ty1 ~def:cnat_def in
+  let* g = Check.define ~rule:Totality.Structural g ~name:"czero" ~reducible:true ~ty:cnat ~def:czero_def in
+  let* g = Check.define ~rule:Totality.Structural g ~name:"csucc" ~reducible:true ~ty:csucc_ty ~def:csucc_def in
+  let* g = Check.define ~rule:Totality.Structural g ~name:"cadd" ~reducible:true ~ty:cadd_ty ~def:cadd_def in
+  let* g = Check.define ~rule:Totality.Structural g ~name:"ctwo" ~reducible:true ~ty:cnat ~def:(church 2) in
+  let* g = Check.define ~rule:Totality.Structural g ~name:"cfour" ~reducible:true ~ty:cnat ~def:(church 4) in
+  let* g = Check.define ~rule:Totality.Structural g ~name:"czero_opaque" ~reducible:false ~ty:cnat ~def:czero_def in
   let* g =
-    Check.define g ~name:"g_fun" ~reducible:false
+    Check.define ~rule:Totality.Structural g ~name:"g_fun" ~reducible:false
       ~ty:(Term.Pi (qw, "x", cnat, cnat))
       ~def:(Term.Lam (qw, "x", Term.Var 0))
   in
-  let* g = Check.define g ~name:"idT" ~reducible:false ~ty:idt_ty ~def:idt_def in
+  let* g = Check.define ~rule:Totality.Structural g ~name:"idT" ~reducible:false ~ty:idt_ty ~def:idt_def in
   (* M2: inductives, a guarded rec def, and an opaque Nat *)
   let* g = Check.declare_ind g ~name:"Nat" ~params:[] ~indices:[] ~level:Level.zero in
   let* g =
@@ -141,8 +141,8 @@ let build_globals () : (Global.t, Error.t) result =
           ("some", Term.Pi (qw, "x", Term.Var 0, Term.App (qw, Term.Global "Opt", Term.Var 1)));
         ]
   in
-  let* g = Check.define ~rec_:true g ~name:"add" ~reducible:true ~ty:add_ty ~def:add_def in
-  Check.define g ~name:"x_opaque" ~reducible:false ~ty:nat ~def:nzero
+  let* g = Check.define ~rule:Totality.Structural ~rec_:true g ~name:"add" ~reducible:true ~ty:add_ty ~def:add_def in
+  Check.define ~rule:Totality.Structural g ~name:"x_opaque" ~reducible:false ~ty:nat ~def:nzero
 
 let expect_conv (globals : Global.t) (label : string) ~(want : bool) (t1 : Term.t)
     (t2 : Term.t) () : (unit, string) result =
@@ -191,7 +191,7 @@ let case_id_result_type (globals : Global.t) () : (unit, string) result =
        ~error:(fun e -> Error ("idT: " ^ Error.to_string e))
 
 let case_duplicate (globals : Global.t) () : (unit, string) result =
-  Check.define globals ~name:"czero" ~reducible:true ~ty:cnat ~def:czero_def
+  Check.define ~rule:Totality.Structural globals ~name:"czero" ~reducible:true ~ty:cnat ~def:czero_def
   |> Result.fold
        ~ok:(fun _g -> Error "duplicate: redefining czero was accepted")
        ~error:(fun e ->
@@ -344,7 +344,7 @@ let case_guarded_stuck (globals : Global.t) () : (unit, string) result =
   expect_conv globals "stuck-not-succ" ~want:false stuck_add (nsucc (nsucc nzero)) ()
 
 let case_termination (globals : Global.t) () : (unit, string) result =
-  Check.define ~rec_:true globals ~name:"loop" ~reducible:true
+  Check.define ~rule:Totality.Structural ~rec_:true globals ~name:"loop" ~reducible:true
     ~ty:(Term.Pi (qw, "n", nat, nat))
     ~def:(Term.Lam (qw, "n", Term.App (qw, Term.Global "loop", Term.Var 0)))
   |> Result.fold
@@ -553,15 +553,15 @@ let case_uniform_motive (globals : Global.t) () : (unit, string) result =
       Check.define_ind g ~name:"Bool" ~ctors:[ ("true", bool_ty); ("false", bool_ty) ]
     in
     let* g =
-      Check.define g ~name:"not_a" ~reducible:true ~ty:not_ty
+      Check.define ~rule:Totality.Structural g ~name:"not_a" ~reducible:true ~ty:not_ty
         ~def:(Term.Lam (qw, "b", not_body_no_motive))
     in
     let* g =
-      Check.define g ~name:"not_b" ~reducible:true ~ty:not_ty
+      Check.define ~rule:Totality.Structural g ~name:"not_b" ~reducible:true ~ty:not_ty
         ~def:(Term.Lam (qw, "b", not_body_explicit_motive))
     in
     let* g =
-      Check.define g ~name:"bo" ~reducible:false ~ty:bool_ty ~def:(Term.Global "true")
+      Check.define ~rule:Totality.Structural g ~name:"bo" ~reducible:false ~ty:bool_ty ~def:(Term.Global "true")
     in
     let* v1 = Eval.eval g [] (Term.App (qw, Term.Global "not_a", Term.Global "bo")) in
     let* v2 = Eval.eval g [] (Term.App (qw, Term.Global "not_b", Term.Global "bo")) in
@@ -623,11 +623,11 @@ let ghost_def : Term.t =
 let case_erased_guard_no_self_ref (globals : Global.t) () : (unit, string) result =
   let attempt =
     let* g =
-      Check.define globals ~name:"dropErased" ~reducible:false ~ty:drop_erased_ty
+      Check.define ~rule:Totality.Structural globals ~name:"dropErased" ~reducible:false ~ty:drop_erased_ty
         ~def:drop_erased_def
     in
     let* g =
-      Check.define ~rec_:true g ~name:"ghost" ~reducible:false ~ty:ghost_ty ~def:ghost_def
+      Check.define ~rule:Totality.Structural ~rec_:true g ~name:"ghost" ~reducible:false ~ty:ghost_ty ~def:ghost_def
     in
     let* dentry =
       Global.find_def "ghost" g |> Option.to_result ~none:(Error.Unbound_global "ghost")
@@ -926,10 +926,10 @@ let case_effect_def_reducible () : (unit, string) result =
                Term.Lit (Literal.LString "x") )
          in
          let bad =
-           Check.define globals ~name:"tB4bad" ~reducible:true ~ty:div_string_ty ~def:body
+           Check.define ~rule:Totality.Structural globals ~name:"tB4bad" ~reducible:true ~ty:div_string_ty ~def:body
          in
          let good =
-           Check.define globals ~name:"tB4good" ~reducible:false ~ty:div_string_ty ~def:body
+           Check.define ~rule:Totality.Structural globals ~name:"tB4good" ~reducible:false ~ty:div_string_ty ~def:body
          in
          let io_unit_ty =
            Term.Pi
@@ -944,7 +944,7 @@ let case_effect_def_reducible () : (unit, string) result =
              )
          in
          let fn_ok =
-           Check.define globals ~name:"tB4fn" ~reducible:true ~ty:io_unit_ty ~def:fn_body
+           Check.define ~rule:Totality.Structural globals ~name:"tB4fn" ~reducible:true ~ty:io_unit_ty ~def:fn_body
          in
          let bad_tag = bad |> Result.fold ~ok:(fun _ -> "") ~error:Error.tag in
          let bad_msg = bad |> Result.fold ~ok:(fun _ -> "") ~error:Error.to_string in
@@ -1021,7 +1021,7 @@ let case_partial_reducible_conflict () : (unit, string) result =
            Term.Pi (qw, "n", Term.Global "Int", Term.App (qw, Term.Global "Div", Term.Global "Int"))
          in
          let def = Term.Lam (qw, "n", Term.Var 0) in
-         let r = Check.define g ~rec_:true ~partial:true ~name:"tC1" ~reducible:true ~ty ~def in
+         let r = Check.define ~rule:Totality.Structural g ~rec_:true ~partial:true ~name:"tC1" ~reducible:true ~ty ~def in
          let tag = r |> Result.fold ~ok:(fun _ -> "") ~error:Error.tag in
          let msg = r |> Result.fold ~ok:(fun _ -> "") ~error:Error.to_string in
          if Result.is_ok r then
@@ -1042,7 +1042,7 @@ let case_partial_not_div () : (unit, string) result =
          let g = bst.Tot_surface.Run.globals in
          let ty = Term.Pi (qw, "n", Term.Global "Int", Term.Global "Int") in
          let def = Term.Lam (qw, "n", Term.Var 0) in
-         let r = Check.define g ~rec_:true ~partial:true ~name:"tC2" ~reducible:false ~ty ~def in
+         let r = Check.define ~rule:Totality.Structural g ~rec_:true ~partial:true ~name:"tC2" ~reducible:false ~ty ~def in
          let tag = r |> Result.fold ~ok:(fun _ -> "") ~error:Error.tag in
          let msg = r |> Result.fold ~ok:(fun _ -> "") ~error:Error.to_string in
          if Result.is_ok r then Error "partial-not-div: non-Div-headed partial def was ACCEPTED"
@@ -1088,7 +1088,7 @@ let case_partial_guard_skip () : (unit, string) result =
   |> Result.fold ~error:(fun msg -> Error msg) ~ok:(fun bst ->
          let g = bst.Tot_surface.Run.globals in
          let rejected =
-           Check.define g ~rec_:true ~partial:false ~name:"countdown" ~reducible:false
+           Check.define ~rule:Totality.Structural g ~rec_:true ~partial:false ~name:"countdown" ~reducible:false
              ~ty:countdown_ty ~def:countdown_body
          in
          let rejected_tag = rejected |> Result.fold ~ok:(fun _ -> "") ~error:Error.tag in
@@ -1100,7 +1100,7 @@ let case_partial_guard_skip () : (unit, string) result =
            Printf.printf "  expected error (Termination, no partial): %s\n"
              (rejected |> Result.fold ~ok:(fun _ -> "") ~error:Error.to_string);
            let accepted =
-             Check.define g ~rec_:true ~partial:true ~name:"countdown" ~reducible:false
+             Check.define ~rule:Totality.Structural g ~rec_:true ~partial:true ~name:"countdown" ~reducible:false
                ~ty:countdown_ty ~def:countdown_body
            in
            accepted
@@ -1747,14 +1747,17 @@ let d_inst_def : Term.t = Term.App (qw, Term.App (qw, Term.Global "mkCls", Term.
 
 let d_build_inst_cls_key (g : Global.t) : (Global.t, Error.t) result =
   let* g = d_build_cls_key g in
-  Check.define g ~name:"inst$Cls$Key" ~reducible:true ~ty:d_inst_ty ~def:d_inst_def
+  Check.define ~rule:Totality.Structural g ~name:"inst$Cls$Key" ~reducible:true ~ty:d_inst_ty ~def:d_inst_def
 
 let d_build_wrap (g : Global.t) : (Global.t, Error.t) result =
   Check.declare_ind g ~name:"Wrap" ~params:[ (q0, "A", ty0) ] ~indices:[] ~level:Level.zero
 
 (* D1: Auto resolves from the expected type: the resolved term prints as
-   exactly the mangled instance global, no App wrapping (the instance is
-   ground, its own type has no leading Pi). *)
+   exactly the mangled instance global inside its one-entry let-nest.
+   M5 Stage B (conflict note C-B4 in dev/M5-BUILD-LOG.md): pin 1 makes
+   the [Term.Auto] site emit the materialized nest for EVERY resolution,
+   so the M4 spelling ("inst$Cls$Key", no wrapping) is unreachable; the
+   oracle stays an exact whole-term print, re-pinned to the nest. *)
 let case_auto_resolves_from_expected (globals : Global.t) () : (unit, string) result =
   let* g = d_build_inst_cls_key globals |> Result.map_error Error.to_string in
   let expected_v = Value.VInd ("Cls", [ Value.VInd ("Key", []) ]) in
@@ -1762,8 +1765,9 @@ let case_auto_resolves_from_expected (globals : Global.t) () : (unit, string) re
     Check.check g Check.empty_ctx qw Term.Auto expected_v |> Result.map_error Error.to_string
   in
   let got = Pp.term [] tm in
-  if String.equal got "inst$Cls$Key" then Ok ()
-  else Error (Printf.sprintf "D1: got %s, want inst$Cls$Key" got)
+  let want = "let dict$0 : (Cls Key) = inst$Cls$Key in dict$0" in
+  if String.equal got want then Ok ()
+  else Error (Printf.sprintf "D1: got %s, want %s" got want)
 
 (* D2: Auto against a non-class expected type is Inst_unresolved. *)
 let case_auto_non_class_unresolved (globals : Global.t) () : (unit, string) result =
@@ -1848,8 +1852,14 @@ let case_ground_applied_key_is_bad_shape (globals : Global.t) () : (unit, string
 let case_instance_resolution_fuel_bounded (globals : Global.t) () : (unit, string) result =
   let* g = d_build_inst_cls_key globals |> Result.map_error Error.to_string in
   let ity = Value.VInd ("Cls", [ Value.VInd ("Key", []) ]) in
+  (* M5 Stage B: the accumulator is an [islot] and the call gains the
+     seed VALUE argument; the assertion is unchanged (fuel 0 is
+     Inst_depth, the memo starts empty). *)
+  let* head_v =
+    Eval.eval g [] (Term.Global "inst$Cls$Key") |> Result.map_error Error.to_string
+  in
   Check.build_instance g Check.empty_ctx (Check.inst_start 0 ity) ity []
-    (Term.Global "inst$Cls$Key")
+    (Check.IHead "inst$Cls$Key") head_v
   |> Result.fold
        ~ok:(fun _ -> Error "D7: build_instance with fuel 0 unexpectedly resolved")
        ~error:(fun e ->
@@ -1873,8 +1883,11 @@ let case_inst_depth_names_the_query (globals : Global.t) () : (unit, string) res
     Eval.eval g [] (Term.Pi (qw, "_", cls_key, cls_key)) |> Result.map_error Error.to_string
   in
   let goal = Value.VInd ("Cls", [ Value.VInd ("Wrap", [ Value.VInd ("Key", []) ]) ]) in
+  (* M5 Stage B: [islot] accumulator plus a seed value; [inst$Cls$Wrap]
+     has no def here, so the seed is the neutral its eval would be. *)
   Check.build_instance g Check.empty_ctx (Check.inst_start 0 goal) ity []
-    (Term.Global "inst$Cls$Wrap")
+    (Check.IHead "inst$Cls$Wrap")
+    (Value.VNeutral (Value.HGlobal "inst$Cls$Wrap", []))
   |> Result.fold
        ~ok:(fun _ -> Error "D7b: build_instance with fuel 0 unexpectedly resolved")
        ~error:(fun e ->
@@ -2145,8 +2158,10 @@ let case_inst_depth_message_is_bounded (globals : Global.t) () : (unit, string) 
     Eval.eval g [] (Term.Pi (qw, "_", cls_key, cls_key)) |> Result.map_error Error.to_string
   in
   let goal = Value.VInd ("Cls", [ d7c_nest 400 (Value.VInd ("Key", [])) ]) in
+  (* M5 Stage B: [islot] accumulator plus a seed value, as in D7b. *)
   Check.build_instance g Check.empty_ctx (Check.inst_start 0 goal) ity []
-    (Term.Global "inst$Cls$Wrap")
+    (Check.IHead "inst$Cls$Wrap")
+    (Value.VNeutral (Value.HGlobal "inst$Cls$Wrap", []))
   |> Result.fold
        ~ok:(fun _ -> Error "D7c: build_instance with fuel 0 unexpectedly resolved")
        ~error:(fun e ->
@@ -2384,6 +2399,444 @@ let case_wide_query_with_wide_instance_resolves (globals : Global.t) () : (unit,
            (Printf.sprintf "D9f: an 8-binder instance over %d leaves did not resolve (fuel %d): %s"
               d9f_leaves fuel (Error.to_string e)))
 
+(* ---- M5 Stage A (plan A8, kernel cases 1 to 9): the JSON escaper
+   and the parser's \uXXXX arm.  Every positive pins an exact byte
+   string; every negative names the shape it rejects. ---- *)
+
+(* The [jstr] payload out of a parsed JSON string value; the enumerated
+   backstop mirrors [Interp.json_serialize]'s own shape-mismatch
+   style. *)
+let m5a_jstr_payload (v : Interp.v) : (string, string) result =
+  match v with
+  | Interp.VCon ("jstr", [ Interp.VLit (Literal.LString s) ]) -> Ok s
+  | Interp.VCon (_, _)
+  | Interp.VClos (_, _, _)
+  | Interp.VNeut (_, _)
+  | Interp.VErased | Interp.VLit _
+  | Interp.VPrim (_, _)
+  | Interp.VIOAction _ ->
+      Error "not a jstr value"
+
+(* The value under key "a" of a ONE-key parsed JSON object, the exact
+   shape A8 case 8's round-trip payload produces. *)
+let m5a_obj_a_payload (v : Interp.v) : (string, string) result =
+  match v with
+  | Interp.VCon
+      ("jobjCons", [ Interp.VLit (Literal.LString "a"); jv; Interp.VCon ("jobjNil", []) ]) ->
+      m5a_jstr_payload jv
+  | Interp.VCon (_, _)
+  | Interp.VClos (_, _, _)
+  | Interp.VNeut (_, _)
+  | Interp.VErased | Interp.VLit _
+  | Interp.VPrim (_, _)
+  | Interp.VIOAction _ ->
+      Error "not the expected one-key object {\"a\": jstr _}"
+
+let m5a_expect_escape (label : string) (input : string) (want : string) () :
+    (unit, string) result =
+  let got = Json_escape.string input in
+  if String.equal got want then Ok ()
+  else Error (Printf.sprintf "%s: got %S, want %S" label got want)
+
+let m5a_expect_parse_none (label : string) (payload : string) : (unit, string) result =
+  if Option.is_none (Interp.json_parse_top payload) then Ok ()
+  else Error (Printf.sprintf "%s: expected the WHOLE parse to fail on %S, got Some" label payload)
+
+(* ---- M5 Stage B (plan B10): Term.shift cutoffs, the shared instance
+   nest, and the slot arithmetic.  Term comparisons go through
+   [Check.inst_key_enc], the repo's injective total encoding of a
+   [Term.t], for the same reason that encoding exists: no polymorphic
+   compare. ---- *)
+
+(* A subterm every M5B1 shift leaves untouched: it sits under enough
+   binders that none of its variables reach the cutoff, and it carries
+   the [Lam], [Match], [Ann], [Lit], [Auto] and [Global] constructors
+   so the whole-term comparison covers all eleven. *)
+let m5b1_inner : Term.t =
+  Term.Lam
+    ( qw,
+      "x",
+      Term.Ann
+        ( Term.Match
+            {
+              scrut = Term.Var 0;
+              scrut_q = qw;
+              motive =
+                Some
+                  {
+                    Term.m_ind = None;
+                    m_idx = [];
+                    m_self = "s";
+                    m_body = Term.Lit (Literal.LInt 7);
+                  };
+              branches = [ ("c", [ (qw, "a") ], Term.Var 0); ("c2", [], Term.Auto) ];
+            },
+          Term.Global "M5B1G" ) )
+
+(* The M5B1 input uses all eleven [Term.t] constructors.  Shifted at
+   ~cutoff:1 ~by:2: the Pi domain's Var 1 moves to Var 3, the Pi
+   codomain (one binder in, cutoff 2) keeps Var 1 and moves Var 2 to
+   Var 4, the Let def shifts at the OUTER cutoff (Var 0 stays, Var 1
+   moves to Var 3), the Let body (cutoff 2) keeps Var 1 and moves Var 2
+   to Var 4, and Univ, Global, Lit and Auto are identities. *)
+let m5b1_input : Term.t =
+  Term.App
+    ( qw,
+      Term.Pi (q0, "p", Term.Var 1, Term.App (qw, Term.Var 1, Term.Var 2)),
+      Term.Let
+        ( "d",
+          Term.Univ Level.zero,
+          Term.App (qw, Term.Var 0, Term.Var 1),
+          Term.App (qw, Term.Var 1, Term.App (qw, Term.Var 2, m5b1_inner)) ) )
+
+(* The expected M5B1 output, spelled out in full. *)
+let m5b1_expected : Term.t =
+  Term.App
+    ( qw,
+      Term.Pi (q0, "p", Term.Var 3, Term.App (qw, Term.Var 1, Term.Var 4)),
+      Term.Let
+        ( "d",
+          Term.Univ Level.zero,
+          Term.App (qw, Term.Var 0, Term.Var 3),
+          Term.App (qw, Term.Var 1, Term.App (qw, Term.Var 4, m5b1_inner)) ) )
+
+(* Shift [input] and require the encoding-exact [expected]. *)
+let m5b_expect_shift (label : string) ~(cutoff : int) ~(by : int) (input : Term.t)
+    (expected : Term.t) () : (unit, string) result =
+  let got = Term.shift ~cutoff ~by input in
+  if String.equal (Check.inst_key_enc got) (Check.inst_key_enc expected) then Ok ()
+  else
+    Error
+      (Printf.sprintf "%s: shift mismatch:\n  got  %s\n  want %s" label (Pp.term [] got)
+         (Pp.term [] expected))
+
+(* A match whose motive has TWO index binders, so its body sits under
+   |m_idx| + 1 = 3 binders (plan B10, case M5B2). *)
+let m5b2_match (body : Term.t) : Term.t =
+  Term.Match
+    {
+      scrut = Term.Global "M5B2S";
+      scrut_q = qw;
+      motive = Some { Term.m_ind = None; m_idx = [ "i"; "c" ]; m_self = "s"; m_body = body };
+      branches = [];
+    }
+
+(* A match with one two-binder branch, so the branch body sits under
+   |binders| = 2 binders (plan B10, case M5B3). *)
+let m5b3_match (body : Term.t) : Term.t =
+  Term.Match
+    {
+      scrut = Term.Global "M5B3S";
+      scrut_q = qw;
+      motive = None;
+      branches = [ ("c", [ (qw, "a1"); (qw, "a2") ], body) ];
+    }
+
+(* The Stage B sharing globals: the branching shape of plan B0 (class
+   M5bSC, box M5bSBox, nullary key M5bBool, a ground instance and a
+   TWO-dictionary-binder box instance), built with [Check.declare_ind]
+   and the D7d opaque-instance helper, the D9f model. *)
+let m5b_box_inst_ty : Term.t =
+  Term.Pi
+    ( q0,
+      "A",
+      ty0,
+      Term.Pi
+        ( qw,
+          "d1",
+          Term.App (qw, Term.Global "M5bSC", Term.Var 0),
+          Term.Pi
+            ( qw,
+              "d2",
+              Term.App (qw, Term.Global "M5bSC", Term.Var 1),
+              Term.App
+                (qw, Term.Global "M5bSC", Term.App (qw, Term.Global "M5bSBox", Term.Var 2)) ) ) )
+
+let m5b_build_sharing (g : Global.t) : (Global.t, Error.t) result =
+  let* g =
+    Check.declare_ind g ~name:"M5bSC" ~params:[ (q0, "A", ty0) ] ~indices:[] ~level:Level.zero
+  in
+  let* g =
+    Check.declare_ind g ~name:"M5bSBox" ~params:[ (q0, "A", ty0) ] ~indices:[] ~level:Level.zero
+  in
+  let* g = Check.declare_ind g ~name:"M5bBool" ~params:[] ~indices:[] ~level:Level.zero in
+  let g =
+    d7d_opaque "inst$M5bSC$M5bBool"
+      (Term.App (qw, Term.Global "M5bSC", Term.Global "M5bBool"))
+      g
+  in
+  Ok (d7d_opaque "inst$M5bSC$M5bSBox" m5b_box_inst_ty g)
+
+(* [M5bSBox^n M5bBool] as a VALUE. *)
+let rec m5b_boxes (n : int) (v : Value.t) : Value.t =
+  match () with
+  | () when n <= 0 -> v
+  | () -> m5b_boxes (n - 1) (Value.VInd ("M5bSBox", [ v ]))
+
+(* The goal [M5bSC (M5bSBox^n M5bBool)]. *)
+let m5b_goal (n : int) : Value.t =
+  Value.VInd ("M5bSC", [ m5b_boxes n (Value.VInd ("M5bBool", [])) ])
+
+(* M5B4: the branching nest at nesting 16 is SMALL.  The measured
+   [term_size] is printed the way D9f prints its own, and the bound is
+   machine-independent (no clock): the un-shared M4 tree at this
+   nesting is T(16) = 458714 nodes by the plan B0 recurrence, while the
+   nest's closed form is S(16) = 662. *)
+let case_m5b_share_size (globals : Global.t) () : (unit, string) result =
+  let* g = m5b_build_sharing globals |> Result.map_error Error.to_string in
+  Check.check g Check.empty_ctx qw Term.Auto (m5b_goal 16)
+  |> Result.fold
+       ~ok:(fun tm ->
+         let n = Check.term_size tm in
+         Printf.printf "  M5B4 term_size=%d\n" n;
+         if n < 4000 then Ok ()
+         else
+           Error
+             (Printf.sprintf
+                "M5B4: term_size %d is not < 4000 (the un-shared M4 tree is 458714 nodes)" n))
+       ~error:(fun e -> Error ("M5B4: " ^ Error.to_string e))
+
+(* M5B5: the nesting-2 worked example of plan B2, checked end to end
+   and compared against the hand-spelled nest, encoding-exact.  This is
+   the case that fails on an off-by-one in [Term.Var (i - 1 - j)] that
+   the size case cannot see. *)
+let case_m5b_slot_arithmetic (globals : Global.t) () : (unit, string) result =
+  let* g = m5b_build_sharing globals |> Result.map_error Error.to_string in
+  let* tm =
+    Check.check g Check.empty_ctx qw Term.Auto (m5b_goal 2) |> Result.map_error Error.to_string
+  in
+  let sc (t : Term.t) : Term.t = Term.App (q0, Term.Global "M5bSC", t) in
+  let sbox (t : Term.t) : Term.t = Term.App (q0, Term.Global "M5bSBox", t) in
+  let b = Term.Global "M5bBool" in
+  let inst_app (key : Term.t) : Term.t =
+    Term.App
+      ( qw,
+        Term.App (qw, Term.App (q0, Term.Global "inst$M5bSC$M5bSBox", key), Term.Var 0),
+        Term.Var 0 )
+  in
+  let expected =
+    Term.Let
+      ( "dict$0",
+        sc b,
+        Term.Global "inst$M5bSC$M5bBool",
+        Term.Let
+          ( "dict$1",
+            sc (sbox b),
+            inst_app b,
+            Term.Let ("dict$2", sc (sbox (sbox b)), inst_app (sbox b), Term.Var 0) ) )
+  in
+  if String.equal (Check.inst_key_enc tm) (Check.inst_key_enc expected) then Ok ()
+  else
+    Error
+      (Printf.sprintf "M5B5: nest mismatch:\n  got  %s\n  want %s" (Pp.term [] tm)
+         (Pp.term [] expected))
+
+(* Count the [Let]s on the nest's SPINE only: the nest is a straight
+   line of lets whose body is a variable, so a fourth entry can only
+   appear as a fourth spine binder. *)
+let rec m5b_count_spine_lets (t : Term.t) : int =
+  match t with
+  | Term.Let (_x, _ty, _def, body) -> 1 + m5b_count_spine_lets body
+  | Term.Var _ | Term.Univ _
+  | Term.Pi (_, _, _, _)
+  | Term.Lam (_, _, _)
+  | Term.App (_, _, _)
+  | Term.Ann (_, _)
+  | Term.Global _ | Term.Lit _ | Term.Auto | Term.Match _ ->
+      0
+
+(* M5B6: at nesting 2 the second [M5bSC M5bBool] sub-goal is a memo
+   HIT, so the nest binds exactly 3 lets and no fourth entry exists. *)
+let case_m5b_memo_hit_shares (globals : Global.t) () : (unit, string) result =
+  let* g = m5b_build_sharing globals |> Result.map_error Error.to_string in
+  let* tm =
+    Check.check g Check.empty_ctx qw Term.Auto (m5b_goal 2) |> Result.map_error Error.to_string
+  in
+  let n = m5b_count_spine_lets tm in
+  if Int.equal n 3 then Ok ()
+  else
+    Error
+      (Printf.sprintf
+         "M5B6: the nesting-2 nest binds %d lets, want exactly 3 (the second SC sub-goal must \
+          be a memo HIT, not a fourth entry)" n)
+
+(* M5 Stage C (plan C1, pin 8): the kernel is driven by a DETERMINISTIC
+   poll, no clock and no sleep: an always-spent budget turns the first
+   node of a trivial define into [Check_budget], and the omitted budget
+   (the [Budget.unlimited] default) leaves the same define green. *)
+let case_m5c_deterministic_poll (globals : Global.t) () : (unit, string) result =
+  let spent = Budget.of_poll (fun () -> true) in
+  let* () =
+    Check.define ~rule:Totality.Structural ~budget:spent globals ~name:"m5c1spent" ~reducible:false ~ty:ty1 ~def:ty0
+    |> Result.fold
+         ~ok:(fun _g -> Error "M5C1: an always-spent budget let a define through")
+         ~error:(fun e ->
+           if Error.is_check_budget e then Ok ()
+           else Error ("M5C1: expected Check_budget, got " ^ Error.tag e))
+  in
+  Check.define ~rule:Totality.Structural globals ~name:"m5c1free" ~reducible:false ~ty:ty1 ~def:ty0
+  |> Result.fold
+       ~ok:(fun _g -> Ok ())
+       ~error:(fun e ->
+         Error ("M5C1: the default budget failed a trivial define: " ^ Error.to_string e))
+
+(* M5 Stage C (plan C3.2): in [build_instance] the budget arm runs
+   FIRST, deliberately: at fuel 0 under a spent budget the verdict is
+   [Check_budget], never the [Inst_depth] the fuel arm gives at fuel 0
+   under the unlimited budget.  A run that is out of time reports the
+   cutoff, not a fuel exhaustion it reached only because the operator
+   waited. *)
+let case_m5c_budget_outranks_fuel (globals : Global.t) () : (unit, string) result =
+  let goal = Value.VUniv Level.zero in
+  let build (ctx : Check.ctx) =
+    Check.build_instance globals ctx (Check.inst_start 0 goal) goal [] (Check.IHead "m5c2")
+      goal
+  in
+  let* () =
+    build (Check.root_ctx (Budget.of_poll (fun () -> true)))
+    |> Result.fold
+         ~ok:(fun (_slot, _v, _st) -> Error "M5C2: spent budget at fuel 0 returned Ok")
+         ~error:(fun e ->
+           if Error.is_check_budget e then Ok ()
+           else Error ("M5C2: want Check_budget first, got " ^ Error.tag e))
+  in
+  build Check.empty_ctx
+  |> Result.fold
+       ~ok:(fun (_slot, _v, _st) -> Error "M5C2: fuel 0 under unlimited returned Ok")
+       ~error:(fun e ->
+         if String.equal (Error.tag e) "Inst_depth" then Ok ()
+         else Error ("M5C2: want Inst_depth at fuel 0, got " ^ Error.tag e))
+
+(* M5 Stage C (plan C2): the [Check_budget] error surface, pinned: its
+   message, its tag, its own predicate, and its EXCLUSION from
+   [is_erased_use] (the round-4 clamp: [match_scrut]'s Zero fallback
+   forgives [Erased_use] alone, so a budget cutoff can never be
+   laundered into a successful check by that fallback). *)
+let case_m5c_error_surface () : (unit, string) result =
+  match () with
+  | () when not (String.equal (Error.to_string Error.Check_budget) "check budget exhausted") ->
+      Error ("M5C3: to_string moved: " ^ Error.to_string Error.Check_budget)
+  | () when not (String.equal (Error.tag Error.Check_budget) "Check_budget") ->
+      Error ("M5C3: tag moved: " ^ Error.tag Error.Check_budget)
+  | () when not (Error.is_check_budget Error.Check_budget) ->
+      Error "M5C3: is_check_budget Check_budget = false"
+  | () when Error.is_check_budget (Error.Inst_depth "g") ->
+      Error "M5C3: is_check_budget Inst_depth = true"
+  | () when Error.is_erased_use Error.Check_budget ->
+      Error "M5C3: is_erased_use Check_budget = true (the Zero fallback would launder the cutoff)"
+  | () -> Ok ()
+
+(* M5 Stage E (SPIKE, plan E6.3): the prototype accessibility clause,
+   exercised at BOTH rule values EXPLICITLY, so neither case depends on
+   (or changes) a default-path answer.  The bodies are the STAMPED
+   shapes built by hand: [Totality.guard] is purely syntactic, so the
+   terms need no types, only the de Bruijn shape the checker would
+   stamp. *)
+
+(* fun A R P f x a =>
+     match a with | acc x0 h => f x0 (fun y r => accRec A R P f y (h y r)) end
+   De Bruijn at the recursive call: r=0 y=1 h=2 x0=3 a=4 x=5 f=6 P=7
+   R=8 A=9;  in the branch body: h=0 x0=1 a=2 x=3 f=4 P=5 R=6 A=7. *)
+let m5e_acc_rec_body : Term.t =
+  let call =
+    Term.App
+      ( qw,
+        Term.App
+          ( qw,
+            Term.App
+              ( qw,
+                Term.App
+                  ( qw,
+                    Term.App (qw, Term.App (qw, Term.Global "accRec", Term.Var 9), Term.Var 8),
+                    Term.Var 7 ),
+                Term.Var 6 ),
+            Term.Var 1 ),
+        Term.App (qw, Term.App (qw, Term.Var 2, Term.Var 1), Term.Var 0) )
+  in
+  let branch_body =
+    Term.App (qw, Term.App (qw, Term.Var 4, Term.Var 1), Term.Lam (qw, "y", Term.Lam (qw, "r", call)))
+  in
+  Term.Lam
+    ( q0,
+      "A",
+      Term.Lam
+        ( q0,
+          "R",
+          Term.Lam
+            ( q0,
+              "P",
+              Term.Lam
+                ( qw,
+                  "f",
+                  Term.Lam
+                    ( qw,
+                      "x",
+                      Term.Lam
+                        ( qw,
+                          "a",
+                          Term.Match
+                            {
+                              scrut = Term.Var 0;
+                              scrut_q = qw;
+                              motive = None;
+                              branches = [ ("acc", [ (qw, "x0"); (qw, "h") ], branch_body) ];
+                            } ) ) ) ) ) )
+
+(* fun t => match mk (fun n => t) with | mk g => bad (g zero) end
+   The panel witness: the scrutinee is BUILT (an application, not a
+   Principal/Smaller variable), so g never becomes Smaller. *)
+let m5e_bad_body : Term.t =
+  Term.Lam
+    ( qw,
+      "t",
+      Term.Match
+        {
+          scrut = Term.App (qw, Term.Global "mk", Term.Lam (qw, "n", Term.Var 1));
+          scrut_q = qw;
+          motive = None;
+          branches =
+            [
+              ( "mk",
+                [ (qw, "g") ],
+                Term.App (qw, Term.Global "bad", Term.App (qw, Term.Var 0, Term.Global "zero")) );
+            ];
+        } )
+
+(* Shared oracle: the guard must reject [body] with EXACTLY
+   [Error.Termination recname], pinned by tag AND rendered message so a
+   different rejection cannot pass for the intended one. *)
+let m5e_expect_termination (what : string) ~(rule : Totality.rule) (recname : string)
+    (body : Term.t) : (unit, string) result =
+  Totality.guard ~rule ~recname body
+  |> Result.fold
+       ~ok:(fun k -> Error (Printf.sprintf "%s: guard accepted at k=%d, want Termination" what k))
+       ~error:(fun e ->
+         let want =
+           Printf.sprintf "recursive definition %s failed the structural termination guard"
+             recname
+         in
+         match () with
+         | () when not (String.equal (Error.tag e) "Termination") ->
+             Error (Printf.sprintf "%s: want Termination, got %s" what (Error.tag e))
+         | () when not (String.equal (Error.to_string e) want) ->
+             Error (Printf.sprintf "%s: message moved: %s" what (Error.to_string e))
+         | () -> Ok ())
+
+let case_m5e_wf_accepts_acc_rec () : (unit, string) result =
+  let* () =
+    Totality.guard ~rule:Totality.Structural_wf ~recname:"accRec" m5e_acc_rec_body
+    |> Result.fold
+         ~ok:(fun k ->
+           if Int.equal k 5 then Ok ()
+           else Error (Printf.sprintf "E1: Structural_wf accepted accRec at k=%d, want 5" k))
+         ~error:(fun e -> Error ("E1: Structural_wf rejected accRec: " ^ Error.to_string e))
+  in
+  m5e_expect_termination "E1 (no flag)" ~rule:Totality.Structural "accRec" m5e_acc_rec_body
+
+let case_m5e_wf_still_rejects_witness () : (unit, string) result =
+  let* () = m5e_expect_termination "E2 (wf)" ~rule:Totality.Structural_wf "bad" m5e_bad_body in
+  m5e_expect_termination "E2 (structural)" ~rule:Totality.Structural "bad" m5e_bad_body
+
 let cases (globals : Global.t) : (string * (unit -> (unit, string) result)) list =
   [
     ( "beta reduction",
@@ -2526,6 +2979,98 @@ let cases (globals : Global.t) : (string * (unit -> (unit, string) result)) list
     ( "D9f: a wide query against an 8-binder instance resolves",
       case_wide_query_with_wide_instance_resolves globals );
     ("D8: checker output never contains Auto", case_checker_output_never_contains_auto globals);
+    (* M5 Stage A (plan A8, cases 1 to 9). *)
+    ( "M5A-J1: Json_escape.string escapes a CR to backslash-r, exact bytes",
+      m5a_expect_escape "J1" "a\rb" "\"a\\rb\"" );
+    ( "M5A-J2: Json_escape.string escapes 0x01 to \\u0001",
+      m5a_expect_escape "J2" "\x01" "\"\\u0001\"" );
+    ( "M5A-J3: Json_escape.string passes UTF-8 e-acute through byte for byte",
+      m5a_expect_escape "J3" "\xc3\xa9" "\"\xc3\xa9\"" );
+    ( "M5A-J4: Json_escape.string leaves DEL (0x7f) unescaped",
+      m5a_expect_escape "J4" "\x7f" "\"\x7f\"" );
+    ( "M5A-J5: json_parse_top decodes \\u0041 to jstr A",
+      fun () ->
+        let* v =
+          Interp.json_parse_top "\"\\u0041\""
+          |> Option.to_result ~none:"J5: parse failed on \\u0041"
+        in
+        let* s = m5a_jstr_payload v in
+        if String.equal s "A" then Ok () else Error (Printf.sprintf "J5: got %S, want \"A\"" s)
+    );
+    ( "M5A-J6: json_parse_top decodes the surrogate pair \\ud83d\\ude00 to f0 9f 98 80",
+      fun () ->
+        let* v =
+          Interp.json_parse_top "\"\\ud83d\\ude00\""
+          |> Option.to_result ~none:"J6: parse failed on the surrogate pair"
+        in
+        let* s = m5a_jstr_payload v in
+        if String.equal s "\xf0\x9f\x98\x80" then Ok ()
+        else Error (Printf.sprintf "J6: got %S, want f0 9f 98 80" s) );
+    ( "M5A-J7: a lone surrogate, a short escape, a non-hex escape and a broken pair each \
+       fail the WHOLE parse",
+      fun () ->
+        let* () = m5a_expect_parse_none "J7 lone high" "\"\\ud800\"" in
+        let* () = m5a_expect_parse_none "J7 lone low" "\"\\udc00\"" in
+        let* () = m5a_expect_parse_none "J7 short escape" "\"\\u12\"" in
+        let* () = m5a_expect_parse_none "J7 non-hex" "\"\\uZZZZ\"" in
+        let* () = m5a_expect_parse_none "J7 high then plain" "\"\\ud83dx\"" in
+        m5a_expect_parse_none "J7 high then non-low escape" "\"\\ud83d\\u0041\"" );
+    ( "M5A-J8: parse-serialize-reparse round-trips a payload carrying a raw CR",
+      fun () ->
+        let src = "{\"a\":\"x\\ry\"}" in
+        let* j1 =
+          Interp.json_parse_top src |> Option.to_result ~none:"J8: first parse failed"
+        in
+        let* p1 = m5a_obj_a_payload j1 in
+        let* s1 = Interp.json_serialize j1 |> Result.map_error Error.to_string in
+        let* j2 =
+          Interp.json_parse_top s1
+          |> Option.to_result
+               ~none:
+                 (Printf.sprintf
+                    "J8: re-parse failed on %S (the serializer emitted invalid JSON, the M4 \
+                     HEAD behaviour)"
+                    s1)
+        in
+        let* p2 = m5a_obj_a_payload j2 in
+        match () with
+        | () when not (String.equal p1 "x\ry") ->
+            Error (Printf.sprintf "J8: first parse gave payload %S, want x<CR>y" p1)
+        | () when not (String.equal p1 p2) ->
+            Error (Printf.sprintf "J8: round trip changed the payload: %S -> %S" p1 p2)
+        | () -> Ok () );
+    ( "M5A-J9: Json_escape.string and Pp.escape_string DIFFER on a CR-carrying string",
+      fun () ->
+        let a = Json_escape.string "a\rb" in
+        let b = Pp.escape_string "a\rb" in
+        if String.equal a b then
+          Error
+            (Printf.sprintf
+               "J9: the two escapers agree on %S (someone re-aliased one to the other)" a)
+        else Ok () );
+    (* M5 Stage B (plan B10, cases M5B1 to M5B6). *)
+    ( "M5B1: Term.shift is exhaustive and cutoff correct",
+      m5b_expect_shift "M5B1" ~cutoff:1 ~by:2 m5b1_input m5b1_expected );
+    ( "M5B2: a motive body shifts at cutoff + |m_idx| + 1",
+      m5b_expect_shift "M5B2" ~cutoff:0 ~by:5
+        (m5b2_match (Term.App (qw, Term.Var 2, Term.Var 3)))
+        (m5b2_match (Term.App (qw, Term.Var 2, Term.Var 8))) );
+    ( "M5B3: a branch body shifts at cutoff + |binders|",
+      m5b_expect_shift "M5B3" ~cutoff:0 ~by:5
+        (m5b3_match (Term.App (qw, Term.Var 1, Term.Var 2)))
+        (m5b3_match (Term.App (qw, Term.Var 1, Term.Var 7))) );
+    ("M5B4: the branching nest at nesting 16 is small", case_m5b_share_size globals);
+    ("M5B5: a slot is materialized at i - 1 - j", case_m5b_slot_arithmetic globals);
+    ("M5B6: a memo HIT re-uses the cached value", case_m5b_memo_hit_shares globals);
+    (* M5 Stage C (plan C1 to C3). *)
+    ( "M5C1: a deterministic always-spent poll stops a define at its first node",
+      case_m5c_deterministic_poll globals );
+    ( "M5C2: the budget arm outranks the fuel arm in build_instance",
+      case_m5c_budget_outranks_fuel globals );
+    ("M5C3: the Check_budget error surface is pinned", case_m5c_error_surface);
+    (* M5 Stage E (plan E6.3). *)
+    ("E1: Structural_wf accepts the accRec call shape", case_m5e_wf_accepts_acc_rec);
+    ("E2: Structural_wf still rejects the panel witness", case_m5e_wf_still_rejects_witness);
   ]
 
 let () =

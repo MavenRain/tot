@@ -2,8 +2,10 @@
 
 (** Render a string literal's SOURCE form: double-quoted, with
     backslash, double-quote, newline and tab escaped (M3 Stage A).
-    Reused by Stage C's JSON serializer and Stage D's verdict renderer,
-    both reachable from [surface/] through this module. *)
+    This is the SOURCE escaper only.  JSON output (the serializer and
+    the verdict envelope) uses [Json_escape.string] instead; see M5
+    Stage A, pin 13, which split the two escape sets after M4's
+    subset claim was measured false. *)
 let escape_string (s : string) : string =
   let buf = Buffer.create (String.length s + 2) in
   Buffer.add_char buf '"';

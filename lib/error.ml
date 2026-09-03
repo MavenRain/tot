@@ -101,6 +101,13 @@ type t =
   | Inst_depth of string
       (** M4 Stage D: instance resolution ran out of fuel; payload is the
           printed type *)
+  | Check_budget
+      (** M5 Stage C (verdict item 2, pin 8): the driver's check budget
+          is spent.  A CUTOFF, not a verdict about the program: the
+          same file with a larger budget, or with none, may check
+          clean.  Nullary by design.  The kernel knows only that its
+          poll said stop;  the driver owns the number of milliseconds
+          and prints it. *)
 
 (** M4 fixes round 4 (ctxcat r4 id 3): [true] iff [e] is [Erased_use].
     [Check.match_scrut]'s [Zero] fallback exists to forgive exactly ONE
@@ -116,6 +123,32 @@ let is_erased_use (e : t) : bool =
   | Unbound_var _ | Unbound_global _ | Duplicate_global _ | Bad_level _ | Not_a_function _
   | Not_a_universe _
   | Mismatch _
+  | Cannot_infer _ | Not_inductive _
+  | Bad_ctor _
+  | Branch_mismatch _
+  | Termination _ | Ind_redefined _ | Ind_incomplete _
+  | Prim_arity _
+  | Not_quotable _ | Missing_prelude_ctor _ | Effect_def_reducible _
+  | Partial_reducible_conflict _ | Partial_not_div _ | Regex_bad_pattern _
+  | Exit_code_out_of_range _ | Index_not_zero _ | Index_above_universe _
+  | Motive_index_arity _
+  | Motive_wrong_ind _
+  | Builtin_not_eliminable _ | Axiom_runtime_use _ | Inst_unresolved _
+  | Inst_bad_shape _
+  | Inst_depth _ | Check_budget ->
+      false
+
+(** M5 Stage C: [true] iff [e] is the budget cutoff.  Spelled as an
+    exhaustive match, never as [String.equal (tag e) "Check_budget"],
+    so a new constructor is a compile error here too and the driver's
+    exit-code decision never depends on a display string. *)
+let is_check_budget (e : t) : bool =
+  match e with
+  | Check_budget -> true
+  | Unbound_var _ | Unbound_global _ | Duplicate_global _ | Bad_level _ | Not_a_function _
+  | Not_a_universe _
+  | Mismatch _
+  | Erased_use _
   | Cannot_infer _ | Not_inductive _
   | Bad_ctor _
   | Branch_mismatch _
@@ -185,6 +218,7 @@ let to_string (e : t) : string =
   | Inst_unresolved s -> Printf.sprintf "no instance found for %s" s
   | Inst_bad_shape { name; reason } -> Printf.sprintf "instance %s: %s" name reason
   | Inst_depth s -> Printf.sprintf "instance resolution for %s exceeded its fuel" s
+  | Check_budget -> "check budget exhausted"
 
 let tag (e : t) : string =
   match e with
@@ -220,3 +254,4 @@ let tag (e : t) : string =
   | Inst_unresolved _ -> "Inst_unresolved"
   | Inst_bad_shape _ -> "Inst_bad_shape"
   | Inst_depth _ -> "Inst_depth"
+  | Check_budget -> "Check_budget"

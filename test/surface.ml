@@ -403,9 +403,16 @@ let case_unusable_file_channel () : (unit, string) result =
               probe ~what:"R2-unreadable-serror0" unreadable "cannot be read" " --serror-exit 0"))
 
 let case_usage_channel () : (unit, string) result =
+  (* M5 Stage A: the usage line gained [--strict-json] (plan A4 step 1),
+     so this exact-line pin moves WITH it; the assertion stays
+     byte-exact against the driver's own [usage] string.  M5 Stage C:
+     it gained [--check-budget-ms N] too (plan C6.1), same discipline.
+     M5 Stage E: it gained [--experimental-wf] (plan E1 step 4), same
+     discipline. *)
   let usage_line =
-    "usage: tot (check|run) [--no-prelude] [--no-axioms] [--serror-exit N] [--require-main] \
-     FILE | tot prims"
+    "usage: tot (check|run) [--no-prelude] [--no-axioms] [--serror-exit N] \
+     [--check-budget-ms N] [--require-main] [--experimental-wf] [--strict-json] FILE | \
+     tot prims"
   in
   let* () =
     expect_driver_error ~what:"F2-flag" "check --bogus-flag /dev/null" ~want_exit:2
@@ -428,7 +435,12 @@ let case_serror_exit_changes_the_exit_code () : (unit, string) result =
 let case_require_main_rejects_mainless () : (unit, string) result =
   let src = "check Type 0" in
   let strict_policy : Tot_surface.Run.policy =
-    { Tot_surface.Run.no_axioms = false; require_main = true }
+    {
+      Tot_surface.Run.no_axioms = false;
+      require_main = true;
+      strict_json = false;
+      wf_rule = Tot_kernel.Totality.Structural;
+    }
   in
   Tot_surface.Run.script ~policy:strict_policy ~exec:true src
   |> Result.fold
@@ -447,6 +459,45 @@ let case_require_main_rejects_mainless () : (unit, string) result =
                 ~error:(fun e2 ->
                   Error ("unflagged run unexpectedly failed: " ^ Tot_surface.Serror.to_string e2))
          else Error (Printf.sprintf "expected Missing_main, got %s" tag))
+
+(* M5 Stage C (plan C5, pin 8): [Run.script ~budget] reaches the
+   kernel: an always-spent poll, deterministic, no clock and no sleep,
+   turns the first kernel node of a trivial def into
+   [Kernel Check_budget], and the OMITTED budget (the
+   [Budget.unlimited] default) keeps the same script green.  The two
+   driver-ladder predicates are pinned here on the very value the
+   ladder reads. *)
+let case_budget_threads_through_script (bst : Tot_surface.Run.state) () :
+    (unit, string) result =
+  let src = "def m5cs1 : Bool := true" in
+  let spent = Tot_kernel.Budget.of_poll (fun () -> true) in
+  Tot_surface.Run.script ~st:bst ~budget:spent ~exec:false src
+  |> Result.fold
+       ~ok:(fun (lines, _code) ->
+         Error
+           (Printf.sprintf "expected Kernel.Check_budget, but the script ran: [%s]"
+              (show_lines lines)))
+       ~error:(fun e ->
+         let tag = Tot_surface.Serror.tag e in
+         match () with
+         | () when not (String.equal tag "Kernel.Check_budget") ->
+             Error (Printf.sprintf "expected Kernel.Check_budget, got %s" tag)
+         | () when not (Tot_surface.Serror.is_check_budget e) ->
+             Error "Serror.is_check_budget is false on a Kernel Check_budget"
+         | () when Tot_surface.Serror.is_missing_main e ->
+             Error "Serror.is_missing_main is true on a Kernel Check_budget"
+         | () when not (Tot_surface.Serror.is_missing_main Tot_surface.Serror.Missing_main) ->
+             Error "Serror.is_missing_main is false on Missing_main"
+         | () when Tot_surface.Serror.is_check_budget Tot_surface.Serror.Missing_main ->
+             Error "Serror.is_check_budget is true on Missing_main"
+         | () ->
+             Tot_surface.Run.script ~st:bst ~exec:false src
+             |> Result.fold
+                  ~ok:(fun (_lines, _code) -> Ok ())
+                  ~error:(fun e2 ->
+                    Error
+                      ("the same script with no budget failed: "
+                      ^ Tot_surface.Serror.to_string e2)))
 
 let prelude : string =
   String.concat "\n"
@@ -597,6 +648,127 @@ let case_ghost_guard_is_unguarded () : (unit, string) result =
          | Interp.GuardedAt k -> Error (Printf.sprintf "C5: expected Unguarded, got GuardedAt %d" k)
          | Interp.Frozen -> Error "C5: expected Unguarded, got Frozen")
        ~error:(fun e -> Error e)
+
+(* ---- M5 Stage A (plan A8, surface cases 10 to 15) ---- *)
+
+(* A Stage A fixture path, derived from [repo_root] like the fixture
+   helpers above. *)
+let m5a_fixture (name : string) : string =
+  Filename.concat repo_root ("test/fixtures/" ^ name)
+
+(* Read a fixture whole; a host failure is an ordinary red assertion,
+   never an exception. *)
+let m5a_read_fixture (path : string) : (string, string) result =
+  match In_channel.with_open_text path In_channel.input_all with
+  | exception Sys_error e -> Error ("cannot read fixture " ^ path ^ ": " ^ e)
+  | s -> Ok s
+
+(* Check a fixture in-process (the same [Run.script ~exec:false] path
+   [run_gate]'s gate-check mode drives) and require a rejection whose
+   message ENDS with [want_suffix]; the message is printed on a pass
+   too, so the rejection is shown to fire for the intended reason
+   (ORACLE RULE). *)
+let m5a_expect_fixture_check_error (bst : Tot_surface.Run.state) (fixture : string)
+    ~(want_suffix : string) () : (unit, string) result =
+  let* src = m5a_read_fixture (m5a_fixture fixture) in
+  Tot_surface.Run.script ~st:bst ~exec:false src
+  |> Result.fold
+       ~ok:(fun (lines, _exit_code) ->
+         Error
+           (Printf.sprintf "%s: expected a rejection, but the file checked: [%s]" fixture
+              (show_lines lines)))
+       ~error:(fun e ->
+         let msg = Tot_surface.Serror.to_string e in
+         Printf.printf "  expected error (%s): %s\n" fixture msg;
+         if String.ends_with ~suffix:want_suffix msg then Ok ()
+         else Error (Printf.sprintf "%s: got %S, want a message ending %S" fixture msg want_suffix))
+
+(* Check a fixture in-process and require it to CHECK clean. *)
+let m5a_expect_fixture_checks (bst : Tot_surface.Run.state) (fixture : string) () :
+    (unit, string) result =
+  let* src = m5a_read_fixture (m5a_fixture fixture) in
+  Tot_surface.Run.script ~st:bst ~exec:false src
+  |> Result.fold
+       ~ok:(fun (_lines, _exit_code) -> Ok ())
+       ~error:(fun e ->
+         Error (Printf.sprintf "%s: expected exit 0, got %s" fixture (Tot_surface.Serror.to_string e)))
+
+(* M5 Stage A (A8 cases 14/15): feed THIS process's stdin from a
+   scratch file for the duration of [k].  [Effect.dispatch]'s
+   [readStdin] arm reads the real fd 0, so the strict-json
+   library-level cases need an actual fd swap.  Every raising Unix
+   call is fenced by name, and the original stdin is restored (and the
+   saved dup closed) on every path out via [Fun.protect]. *)
+let m5a_with_stdin_bytes (bytes : string) (k : unit -> (unit, string) result) :
+    (unit, string) result =
+  with_temp_file "tot-m5a-stdin" ".json" (fun path ->
+      let () =
+        Out_channel.with_open_bin path (fun oc -> Out_channel.output_string oc bytes)
+      in
+      match Unix.dup Unix.stdin with
+      | exception Unix.Unix_error (_, _, _) -> Error "cannot dup stdin"
+      | saved ->
+          let restore () : unit =
+            let () =
+              match Unix.dup2 saved Unix.stdin with
+              | exception Unix.Unix_error (_, _, _) -> ()
+              | () -> ()
+            in
+            match Unix.close saved with exception Unix.Unix_error (_, _, _) -> () | () -> ()
+          in
+          Fun.protect ~finally:restore (fun () ->
+              match Unix.openfile path [ Unix.O_RDONLY ] 0 with
+              | exception Unix.Unix_error (_, _, _) -> Error "cannot open the stdin scratch file"
+              | fd ->
+                  let dup_r =
+                    match Unix.dup2 fd Unix.stdin with
+                    | exception Unix.Unix_error (_, _, _) -> Error "cannot dup2 onto stdin"
+                    | () -> Ok ()
+                  in
+                  let () =
+                    match Unix.close fd with
+                    | exception Unix.Unix_error (_, _, _) -> ()
+                    | () -> ()
+                  in
+                  let* () = dup_r in
+                  k ()))
+
+(* The one verdict [main] the two strict-json cases run: it reads
+   stdin and allows unconditionally, so every behaviour difference
+   below is the FLAG's, never the script's. *)
+let m5a_stdin_allow_src : string =
+  "def main : IO Verdict :=\n\
+  \  let* String Verdict raw := readStdin in\n\
+  \  pureIO Verdict allow\n"
+
+let m5a_strict_deny_envelope : string =
+  "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"strict-json: stdin is not a single well-formed JSON value\"}}"
+
+let m5a_run_with_policy (bst : Tot_surface.Run.state) ~(strict_json : bool)
+    ~(want_lines : string list) ~(want_exit : int option) () : (unit, string) result =
+  m5a_with_stdin_bytes "not json at all\n" (fun () ->
+      Tot_surface.Run.script ~st:bst
+        ~policy:
+          {
+            Tot_surface.Run.no_axioms = false;
+            require_main = false;
+            strict_json;
+            wf_rule = Tot_kernel.Totality.Structural;
+          }
+        ~exec:true m5a_stdin_allow_src
+      |> Result.fold
+           ~ok:(fun (got_lines, got_exit) ->
+             if
+               List.equal String.equal got_lines want_lines
+               && Option.equal Int.equal got_exit want_exit
+             then Ok ()
+             else
+               Error
+                 (Printf.sprintf "got [%s] exit=%s, want [%s] exit=%s" (show_lines got_lines)
+                    (Option.fold ~none:"None" ~some:string_of_int got_exit)
+                    (show_lines want_lines)
+                    (Option.fold ~none:"None" ~some:string_of_int want_exit)))
+           ~error:(fun e -> Error ("error: " ^ Tot_surface.Serror.to_string e)))
 
 let cases (bst : Tot_surface.Run.state) : (string * (unit -> (unit, string) result)) list =
   [
@@ -1269,13 +1441,15 @@ let cases (bst : Tot_surface.Run.state) : (string * (unit -> (unit, string) resu
           | entries -> Ok (Array.length entries)
         in
         let spawn_once () : (unit, string) result =
-          Tot_surface.Effect.dispatch bst.Tot_surface.Run.eglobals Prim.Proc_run
+          Tot_surface.Effect.dispatch ~strict_json:false bst.Tot_surface.Run.eglobals
+            Prim.Proc_run
             [ Interp.VLit (Literal.LString "/nonexistent-tot-b3-binary"); Interp.VCon ("nil", []) ]
           |> Result.fold
                ~error:(fun e -> Error ("dispatch errored: " ^ Error.to_string e))
                ~ok:(fun outcome ->
                  match outcome with
                  | Tot_surface.Effect.Exited _ -> Error "unexpected Exited from procRun"
+                 | Tot_surface.Effect.Rejected _ -> Error "unexpected Rejected from procRun"
                  | Tot_surface.Effect.Done v -> (
                      match v with
                      | Interp.VCon
@@ -1443,7 +1617,13 @@ let cases (bst : Tot_surface.Run.state) : (string * (unit -> (unit, string) resu
     ( "B10: an axiom under --no-axioms is Axioms_disabled",
       fun () ->
         Tot_surface.Run.script ~st:bst
-          ~policy:{ Tot_surface.Run.no_axioms = true; require_main = false }
+          ~policy:
+            {
+              Tot_surface.Run.no_axioms = true;
+              require_main = false;
+              strict_json = false;
+              wf_rule = Tot_kernel.Totality.Structural;
+            }
           ~exec:true
           "axiom bogus : Eq Nat zero (succ zero)\ncheck bogus"
         |> Result.fold
@@ -1509,6 +1689,35 @@ let cases (bst : Tot_surface.Run.state) : (string * (unit -> (unit, string) resu
     ( "R2-F2c: a directory, a FIFO and an unreadable file report on STDERR and exit 1 \
        even under --serror-exit 0",
       case_unusable_file_channel );
+    (* M5 Stage A (plan A8, cases 10 to 15). *)
+    ( "M5A-10: the m5a-fence-pi fixture keeps self_rec under a Pi (erased px rejected)",
+      m5a_expect_fixture_check_error bst "m5a-fence-pi.tot"
+        ~want_suffix:"erased variable px used at runtime" );
+    ( "M5A-11: the m5a-fence-pi-ctl control (no self recursion) checks clean",
+      m5a_expect_fixture_checks bst "m5a-fence-pi-ctl.tot" );
+    ( "M5A-12: the parameter-level exemption holds (PBox and Acc check)",
+      m5a_expect_fixture_checks bst "m5a-param-level.tot" );
+    ( "M5A-13: the ctor-argument and index level bounds still bite",
+      fun () ->
+        let* () =
+          m5a_expect_fixture_check_error bst "m5a-param-level-neg.tot"
+            ~want_suffix:
+              "invalid constructor kmk: constructor argument lives above the declared universe"
+            ()
+        in
+        m5a_expect_fixture_check_error bst "m5a-index-level-neg.tot"
+          ~want_suffix:"inductive IBad: index t lives above the declared universe" () );
+    ( "M5A-14: Run.script under strict_json=true turns a garbage stdin payload into the \
+       strict deny envelope and exit 2",
+      m5a_run_with_policy bst ~strict_json:true ~want_lines:[ m5a_strict_deny_envelope ]
+        ~want_exit:(Some 2) );
+    ( "M5A-15: Run.script under strict_json=false keeps the fail-open posture on the same \
+       payload (allow, exit 0)",
+      m5a_run_with_policy bst ~strict_json:false ~want_lines:[] ~want_exit:(Some 0) );
+    (* M5 Stage C (plan C5). *)
+    ( "M5C-S1: Run.script under an always-spent budget reports Kernel.Check_budget, and the \
+       default stays green",
+      case_budget_threads_through_script bst );
   ]
 
 (** The ordinary in-process suite: bootstrap once, run every [cases]

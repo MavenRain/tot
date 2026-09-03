@@ -267,8 +267,61 @@ let json_number (cs : char list) : (int * char list) option =
       |> Option.map (fun n -> (n, rest'))
   | ([] | _ :: _) -> None
 
+(** M5 Stage A.  One hex digit's value, or [None].  Same guard-ladder
+    shape as [json_is_digit] above. *)
+let json_hex_val (c : char) : int option =
+  match () with
+  | () when c >= '0' && c <= '9' -> Some (Char.code c - Char.code '0')
+  | () when c >= 'a' && c <= 'f' -> Some (Char.code c - Char.code 'a' + 10)
+  | () when c >= 'A' && c <= 'F' -> Some (Char.code c - Char.code 'A' + 10)
+  | () -> None
+
+(** EXACTLY four hex digits.  Fewer than four characters left, or any
+    non-hex character, returns [None], and the caller fails the WHOLE
+    parse.  A SHORT escape is therefore a parse failure, never a
+    partial decode. *)
+let json_hex4 (cs : char list) : (int * char list) option =
+  let ( let* ) = Option.bind in
+  match cs with
+  | a :: b :: c :: d :: rest ->
+      let* va = json_hex_val a in
+      let* vb = json_hex_val b in
+      let* vc = json_hex_val c in
+      let* vd = json_hex_val d in
+      Some ((((((va * 16) + vb) * 16) + vc) * 16) + vd, rest)
+  | [] | [ _ ] | [ _; _ ] | [ _; _; _ ] -> None
+
+(** UTF-8 encode one scalar value, OLDEST BYTE FIRST.  [cp] is always
+    in 0 .. 0x10FFFF at every call site (the four-hex-digit bound gives
+    0 .. 0xFFFF, and the surrogate-pair arm gives 0x10000 .. 0x10FFFF).
+    Each byte lands through [Buffer.add_uint8], which takes the low 8
+    bits of an already-masked value, so the encoder is total with no
+    partial [Char] accessor anywhere ([Char.chr] raises out of range,
+    so it is not used). *)
+let json_utf8_bytes (cp : int) : char list =
+  let buf = Buffer.create 4 in
+  let byte (n : int) : unit = Buffer.add_uint8 buf (n land 0xff) in
+  let () =
+    match () with
+    | () when cp < 0x80 -> byte cp
+    | () when cp < 0x800 ->
+        byte (0xc0 lor (cp lsr 6));
+        byte (0x80 lor (cp land 0x3f))
+    | () when cp < 0x10000 ->
+        byte (0xe0 lor (cp lsr 12));
+        byte (0x80 lor ((cp lsr 6) land 0x3f));
+        byte (0x80 lor (cp land 0x3f))
+    | () ->
+        byte (0xf0 lor (cp lsr 18));
+        byte (0x80 lor ((cp lsr 12) land 0x3f));
+        byte (0x80 lor ((cp lsr 6) land 0x3f));
+        byte (0x80 lor (cp land 0x3f))
+  in
+  Buffer.contents buf |> String.to_seq |> List.of_seq
+
 (** A JSON string body's escapes (backslash-quote, backslash-backslash,
-    backslash-slash, and the backslash letter forms b/f/n/r/t); mirrors
+    backslash-slash, the backslash letter forms b/f/n/r/t, and, M5
+    Stage A, \uXXXX with surrogate PAIRS); mirrors
     [surface/lexer.ml]'s own [scan_string] shape (an unterminated
     literal or an unknown escape fails the WHOLE parse, never partial
     output). *)
@@ -283,6 +336,30 @@ let rec json_string_body (cs : char list) (acc : char list) : (string * char lis
   | '\\' :: '"' :: rest -> json_string_body rest ('"' :: acc)
   | '\\' :: '\\' :: rest -> json_string_body rest ('\\' :: acc)
   | '\\' :: '/' :: rest -> json_string_body rest ('/' :: acc)
+  (* M5 Stage A: \uXXXX.  [acc] is built NEWEST FIRST and the '"' arm
+     reverses it once, so [List.rev_append] pushes the encoded bytes
+     onto [acc] in reverse and the final [List.rev] restores source
+     order; a plain [acc @ bytes] would be both quadratic and wrong.
+     This arm sits BEFORE the ['\\' :: _ :: _ -> None] catch below:
+     OCaml matches top to bottom, so arm order decides whether \u
+     reaches the decoder or the rejection. *)
+  | '\\' :: 'u' :: rest ->
+      Option.bind (json_hex4 rest) (fun ((hi, rest2) : int * char list) ->
+          match () with
+          | () when hi >= 0xd800 && hi <= 0xdbff -> (
+              (* a HIGH surrogate is only valid as the first half of a
+                 PAIR; the second half must be \uDC00 .. \uDFFF *)
+              match rest2 with
+              | '\\' :: 'u' :: rest3 ->
+                  Option.bind (json_hex4 rest3) (fun ((lo, rest4) : int * char list) ->
+                      match () with
+                      | () when lo >= 0xdc00 && lo <= 0xdfff ->
+                          let cp = 0x10000 + ((hi - 0xd800) * 0x400) + (lo - 0xdc00) in
+                          json_string_body rest4 (List.rev_append (json_utf8_bytes cp) acc)
+                      | () -> None)
+              | [] | _ :: _ -> None)
+          | () when hi >= 0xdc00 && hi <= 0xdfff -> None
+          | () -> json_string_body rest2 (List.rev_append (json_utf8_bytes hi) acc))
   | [ '\\' ] -> None
   | '\\' :: _ :: _ -> None
   | c :: rest -> json_string_body rest (c :: acc)
@@ -372,12 +449,13 @@ let result_traverse (f : 'a -> ('b, Error.t) result) (xs : 'a list) : ('b list, 
     (e.g. a [jnum] whose argument is not a [VLit (LInt _)]) is
     unreachable on a checked program; the fallback arms are total
     backstops only, mirroring [fire_prim]'s own shape-mismatch style.
-    [Pp.escape_string] is reused for JSON string quoting (M3 Stage A's
-    own escape set (backslash, quote, newline, tab) is a subset of
-    JSON's, so it produces valid JSON text for every string this
-    parser can itself have produced; a string containing OTHER control
-    characters this parser cannot itself construct is a documented
-    SPEC debt, same posture as the parser's own unicode-escape gap). *)
+    [Json_escape]'s [string] quotes every JSON string this serializer
+    emits.  [Pp.escape_string] is the SOURCE escaper and is NOT reused
+    here.  M4's claim that the source escape set is a SUBSET of JSON's
+    was false: the parser accepts \r, \b and \f (the arms above) and
+    the source escaper leaves all three raw, so a parsed-then-
+    serialized payload could carry an unescaped control byte.  M5
+    Stage A, pin 13. *)
 let rec json_serialize (jv : v) : (string, Error.t) result =
   let ( let* ) = Result.bind in
   match jv with
@@ -385,7 +463,7 @@ let rec json_serialize (jv : v) : (string, Error.t) result =
   | VCon ("jbool", [ VCon ("true", []) ]) -> Ok "true"
   | VCon ("jbool", [ VCon ("false", []) ]) -> Ok "false"
   | VCon ("jnum", [ VLit (Literal.LInt n) ]) -> Ok (string_of_int n)
-  | VCon ("jstr", [ VLit (Literal.LString s) ]) -> Ok (Pp.escape_string s)
+  | VCon ("jstr", [ VLit (Literal.LString s) ]) -> Ok (Json_escape.string s)
   | VCon ("jarrNil", []) -> Ok "[]"
   | VCon ("jarrCons", [ hd; tl ]) ->
       let* elems = json_array_spine tl [ hd ] in
@@ -398,7 +476,7 @@ let rec json_serialize (jv : v) : (string, Error.t) result =
         result_traverse
           (fun (k, pv) ->
             let* s = json_serialize pv in
-            Ok (Pp.escape_string k ^ ":" ^ s))
+            Ok (Json_escape.string k ^ ":" ^ s))
           pairs
       in
       Ok ("{" ^ String.concat "," strs ^ "}")

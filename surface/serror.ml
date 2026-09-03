@@ -41,6 +41,14 @@ type t =
       (** M4 Stage D (D5.2): [--require-main] was given and the script
           defines no [main].  Installation POLICY, like [Axioms_disabled]
           above: the driver flag applies to the USER file only. *)
+  | Json_strict_reject
+      (** M5 Stage A (pin 20): [--strict-json] was given, the script's
+          [main] is [IO Unit] (no verdict channel), and the stdin
+          payload is not one well-formed JSON value.  Takes the DRIVER
+          exit contract (one stderr line, the literal exit 1, OUTSIDE
+          the [--serror-exit] mapping); an [IO Verdict] script instead
+          renders the deny envelope and exits 2, never reaching this
+          constructor.  Installation POLICY, like the two above. *)
 
 let to_string (e : t) : string =
   match e with
@@ -61,6 +69,9 @@ let to_string (e : t) : string =
       Printf.sprintf "%s: axiom %s rejected: this installation runs with --no-axioms"
         (Loc.to_string loc) name
   | Missing_main -> "this file must define a driver main, and it does not"
+  | Json_strict_reject ->
+      "stdin is not a single well-formed JSON value, and this installation runs with \
+       --strict-json"
 
 let tag (e : t) : string =
   match e with
@@ -72,3 +83,39 @@ let tag (e : t) : string =
   | Main_bad_type _ -> "Main_bad_type"
   | Axioms_disabled _ -> "Axioms_disabled"
   | Missing_main -> "Missing_main"
+  | Json_strict_reject -> "Json_strict_reject"
+
+(** M5 Stage A (pin 20): does [e] take the DRIVER exit contract (the
+    literal exit 1, OUTSIDE the [--serror-exit] mapping)?  Only
+    [Json_strict_reject] today: a fail-open install ([--serror-exit 0])
+    must not turn a strict-json refusal into a silent exit 0.
+    Enumerated with no catch-all, so a new constructor must decide its
+    posture here explicitly. *)
+let driver_exit (e : t) : bool =
+  match e with
+  | Json_strict_reject -> true
+  | Lex _ | Parse _ | Unknown_name _ | Bad_level _ | Kernel _ | Main_bad_type _
+  | Axioms_disabled _ | Missing_main ->
+      false
+
+(** M5 Stage C: [true] iff [e] is the kernel's check-budget cutoff,
+    which the driver reports on its own contract and not through
+    [--serror-exit]. *)
+let is_check_budget (e : t) : bool =
+  match e with
+  | Kernel { loc = _loc; err } -> Tot_kernel.Error.is_check_budget err
+  | Lex _ | Parse _ | Unknown_name _ | Bad_level _ | Main_bad_type _
+  | Axioms_disabled _ | Missing_main | Json_strict_reject ->
+      false
+
+(** M5 Stage C (pin 21, amendment A3): [true] iff [e] is the mainless
+    verdict, which now takes the DRIVER contract (one stderr line, the
+    literal exit 1, outside the [--serror-exit] mapping), exactly like
+    a missing file.  The constructor and its [to_string] text do not
+    move;  only the driver's exit-code decision reads this. *)
+let is_missing_main (e : t) : bool =
+  match e with
+  | Missing_main -> true
+  | Lex _ | Parse _ | Unknown_name _ | Bad_level _ | Kernel _ | Main_bad_type _
+  | Axioms_disabled _ | Json_strict_reject ->
+      false

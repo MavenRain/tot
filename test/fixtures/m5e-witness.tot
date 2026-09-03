@@ -1,0 +1,10 @@
+data T : Type 0 := | mk : (Nat -> T) -> T
+def rec bad : T -> Nat := fun t => match mk (fun n => t) with | mk g => bad (g zero) end
+-- M5 Stage E (SPIKE) fixture: the panel divergence witness (plan E3,
+-- amendment A4's pinned negative).  The comment sits BELOW the two
+-- declarations on purpose: probe P3 and gate PASS-M5E-WITNESS-REJECTED
+-- pin the rejection at m5e-witness.tot:2:1, so bad must stay at line 2
+-- column 1.  The witness builds its own scrutinee (mk (fun n => t)),
+-- so the branch binder g never becomes Smaller and the recursive call
+-- bad (g zero) is rejected by the shipped rule AND by the prototype
+-- Structural_wf rule alike; both verdicts are byte-identical.

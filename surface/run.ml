@@ -28,9 +28,27 @@ let initial : state = { globals = Global.empty; eglobals = Interp.empty_globals;
 type policy = {
   no_axioms : bool;
   require_main : bool;
+  strict_json : bool;
+      (** M5 Stage A (pin 20): under [--strict-json] a stdin payload
+          that is not one well-formed JSON value is refused at
+          [Effect.dispatch]'s [readStdin] arm, BEFORE the script sees
+          it: an [IO Verdict] script renders the deny envelope and
+          exits 2, an [IO Unit] script takes the driver contract
+          ([Serror.Json_strict_reject], exit 1).  Default off, so
+          every installed guard keeps the fail-open posture
+          byte-identical on upgrade. *)
+  wf_rule : Totality.rule;
+      (** M5 Stage E (SPIKE): which totality rule a user-file [def rec]
+          is guarded under.  [Totality.Structural] is the shipped rule;
+          [Totality.Structural_wf] is the measured prototype, reachable
+          only through the driver flag --experimental-wf.  The prelude
+          bootstrap folds with [default_policy], so a prelude [def rec]
+          is never checked under the prototype and no flag can enter
+          the cache key. *)
 }
 
-let default_policy : policy = { no_axioms = false; require_main = false }
+let default_policy : policy =
+  { no_axioms = false; require_main = false; strict_json = false; wf_rule = Totality.Structural }
 
 let kernel (loc : Loc.t) (r : ('a, Error.t) result) : ('a, Serror.t) result =
   Result.map_error (fun err -> Serror.Kernel { loc; err }) r
@@ -187,8 +205,16 @@ let install_def ~(loc : Loc.t) ~(exec : bool) ~(name : string) ~(ty_t : Term.t) 
   let line = Printf.sprintf "def %s : %s" name (Pp.term [] ty_t) in
   Ok { globals; eglobals; lines = line :: st.lines }
 
-let rec item ~(exec : bool) ~(policy : policy) (st : state) (it : Syntax.item) :
-    (state, Serror.t) result =
+(** M5 Stage C (pin 8): [budget] is the driver's check cutoff, threaded
+    into every [Check.*] entry point an item reaches.  An OPTIONAL
+    argument, not a [policy] field: [policy] is a record of
+    installation booleans built as a literal at three sites, so a new
+    field breaks all three, while the [Budget.unlimited] default breaks
+    none.  The prelude guarantee survives too:
+    [Bootstrap.fold_prelude_items] passes no [~budget], so the prelude
+    fold runs unlimited by construction. *)
+let rec item ?(budget : Budget.t = Budget.unlimited) ~(exec : bool) ~(policy : policy)
+    (st : state) (it : Syntax.item) : (state, Serror.t) result =
   match it with
   | Syntax.IDef { loc; name; reducible; kind; ty; def } ->
       let rec_, partial = defkind_bools kind in
@@ -214,7 +240,8 @@ let rec item ~(exec : bool) ~(policy : policy) (st : state) (it : Syntax.item) :
       let* def_t = Elab.term elab_globals [] def in
       let* globals =
         kernel loc
-          (Check.define ~rec_ ~partial st.globals ~name ~reducible ~ty:ty_t ~def:def_t)
+          (Check.define ~rec_ ~partial ~budget ~rule:policy.wf_rule st.globals ~name
+             ~reducible ~ty:ty_t ~def:def_t)
       in
       (* M3 fixes, A1 (O1 + C14, 2026-09-01): in CHECK mode
          [Interp.define] is never called for USER DEFS, so no def body
@@ -274,7 +301,7 @@ let rec item ~(exec : bool) ~(policy : policy) (st : state) (it : Syntax.item) :
       (* declare first so the ctor types can mention the inductive *)
       let* provisional =
         kernel loc
-          (Check.declare_ind st.globals ~name ~params:(List.rev rev_params)
+          (Check.declare_ind ~budget st.globals ~name ~params:(List.rev rev_params)
              ~indices:(List.rev rev_indices) ~level:level_l)
       in
       let* rev_ctors =
@@ -286,7 +313,7 @@ let rec item ~(exec : bool) ~(policy : policy) (st : state) (it : Syntax.item) :
           (Ok []) ctors
       in
       let* globals =
-        kernel loc (Check.define_ind provisional ~name ~ctors:(List.rev rev_ctors))
+        kernel loc (Check.define_ind ~budget provisional ~name ~ctors:(List.rev rev_ctors))
       in
       (* runtime seeds: the type constructor is inert, data constructors
          accumulate their kept arguments up to their runtime (Many-only)
@@ -401,8 +428,8 @@ let rec item ~(exec : bool) ~(policy : policy) (st : state) (it : Syntax.item) :
       List.fold_left
         (fun acc sub_item ->
           let* st' = acc in
-          item ~exec ~policy st' sub_item)
-        (item ~exec ~policy st data_item)
+          item ~budget ~exec ~policy st' sub_item)
+        (item ~budget ~exec ~policy st data_item)
         def_items
   | Syntax.IInstance { loc; ty; def } ->
       (* D3: register under the mangled "inst$C$K" name read off [ty]'s
@@ -418,7 +445,8 @@ let rec item ~(exec : bool) ~(policy : policy) (st : state) (it : Syntax.item) :
       let* ty_t = Elab.term st.globals [] ty in
       let* def_t = Elab.term st.globals [] def in
       let* globals =
-        kernel loc (Check.define_instance st.globals ~name:mangled ~ty:ty_t ~def:def_t)
+        kernel loc
+          (Check.define_instance ~budget st.globals ~name:mangled ~ty:ty_t ~def:def_t)
       in
       install_def ~loc ~exec ~name:mangled ~ty_t st globals
   | Syntax.IAxiom { loc; name; ty } ->
@@ -430,7 +458,7 @@ let rec item ~(exec : bool) ~(policy : policy) (st : state) (it : Syntax.item) :
       (match () with
       | () when policy.no_axioms -> Error (Serror.Axioms_disabled { loc; name })
       | () ->
-          let* globals = kernel loc (Check.define_axiom st.globals ~name ~ty:ty_t) in
+          let* globals = kernel loc (Check.define_axiom ~budget st.globals ~name ~ty:ty_t) in
           (* an axiom has NO runtime entry at all: [Interp.define] is
              never called. If one ever reached [Interp.exec], the
              existing [Unbound_global] backstop fires (test B9). *)
@@ -439,7 +467,7 @@ let rec item ~(exec : bool) ~(policy : policy) (st : state) (it : Syntax.item) :
   | Syntax.ICheck (loc, s) ->
       let* tm = Elab.term st.globals [] s in
       let* tm', ty_v =
-        kernel loc (Check.infer st.globals Check.empty_ctx Quantity.Zero tm)
+        kernel loc (Check.infer st.globals (Check.root_ctx budget) Quantity.Zero tm)
       in
       let line =
         Printf.sprintf "%s : %s" (Pp.term [] tm') (Check.pp_value st.globals 0 ty_v)
@@ -448,7 +476,7 @@ let rec item ~(exec : bool) ~(policy : policy) (st : state) (it : Syntax.item) :
   | Syntax.IEval (loc, s) ->
       let* tm = Elab.term st.globals [] s in
       let* tm', ty_v =
-        kernel loc (Check.infer st.globals Check.empty_ctx Quantity.Many tm)
+        kernel loc (Check.infer st.globals (Check.root_ctx budget) Quantity.Many tm)
       in
       let* e = kernel loc (Erase.closed tm') in
       if exec then
@@ -483,10 +511,10 @@ let converts_to (globals : Global.t) (main_ty_v : Value.t) ~(io_arg : string) :
     tree to completion, EXACTLY once. Shared by the [IO Verdict] and
     [IO Unit] epilogue paths below (M3 Stage D; M3 Stage B for the
     [IO Unit] shape alone). *)
-let run_main (final : state) : (Effect.outcome, Serror.t) result =
+let run_main ~(strict_json : bool) (final : state) : (Effect.outcome, Serror.t) result =
   let* main_v = kernel Loc.start (Interp.exec final.eglobals [] (Eterm.EGlobal "main")) in
   let* action = kernel Loc.start (Effect.require_action main_v) in
-  kernel Loc.start (Effect.run_io final.eglobals action)
+  kernel Loc.start (Effect.run_io ~strict_json final.eglobals action)
 
 (** M3 Stage D, D4: the [IO Verdict] epilogue path, tried FIRST. An
     [Exited n] outcome (an explicit [exitWith] fired before ever
@@ -499,10 +527,15 @@ let run_main (final : state) : (Effect.outcome, Serror.t) result =
     (`script` below never appends to it): the hook-protocol contract is
     that stdout carries EXACTLY the rendered decision, nothing else,
     not "def main : (IO Verdict)" or any earlier item's echo. *)
-let run_verdict_main (final : state) : (string list * int, Serror.t) result =
-  let* outcome = run_main final in
+let run_verdict_main ~(strict_json : bool) (final : state) : (string list * int, Serror.t) result =
+  let* outcome = run_main ~strict_json final in
   match outcome with
   | Effect.Exited n -> Ok ([], n)
+  (* M5 Stage A (pin 20): a strict-json refusal on a verdict script IS
+     a verdict, the deny envelope with the fixed reason and the
+     literal deny code 2, OUTSIDE the --serror-exit mapping, exactly
+     like the driver contract for an unusable target. *)
+  | Effect.Rejected reason -> Ok ([ Effect.deny_envelope reason ], 2)
   | Effect.Done v ->
       let* line_opt, code = kernel Loc.start (Effect.render_verdict v) in
       Ok (line_opt |> Option.fold ~none:[] ~some:(fun l -> [ l ]), code)
@@ -515,10 +548,15 @@ let run_verdict_main (final : state) : (string list * int, Serror.t) result =
     that for a plain [IO Unit] script. [Exited n] becomes exit code
     [Some n]; completing without an explicit [exitWith] stays [None]
     ([bin/tot.ml] defaults that to 0). *)
-let run_unit_main (final : state) : (int option, Serror.t) result =
-  let* outcome = run_main final in
+let run_unit_main ~(strict_json : bool) (final : state) : (int option, Serror.t) result =
+  let* outcome = run_main ~strict_json final in
   match outcome with
   | Effect.Exited n -> Ok (Some n)
+  (* M5 Stage A (pin 20): an [IO Unit] script has no verdict channel,
+     so a strict-json refusal takes the DRIVER contract instead: one
+     stderr line, exit 1, outside the --serror-exit mapping
+     ([Serror.driver_exit]); the same posture --require-main takes. *)
+  | Effect.Rejected _reason -> Error Serror.Json_strict_reject
   | Effect.Done _ -> Ok None
 
 (** [main]'s epilogue. Looks up a global literally named "main"; every
@@ -581,10 +619,10 @@ let main_epilogue (final : state) ~(exec : bool) ~(policy : policy) :
              Error (Serror.Main_bad_type { ty = Check.pp_goal final.globals 0 main_ty_v })
          | () when not exec -> Ok (None, None)
          | () when is_verdict ->
-             let* lines, code = run_verdict_main final in
+             let* lines, code = run_verdict_main ~strict_json:policy.strict_json final in
              Ok (Some lines, Some code)
          | () ->
-             let* code = run_unit_main final in
+             let* code = run_unit_main ~strict_json:policy.strict_json final in
              Ok (None, code))
 
 (** [st] seeds the starting environment (M3 Stage A); default [initial]
@@ -596,15 +634,16 @@ let main_epilogue (final : state) ~(exec : bool) ~(policy : policy) :
     [Some replacement_lines] (the [IO Verdict] driver path took over
     rendering), that list REPLACES the ordinary accumulated output
     instead of appending to it. *)
-let script ?(st : state = initial) ?(policy : policy = default_policy) ~(exec : bool)
-    (src : string) : (string list * int option, Serror.t) result =
+let script ?(st : state = initial) ?(policy : policy = default_policy)
+    ?(budget : Budget.t = Budget.unlimited) ~(exec : bool) (src : string) :
+    (string list * int option, Serror.t) result =
   let* tokens = Lexer.lex src in
   let* items = Parser.parse tokens in
   let* final =
     List.fold_left
       (fun acc it ->
         let* st = acc in
-        item ~exec ~policy st it)
+        item ~budget ~exec ~policy st it)
       (Ok st) items
   in
   let* replacement_lines, exit_code = main_epilogue final ~exec ~policy in

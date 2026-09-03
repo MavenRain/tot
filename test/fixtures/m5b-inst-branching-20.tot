@@ -1,0 +1,16 @@
+-- M5 Stage B (plan B9): the branching shape at nesting 20.  GENERATED
+-- (dev/gen-inst-branching.py 20); edit the generator, not this file.
+-- One instance with TWO dictionary binders on the SAME type variable,
+-- so the un-shared M4 emission is a binary tree of 2^n nodes that the
+-- mandatory candidate re-check walks whole: measured on the M4 HEAD
+-- binary 2026-09-02, `run` at nesting 20 takes 30.188s and `check`
+-- 31.570s (plan B0, probes P9/P10).  With the Stage B let-nest the
+-- emitted term is S(20) nodes and the file runs in milliseconds;
+-- PASS-M5B-BRANCHING-20 pins that inside a 10s watchdog.
+class SC (0 A : Type 0) := { sc : Bool }
+data SBox (0 A : Type 0) : Type 0 := | sbox : A -> SBox A
+instance : SC Bool := mkSC Bool true
+instance : (0 A : Type 0) -> SC A -> SC A -> SC (SBox A) :=
+  fun A d1 d2 => mkSC (SBox A) true
+def deepBranching : Bool := sc (SBox (SBox (SBox (SBox (SBox (SBox (SBox (SBox (SBox (SBox (SBox (SBox (SBox (SBox (SBox (SBox (SBox (SBox (SBox (SBox Bool)))))))))))))))))))) auto
+eval deepBranching

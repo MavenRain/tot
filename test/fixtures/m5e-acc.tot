@@ -1,0 +1,21 @@
+data Acc (0 A : Type 0) (0 R : A -> A -> Type 0) : A -> Type 0 :=
+  | acc : (x : A) -> ((y : A) -> R y x -> Acc A R y) -> Acc A R x
+reducible def LtNat : Nat -> Nat -> Type 0 :=
+  fun m n => match n with | zero => Empty | succ p => Unit end
+def rec accRec : (0 A : Type 0) -> (0 R : A -> A -> Type 0) ->
+    (0 P : A -> Type 0) ->
+    ((x : A) -> ((y : A) -> R y x -> P y) -> P x) ->
+    (x : A) -> Acc A R x -> P x :=
+  fun A R P f x a =>
+    match a as aa in Acc z return P z with
+    | acc x0 h => f x0 (fun y r => accRec A R P f y (h y r))
+    end
+def accZero : Acc Nat LtNat zero :=
+  acc Nat LtNat zero (fun y r => match r with end)
+-- M5 Stage E (SPIKE) fixture: Acc, accRec and accZero (plan E3).
+-- The comment sits BELOW the declarations on purpose: probe R2 and
+-- gate PASS-M5E-DEFAULT-IDENTITY pin the shipped-guard rejection at
+-- m5e-acc.tot:5:1, so accRec must stay at line 5 column 1.  Without
+-- --experimental-wf this file exits 1 on the structural termination
+-- guard; under the flag it checks at exit 0 with five pinned lines
+-- (gate PASS-M5E-ACC-CHECKS).

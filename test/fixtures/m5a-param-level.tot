@@ -1,0 +1,8 @@
+-- M5 Stage A, gate PASS-M5A-PARAM-LEVEL (design pin 16).  Both
+-- families put a PARAMETER whose type is "Type 0" (level 1) on a
+-- family declared at level 0.  lib/check.ml:1578 discards the inferred
+-- parameter level, so both check.  Bounding that fold rejects both,
+-- and Acc (the M6 well-founded-recursion candidate) stops checking.
+data PBox (0 A : Type 0) : Type 0 := | pbox : (0 a : A) -> PBox A
+data Acc (0 A : Type 0) (0 R : A -> A -> Type 0) : (0 x : A) -> Type 0 :=
+  | acc : (x : A) -> ((y : A) -> R y x -> Acc A R y) -> Acc A R x

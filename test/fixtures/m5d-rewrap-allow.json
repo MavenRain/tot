@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"cat > f.rs <<'EOF'\nfn g() -> Result<u8, E> {\n  h().map(k)\n}\nEOF"}}

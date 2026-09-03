@@ -1,0 +1,8 @@
+data W : Type 0 := | leaf : W | node : (Nat -> W) -> W
+def rec deep2 : W -> Nat := fun w => match w with | leaf => zero | node g => match g zero with | leaf => zero | node h => deep2 (h zero) end end
+-- M6 Stage A fixture (verdict pin 9): the judge's depth-2 witness.
+-- The inner match scrutinizes the APPLICATION g zero, so h never
+-- becomes Smaller: rejected at HEAD even under the deleted flag
+-- (probes P9/P10, exit 1 both modes).  The oracle pins the Var-only
+-- scrutinee rule in Totality.passes.  Gate PASS-M6A-DEEP2-REJECTED;
+-- deep2 must stay at line 2 column 1.

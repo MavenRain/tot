@@ -45,8 +45,8 @@ def rec lastOr : String -> List String -> String :=
 def rec splitEach : String -> List String -> List String :=
   fun sep xs =>
     match xs with
-    | nil => nil String
-    | cons h t => append String (stringSplit h sep) (splitEach sep t)
+    | nil => nil _
+    | cons h t => append _ (stringSplit h sep) (splitEach sep t)
     end
 
 -- Tokenize on the four shell IFS whitespace characters: space, tab,
@@ -130,9 +130,9 @@ def decide : Json -> Verdict :=
 -- is reached only under the default fail-open posture.  This file
 -- itself is unchanged: the flag lives in the driver, not here.
 def main : IO Verdict :=
-  let* String Verdict raw := readStdin in
-  let* (Option Json) Verdict parsed := liftIO (Option Json) (jsonParse raw) in
+  let* String _ raw := readStdin in
+  let* (Option Json) _ parsed := liftIO _ (jsonParse raw) in
   match parsed with
-  | none => pureIO Verdict allow
-  | some payload => pureIO Verdict (decide payload)
+  | none => pureIO _ allow
+  | some payload => pureIO _ (decide payload)
   end

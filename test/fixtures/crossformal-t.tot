@@ -1,0 +1,13 @@
+data T : Type 0 := | tleaf : T | mkT : (Nat -> T) -> T
+def rec bad : T -> T -> Nat :=
+  fun a b => match b with | tleaf => zero | mkT g => bad (g zero) b end
+-- M6 Stage A fixture (verdict pin 9): the wrong-endpoint witness
+-- from the M6 panel.  Candidate formal a : T; g is a field of the
+-- NON-candidate b : T; the call descends on nothing.  Rejected at
+-- HEAD in BOTH modes (probes P7/P8), so what keeps it out is the
+-- per-candidate Principal seed in Totality.passes, not the deleted
+-- flag.  Any future admission rule (lexicographic descent included)
+-- must carry a provenance side condition tying the Smaller head to
+-- the candidate position; this file is that rule's executable
+-- tripwire.  Gate PASS-M6A-CROSSFORMAL-REJECTED pins it; bad must
+-- stay at line 2 column 1.

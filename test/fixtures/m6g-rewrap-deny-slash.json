@@ -1,0 +1,1 @@
+{"tool_name":"Bash","tool_input":{"command":"cat > f.rs <<'EOF'\nlet url = \"https://example.com\";\n// a plain comment\nfn g() -> Result<u8, E> {\n  let a = h()?;\n  Ok(k(a))\n}\nEOF"}}

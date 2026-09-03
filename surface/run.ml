@@ -34,21 +34,13 @@ type policy = {
           [Effect.dispatch]'s [readStdin] arm, BEFORE the script sees
           it: an [IO Verdict] script renders the deny envelope and
           exits 2, an [IO Unit] script takes the driver contract
-          ([Serror.Json_strict_reject], exit 1).  Default off, so
-          every installed guard keeps the fail-open posture
-          byte-identical on upgrade. *)
-  wf_rule : Totality.rule;
-      (** M5 Stage E (SPIKE): which totality rule a user-file [def rec]
-          is guarded under.  [Totality.Structural] is the shipped rule;
-          [Totality.Structural_wf] is the measured prototype, reachable
-          only through the driver flag --experimental-wf.  The prelude
-          bootstrap folds with [default_policy], so a prelude [def rec]
-          is never checked under the prototype and no flag can enter
-          the cache key. *)
+          ([Serror.Json_strict_reject], exit 2 since M6 Stage B).
+          Default off, so every installed guard keeps the fail-open
+          posture byte-identical on upgrade. *)
 }
 
 let default_policy : policy =
-  { no_axioms = false; require_main = false; strict_json = false; wf_rule = Totality.Structural }
+  { no_axioms = false; require_main = false; strict_json = false }
 
 let kernel (loc : Loc.t) (r : ('a, Error.t) result) : ('a, Serror.t) result =
   Result.map_error (fun err -> Serror.Kernel { loc; err }) r
@@ -145,7 +137,7 @@ let rec peel_syntax_codomain (t : Syntax.t) : Syntax.t =
   | Syntax.SPi (_loc, _q, _x, _dom, cod) -> peel_syntax_codomain cod
   | Syntax.SVar _ | Syntax.SType _ | Syntax.SLam _ | Syntax.SApp _ | Syntax.SLet _
   | Syntax.SAnn _ | Syntax.SMatch _ | Syntax.SStr _ | Syntax.SInt _ | Syntax.SLetStar _
-  | Syntax.SAuto _ | Syntax.SInst _ ->
+  | Syntax.SAuto _ | Syntax.SInst _ | Syntax.SHole _ ->
       t
 
 (** Application spine over unelaborated [Syntax.t], head plus args
@@ -155,7 +147,7 @@ let rec syntax_spine (t : Syntax.t) (args : Syntax.t list) : Syntax.t * Syntax.t
   | Syntax.SApp (_loc, f, a) -> syntax_spine f (a :: args)
   | Syntax.SVar _ | Syntax.SType _ | Syntax.SPi _ | Syntax.SLam _ | Syntax.SLet _
   | Syntax.SAnn _ | Syntax.SMatch _ | Syntax.SStr _ | Syntax.SInt _ | Syntax.SLetStar _
-  | Syntax.SAuto _ | Syntax.SInst _ ->
+  | Syntax.SAuto _ | Syntax.SInst _ | Syntax.SHole _ ->
       (t, args)
 
 (** M4 Stage D (D3): [(C, K)] from an instance's UNELABORATED type's
@@ -170,12 +162,12 @@ let instance_key (ty : Syntax.t) : (string * string) option =
       | Syntax.SVar (_, k_name), _kargs -> Some (c_name, k_name)
       | ( Syntax.SType _ | Syntax.SPi _ | Syntax.SLam _ | Syntax.SApp _ | Syntax.SLet _
         | Syntax.SAnn _ | Syntax.SMatch _ | Syntax.SStr _ | Syntax.SInt _ | Syntax.SLetStar _
-        | Syntax.SAuto _ | Syntax.SInst _ ),
+        | Syntax.SAuto _ | Syntax.SInst _ | Syntax.SHole _ ),
         _ ->
           None)
   | ( ( Syntax.SVar _ | Syntax.SType _ | Syntax.SPi _ | Syntax.SLam _ | Syntax.SApp _
       | Syntax.SLet _ | Syntax.SAnn _ | Syntax.SMatch _ | Syntax.SStr _ | Syntax.SInt _
-      | Syntax.SLetStar _ | Syntax.SAuto _ | Syntax.SInst _ ),
+      | Syntax.SLetStar _ | Syntax.SAuto _ | Syntax.SInst _ | Syntax.SHole _ ),
       (_ : Syntax.t list) ) ->
       None
 
@@ -237,10 +229,16 @@ let rec item ?(budget : Budget.t = Budget.unlimited) ~(exec : bool) ~(policy : p
             st.globals
         else st.globals
       in
-      let* def_t = Elab.term elab_globals [] def in
+      (* M6 Stage C (pins 1-3): the declared type is the body's root
+         expected type;  [Elab.term_at] fills expected-type-only holes
+         and reports the rest. *)
+      let* def_t = Elab.term_at elab_globals [] ~expected:ty_t def in
       let* globals =
         kernel loc
-          (Check.define ~rec_ ~partial ~budget ~rule:policy.wf_rule st.globals ~name
+          (* M6 Stage A (pin 8): the single shipped rule, named
+             literally.  [Check.define]'s REQUIRED [~rule] stays, so
+             an M7 rule re-enters by compiler error at this site. *)
+          (Check.define ~rec_ ~partial ~budget ~rule:Totality.Structural st.globals ~name
              ~reducible ~ty:ty_t ~def:def_t)
       in
       (* M3 fixes, A1 (O1 + C14, 2026-09-01): in CHECK mode
@@ -373,7 +371,7 @@ let rec item ?(budget : Budget.t = Budget.unlimited) ~(exec : bool) ~(policy : p
         | Syntax.SType (_, l) -> Ok l
         | Syntax.SVar _ | Syntax.SPi _ | Syntax.SLam _ | Syntax.SApp _ | Syntax.SLet _
         | Syntax.SAnn _ | Syntax.SMatch _ | Syntax.SStr _ | Syntax.SInt _ | Syntax.SLetStar _
-        | Syntax.SAuto _ | Syntax.SInst _ ->
+        | Syntax.SAuto _ | Syntax.SInst _ | Syntax.SHole _ ->
             Error (Serror.Parse { loc; msg = "class parameter must have type 'Type L'" })
       in
       let mk_ctor = "mk" ^ name in
@@ -443,7 +441,7 @@ let rec item ?(budget : Budget.t = Budget.unlimited) ~(exec : bool) ~(policy : p
       in
       let mangled = "inst$" ^ c_name ^ "$" ^ k_name in
       let* ty_t = Elab.term st.globals [] ty in
-      let* def_t = Elab.term st.globals [] def in
+      let* def_t = Elab.term_at st.globals [] ~expected:ty_t def in
       let* globals =
         kernel loc
           (Check.define_instance ~budget st.globals ~name:mangled ~ty:ty_t ~def:def_t)
@@ -554,8 +552,8 @@ let run_unit_main ~(strict_json : bool) (final : state) : (int option, Serror.t)
   | Effect.Exited n -> Ok (Some n)
   (* M5 Stage A (pin 20): an [IO Unit] script has no verdict channel,
      so a strict-json refusal takes the DRIVER contract instead: one
-     stderr line, exit 1, outside the --serror-exit mapping
-     ([Serror.driver_exit]); the same posture --require-main takes. *)
+     stderr line, exit 2 (M6 Stage B, ruling R3;  exit 1 through M5),
+     outside the --serror-exit mapping ([Serror.driver_exit]). *)
   | Effect.Rejected _reason -> Error Serror.Json_strict_reject
   | Effect.Done _ -> Ok None
 

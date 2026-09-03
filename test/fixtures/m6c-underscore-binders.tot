@@ -1,0 +1,7 @@
+-- M6 Stage C (ruling R2): binder-position underscores stay legal,
+-- a leading-underscore identifier is not reserved, and two
+-- anonymous pattern binders do not collide.
+def k : (w _ : Nat) -> Nat := fun _ => zero
+def two2 : List Nat -> Nat := fun xs => match xs with | nil => zero | cons _ _ => succ zero end
+def _foo : Nat := succ zero
+def useIt : Nat := _foo

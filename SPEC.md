@@ -875,7 +875,11 @@ verdict CLIs, small tools.  The house rules are the semantics:
   carries the binary digest, so the first invocation after every
   rebuild or upgrade re-elaborates the prelude outside the budget,
   and no `--check-budget-ms` value cuts that window;  decision 13's
-  external `timeout` belt owns it.  `ctx.budget` defaults to
+  external `timeout` belt owns it.  Since M6 Stage D the window is
+  MEASURED every battery run and its store pinned
+  (`PASS-M6D-COLD-WINDOW`, `PASS-M6D-COLD-STORE`,
+  `PASS-M6D-COLD-OUTSIDE-BUDGET`), still with no ceiling and no
+  second budget.  `ctx.budget` defaults to
   `Budget.unlimited`, so no existing call site changed.
   `--check-budget-ms N` defaults to 0, which is OFF, and applies to
   `check` and to `run`.  The budget covers elaboration and
@@ -1009,10 +1013,11 @@ verdict CLIs, small tools.  The house rules are the semantics:
   the Python Bash map-over-rewrap guard on raw text: only
   `tool_name = "Bash"`, only a command mentioning `.rs`, only the
   line-pair shape (`let` first token, `?;` last token, next line
-  starting `Ok(`).  The scrubber, the block-tail test, the used-name
-  test and the net-new comparison are not ported.  The guard fails
-  open on everything it does not recognise, matching the other two
-  guards (`PASS-M5D-REWRAP-GUARD`).
+  starting `Ok(`).  The block-tail test, the used-name test and the
+  net-new comparison are not ported (the scrubber followed at M6
+  Stage E, 2026-09-03).  The guard fails open on everything it does
+  not recognise, matching the other two guards
+  (`PASS-M5D-REWRAP-GUARD`).
 - 2026-09-02 (M5, Stage D): the hole-anchor measurement (scope item
   11, plan D5).  A STATIC classifier (`dev/hole-anchors.py`) walks
   stdlib/prelude.tot plus examples/*.tot (test fixtures excluded on
@@ -1112,6 +1117,407 @@ verdict CLIs, small tools.  The house rules are the semantics:
   size them together or neither, which confirms the verdict's
   "Deferred and TIED to well-founded recursion" line with an
   executable reason.
+- 2026-09-03 (M6, Stage A): `--experimental-wf` and the `Structural_wf`
+  prototype are DELETED (ruling R1, verdict pins 7 and 8).
+  `Totality.rule` is the single-constructor type `Structural` ON
+  PURPOSE:  `Check.define` keeps its REQUIRED named `~rule`, every call
+  site names the constructor literally, and every match on it is
+  exhaustive without a wildcard, so an M7 admission rule re-enters by
+  compiler error at every consumer, never through a driver flag.  The
+  driver's unknown-flag arm now owns the deleted spelling (`unknown
+  flag: --experimental-wf`, exit 2, gate PASS-M6A-WF-FLAG-UNKNOWN).
+  The M5 cache sentence is re-homed here:  no rule ever entered the
+  cache key (the prelude bootstrap folded with `default_policy`, and
+  the `wf_rule` policy field is gone), so `Cache.format_version` stays
+  10 (pin 15).  Dead spot recorded (pin 8):  `Check.define_instance`
+  passes `~rule` but never `~rec_`, so the guard cannot run on an
+  instance body and the threading there is inert plumbing;  M7 decides
+  whether instances gain a `rec_` story or the threading simplifies.
+- 2026-09-03 (M6, Stage A): the seed invariant (verdict pin 9).
+  `Totality.passes` seeds exactly one formal as `Principal` per
+  candidate position, and `Smaller` is minted only by a `match` whose
+  scrutinee is a bare variable of `Principal` or `Smaller` status.  Any
+  future admission rule (lexicographic descent included) must carry a
+  PROVENANCE side condition tying the `Smaller` head to the candidate
+  position.  Executable tripwires, all flag-free, all rejected at
+  `2:1` with the structural termination message:
+  `test/fixtures/bad2.tot` (infinitary structural recursion over a
+  variable scrutinee, the row the M5 panel did not state;  ACCEPTED
+  under the deleted flag), `test/fixtures/crossformal-t.tot` (the
+  wrong-endpoint witness, a field of the NON-candidate formal;
+  rejected at M5 HEAD in both modes, so the per-candidate seed is what
+  keeps it out) and `test/fixtures/deep2.tot` (the depth-2 application
+  scrutinee;  rejected at M5 HEAD in both modes, pinning the Var-only
+  scrutinee rule).  Gates PASS-M6A-INFINITARY-REJECTED,
+  PASS-M6A-CROSSFORMAL-REJECTED and PASS-M6A-DEEP2-REJECTED, plus
+  PASS-M6A-ACC-GUARD-REJECTED over the byte-identical
+  `test/fixtures/m5e-acc.tot` and the flag-free rewrite of
+  PASS-M5E-WITNESS-REJECTED;  kernel case E2 pins both shapes by tag
+  and message.
+- 2026-09-03 (M6, Stage A): positivity-fence tripwires (verdict pin
+  10).  `test/fixtures/nested-pos.tot` (a covariant nested occurrence
+  under a foreign parameterized head, `U T2`) and
+  `test/fixtures/nested-neg.tot` (the contravariant smuggle, `T3`
+  negative inside `N T3`) are both rejected today at `2:1` with
+  `invalid constructor mkt2: negative or non-uniform occurrence of T2`
+  and `invalid constructor mkt3: negative or non-uniform occurrence of
+  T3`.  Gates PASS-M6A-FENCE-COVARIANT and PASS-M6A-FENCE-CONTRAVARIANT
+  are DESIGNED to go red the day C3 lands nested inductives, which
+  forces the guard and `Frozen`-emptiness questions (the M5 Stage E
+  entries above, and section 6) open on purpose;  the fix is to
+  re-open the design, never to delete the legs.
+- 2026-09-03 (M6, Stage A): transcript reseal (pin 14).
+  `dev/m5e-default-transcript.txt` is regenerated by
+  `dev/gen-m5e-transcript.sh` over the 85-file corpus (6 examples + 79
+  fixtures;  80 files at M5 exit), 9660 -> 9685 lines, additions
+  only:  five 5-line blocks for `test/fixtures/bad2.tot`,
+  `crossformal-t.tot`, `deep2.tot`, `nested-neg.tot` and
+  `nested-pos.tot`, each `#exit 1` with the message pinned above.
+  PASS-M5E-DEFAULT-IDENTITY keeps its M5 name and remains the
+  enforcement point.
+- 2026-09-03 (M6, Stage B): the blocking Unit strict-json posture
+  (M6 verdict pins 5-6, ruling R3).  Under `--strict-json` a stdin
+  payload that is not one well-formed JSON value on an `IO Unit`
+  script now exits 2;  it was exit 1 from M5 Stage A through M6
+  Stage A.  The single stderr line is unchanged byte for byte
+  (`<path>:stdin is not a single well-formed JSON value, and this
+  installation runs with --strict-json`, tight `:` after the argv
+  path), stdout stays empty, and the refusal stays OUTSIDE the
+  `--serror-exit` mapping: the literal 2 under every configured
+  value, so a fail-open install (`--serror-exit 0`) cannot remap
+  the refusal to a silent allow and no configuration can demote it
+  to a non-blocking 1.  This closes the disclosed
+  `IO Verdict`-only gap in the fail-closed story: the PreToolUse
+  harness treats exit codes other than 0 and 2 as non-blocking
+  (the M5 Stage C budget entry records the same harness rule), so
+  the old exit-1 route was non-blocking by construction.  The
+  delta is one literal in the driver's `Serror.driver_exit`
+  classification arm;  `Serror.Json_strict_reject`, its stderr
+  text, `Effect.dispatch`'s `readStdin` guard and the Verdict
+  deny envelope are all byte-identical
+  (`PASS-M6B-VERDICT-STRICT-IDENTITY`, `PASS-M6B-OPEN-IDENTITY`
+  pin the unchanged postures;  `PASS-M6B-UNIT-STRICT-EXIT2`,
+  `PASS-M6B-UNIT-STRICT-NOMAP` pin the new one).  MIGRATION NOTE
+  (the sole mitigation, ruling R3): an installation whose harness
+  distinguished exit 1 from exit 2 on `tot run --strict-json`
+  over an `IO Unit` guard must treat the refusal as BLOCKING from
+  this version on;  that is the point of the change.  No flag
+  restores the exit-1 route and no new opt-in flag exists.  To
+  tell a strict-json refusal from any other exit-2 path (the
+  Verdict deny, the unknown-flag contract), match the stderr
+  LINE, not the code, the same discrimination rule the budget
+  exit 3 already documents.
+- 2026-09-03 (M6, Stage C): `_` is reserved (ruling R2).  The exact
+  token `_` is `Token.Underscore` (surface/lexer.ml keywords row): in
+  term position it is a hole (`Syntax.SHole`), in binder position
+  (`fun _`, `let _`, `let* A B _`, match patterns, `(w _ : A)`) it is
+  an anonymous binder, and it can be neither defined nor referenced;
+  a name position that receives it falls through to the existing
+  "expected NAME" parse errors, naming `'_'`.  BEFORE picture,
+  recorded verbatim from the Stage C entry probes at 8d5a839/18b7ab6
+  (`tot check`, last stdout line | exit): `underscore-def.tot ::
+  def _ : Nat|def g : Nat| exit=0`, `underscore-lam.tot :: def f :
+  (w _ : Nat) -> Nat| exit=0`, `underscore-match.tot :: def h :
+  (w _ : Nat) -> Nat| exit=0`, and the duplicate-binder probe
+  `dup-underscore-pattern.tot :: 1:68: parse error: duplicate binder
+  _ in pattern| exit=1`, which is now LEGAL (`_` is exempt from the
+  pattern duplicate fence because it is never referencable;  plan
+  note N4).  Corpus sweep `rg -n "(^|[^A-Za-z0-9_'])_($|[^A-Za-z0-9_'])"
+  stdlib/prelude.tot examples/*.tot` hits only two comment lines
+  (examples/guard-rewrap.tot:7-8, the `Ok(_)` prose), and
+  `rg -n '^(def|data|axiom|class)\s+_\s' stdlib/prelude.tot
+  examples/*.tot` hits nothing (exit 1), so no shipped file changes
+  meaning.  The three probes land as pinned negatives
+  (test/fixtures/m6c-underscore-{def,lam,match}.tot;
+  `PASS-M6C-UNDERSCORE-RESERVED`) and `(w _ : A)` still parses as ONE
+  binder (note N5, the `quantity_prefix` lookahead accepts
+  `Underscore`).
+- 2026-09-03 (M6, Stage C): expected-type-only holes (verdict pins 1
+  and 3).  `Elab.term_at globals scope ~expected` carries a kernel
+  expected type down a DESCENT SET: def and instance bodies (the
+  activation sites in `Run`, surface/run.ml), the subject of an
+  annotation (`(t : T)`, so `check` items expose fills), `fun` under
+  a Pi, `let` bodies (shifted by one), `let*` (desugared to a bind
+  spine), motive-free `match` branch bodies (shifted by the branch's
+  binder count, `Term.shift`), and application spines whose head is
+  a global.  The SPINE RULE: uncurry the spine, take the head's
+  declared type's k leading `(0 X : Type L)` formals, run a rigid
+  first-order match of the head's codomain against the expected type
+  that captures formals only at depth 0, fill each leading hole from
+  its captured formal, and descend into later arguments with their
+  instantiated domains.  The FAMILY FENCE refuses every hole under a
+  head whose declared type mentions `Eq`, `Dec` or `Empty` (the
+  proof set, dev/hole-anchors.py:69) or any class former, detected
+  STRUCTURALLY (one erased `Type` param, no indices, sole constructor
+  `mk<Name>`, mirroring the `class` desugar;  note N3: an
+  over-approximation only refuses, it never fills).  Two error
+  lines, both `Serror.Hole`, both exit 1 through the ordinary
+  `--serror-exit` mapping (they ride it exactly as `Unknown_name`
+  does): `<file>:<l>:<c>: hole: expected <TYPE>` when the slot's
+  domain is known but no fill exists (buckets A and N), and
+  `<file>:<l>:<c>: hole: no expected type at this position`
+  (inference positions: `eval _`, a `let` annotation, a bare
+  argument under an unfenced head with no captured formal).
+  CONSERVATIVITY: the change is surface-only;  `Term.t`,
+  `Cache.format_version` (10) and every `lib/` file are untouched,
+  and every fill is spliced as an ordinary kernel term and
+  re-checked by the unchanged kernel, so a wrong fill is a kernel
+  error, never a silent acceptance.  Pinned by the holed/explicit
+  twin fixtures (test/fixtures/m6c-hole-e.tot vs
+  m6c-hole-e-explicit.tot, byte-identical `tot check` output;
+  `PASS-M6C-HOLE-RESOLVES`), the refusal fixtures
+  (`PASS-M6C-HOLE-REPORTS`), and `PASS-M6C-HOLE-NEVER-RUNS` (a
+  holed file that fails elaboration produces no stdout under `run`).
+- 2026-09-03 (M6, Stage C): E = 59 stays a ceiling (pin 4).
+  `python3 dev/hole-anchors.py` re-run at Stage C entry prints the
+  same ANCHORS line as the section 6 residual: total 98, E
+  (expected-type-only) 59, A (argument-driven) 9, N (neither) 30
+  (148 lines of output, `python3 dev/hole-anchors.py | wc -l`),
+  identical to the 2026-09-02 measurement.  The literal
+  `expected-type-only=NN` is spelled ONCE in this file, in the
+  section 6 residual, because `PASS-M5D-MEASURE-LOG` reads that one
+  occurrence with `rg -o` and compares it to the measure log;  a
+  second spelling would print two values and fail the leg (Stage C
+  conflict C-C5).  The MEASURED solve
+  count against the re-spelled examples is OWED BY STAGE E
+  (`PASS-M6E-ANCHORS`);  the 40 prelude anchors remain M7 debt.
+- 2026-09-03 (M6, Stage C): structured hole error (scope-in 6).
+  `Serror.Hole of { loc; expected : (string list * Term.t) option }`
+  carries the expected type as a kernel term plus the name stack
+  it was elaborated under, rendered only by `Serror.to_string` via
+  `Pp.term`.  The section 6 "errors are strings" debt line is
+  rewritten to record the slice as partially paid: one constructor
+  structured, the rest of the error surface unchanged.  Transcript
+  reseal (pin 14): dev/m5e-default-transcript.txt regenerated by
+  dev/gen-m5e-transcript.sh, eleven `### test/fixtures/m6c-*.tot`
+  sections added, 85 old sections byte-identical, corpus count
+  `rg -c '^### ' dev/m5e-default-transcript.txt` = 96 (was 85);
+  `PASS-M5E-DEFAULT-IDENTITY` and `PASS-M6C-DEFAULT-IDENTITY` pin
+  it.
+- 2026-09-03 (M6, Stage D): memo-HIT ratio leg (verdict pins 11 and
+  12, ruling R4).  `PASS-M6D-HIT-RATIO` pins the instance memo HIT
+  path (`lib/check.ml`, `InstMemo.find_opt` on the mangled
+  `inst$<class>$<key>` name) by RATIO, never by absolute time: the
+  median of nine bare warm `check` runs of
+  `test/fixtures/m6d-hit-many.tot` must be at most 4.0 times the
+  median of nine bare warm runs of `test/fixtures/m6d-hit-one.tot`
+  (one `member String auto` use), all 18 exits 0.  The many-side
+  fixture was re-targeted on 2026-09-03 by ruling (a) on conflict
+  C-D1 (M6 Stage F): one class `HC`, a leaf instance at `Bool`, a
+  chain instance `HC A -> HC (HBox A)`, and a top instance with 64
+  dictionary binders `HC A` on ONE type variable;  the file's single
+  `auto` resolves `HC (HTop (HBox^32 Bool))`, so ONE `Term.Auto`
+  asks for the SAME key `HC (HBox^32 Bool)` 64 times: ask 1 derives
+  the 33-level chain and asks 2 to 64 are memo HITs (1 derive plus
+  63 HITs).  The Stage D fixture (the same class as m6d-hit-one, 64
+  `member String auto` uses in 64 separate `Term.Auto`s) never
+  reached the HIT arm, because the memo is scoped to ONE `Term.Auto`
+  (lib/check.ml:653-655, 1193-1196, a fresh empty memo per
+  resolution);  a probe that turns the HIT arm into an error (Stage
+  D, M1X) leaves both Stage D fixtures at exit 0 while
+  m5b-inst-branching-20 exits 1, so that leg pinned only the per-use
+  cost of `resolve_auto` on a leaf instance by ratio.  Measured pairs
+  against the Stage D fixture: the judge session 30.4 ms / 39.0 ms
+  (1.28x);  the plan writer's machine 0.005 s / 0.007 s (1.40x);  the
+  Stage D build's pre-mutation battery under a load average above 20,
+  0.015 s / 0.018 s (1.20x).  Measured pairs against the ratified
+  fixture (Stage F, five isolated runs of the M6D block, load average
+  above 20): 0.011 s / 0.015 s, 0.012 / 0.015, 0.013 / 0.016,
+  0.010 / 0.015, 0.008 / 0.013 (1.23x to 1.63x).  The 4.0 is ruling
+  R4, not a tunable.  The pinned mutation proof (the HIT branch at
+  lib/check.ml:766-773 cut to a miss, plan D12 M1:
+  `InstMemo.find_opt mkey st.memo` becomes
+  `(Option.bind (InstMemo.find_opt mkey st.memo) (fun _ -> None))`)
+  now flips this leg: five isolated runs under the mutation read
+  `FAIL-M6D-HIT-RATIO (one=0.011 many=0.233 ok=18)`, then
+  0.014 / 0.204, 0.010 / 0.215, 0.014 / 0.215, 0.009 / 0.244 (14.6x
+  to 27.1x), because 63 re-derives of the 33-level chain replace 63
+  HITs;  lib/check.ml restored md5-identical
+  (c394d0d34f013e767f9ff7ff04dc2cd6) and the leg is green again.
+  The chain depth 32 is the sizing knob: the healthy many side pays
+  one chain derive (about 5 ms at depth 32, growing about
+  quadratically with depth: 0.12 s at 128, 1.2 s at 256) and the
+  mutant pays 64 of them;  depth 32 keeps the healthy ratio near 1.5
+  and the mutant ratio above 14 on the same loaded machine.  The
+  reseal (pin 14): the `### test/fixtures/m6d-hit-many.tot` block
+  of dev/m5e-default-transcript.txt is the only hunk, 65 `def` lines
+  replaced by 11 lines (data, ctor, def, three `inst$HC$` defs,
+  `def hits : Bool`);  99 blocks;  the seal is now 10389 lines /
+  666968 bytes (md5 2da162428641f61008255d2c3d366b39, was 10443 /
+  666314, md5 c8d25850ac963922e70f436383aa975e).  Conflict record:
+  dev/M6-BUILD-LOG.md, Stage D C-D1 and the Stage F section "C-D1
+  RESOLVED by ruling (a), 2026-09-03".
+  `PASS-M6D-HIT-BASELINE` pins the byte-exact two-line stdout of the
+  one-use fixture at exit 0, so the ratio leg cannot pass on two
+  fast failures.  The nine timed runs are BARE (no watchdog): the
+  wrapper costs about 4 ms per spawn, most of the healthy signal;
+  both fixtures are proven terminating under a wrapped SLOW run in
+  the same leg before any bare run starts, and `check` is
+  deterministic.  The leg writes two DERIVED rows,
+  `MEASURE M6D-HIT-ONE` and `MEASURE M6D-HIT-MANY`, to the battery's
+  measurement log only after asserting all 18 exits.
+- 2026-09-03 (M6, Stage D): cold-bootstrap window leg (verdict pin
+  12).  `PASS-M6D-COLD-WINDOW` runs `test/fixtures/m6d-hit-one.tot`
+  against a FRESH private `TOT_CACHE_DIR` (asserted empty before the
+  run, zero `prelude-*.bin`), then reruns it warm in the same
+  directory, and pins exit 0 for both plus byte-identical
+  non-empty stdout.  `PASS-M6D-COLD-STORE` pins that exactly one
+  `prelude-*.bin` exists in that directory afterwards;  the
+  `exeid-*.txt` sidecar is excluded from the count by the glob.
+  `PASS-M6D-COLD-OUTSIDE-BUDGET` pins that the cold prelude
+  bootstrap runs OUTSIDE `--check-budget-ms`: a fresh directory with
+  budget 5 checks the one-use fixture at exit 0 and empty stderr, a
+  second fresh directory with budget 5 checks the 600-definition
+  `test/fixtures/m6d-bigcheck.tot` at exit 0 and empty stderr (the
+  cold bootstrap plus 600 cheap definitions fit in 5 ms because the
+  bootstrap is not billed), and the same 600-definition file warm
+  with budget 1 exits 3 with empty stdout and the stderr line
+  `m6d-bigcheck.tot: check budget exhausted (1 ms)`, which proves
+  the clock reaches the user's file.  The window's elapsed time is
+  MEASURED every battery run (`MEASURE M6D-COLD-WINDOW`) and never
+  bounded by a leg: presence and schema are pinned, duration is
+  not;  decision 13's external `timeout` belt still owns the
+  ceiling, and no second budget exists.
+- 2026-09-03 (M6, Stage D): measurement-log coordination (verdict
+  pin 13).  `PASS-M5D-MEASURE-LOG` moved below the M6D legs, so it
+  still runs after every wrapped leg it counts, and its literal
+  went 18 -> 22 with four new names: `M6D-HIT-BASELINE` and
+  `M6D-COLD-WINDOW` from `gate_timed`, plus the derived
+  `M6D-HIT-ONE` and `M6D-HIT-MANY`.  The two branching legs
+  (`M4FIX-INST-BRANCHING`, `M5B-BRANCHING-20`) stay the battery's
+  tail, so the battery-end row count is 24.  `PASS-M5D-TIERS` went
+  151 -> 157: the Stage D legs add six direct tier uses (2 SLOW,
+  1 FAST, 3 MED), measured with
+  `rg -c '"\$watchdog" "\$(FAST|MED|SLOW|SUITE)"' dev/gates.sh`
+  before (151) and after (157) the edit.  Transcript reseal (pin
+  14): three `### test/fixtures/m6d-*.tot` sections added, 96 old
+  sections byte-identical, `rg -c '^### ' dev/m5e-default-transcript.txt`
+  = 99 (was 96).
+- 2026-09-03 (M6, Stage E): criterion 3 of the map-over-rewrap guard
+  is ported (scope-in 7, verdict pin 4).  `examples/guard-rewrap.tot`
+  now scrubs the command's lines through a three-state, line-based
+  machine (`Scrub` = `sCode | sComment | sString`, `scrubLines`)
+  before the criterion 1-2 pair test, so a `let ... ?;` / `Ok(` pair
+  inside a Rust block comment or a multi-line string literal no
+  longer denies.  The port is NARROW and every miss is recorded in
+  the file header: `//` cuts the rest of its line (narrowed at M6
+  Stage G, see the Stage G entry below);  an unmatched `/*`
+  cuts its line and opens comment state, and the line holding the
+  closing `*/` is dropped whole (code after `*/` on that line is
+  lost, fail-open);  a line holding both `/*` and `*/` keeps only the
+  text before `/*`;  an odd count of `"` cuts the line at its first
+  `"` and opens string state, and the line holding the closing `"`
+  is dropped whole;  balanced inline quotes are not blanked;  no
+  escapes, char literals or raw strings are understood;  the
+  trailing-whitespace miss of `lastToken` carries over.  The
+  block-tail test, the used-name test and the net-new comparison
+  stay unported (section 6).  `PASS-M6E-REWRAP-SCRUB` pins the two
+  before-pictures below plus the genuine pair (M6 Stage G adds leg
+  (d), a second genuine pair);  `PASS-M6E-REWRAP-OPEN`
+  re-pins the fail-open posture on a non-JSON and a non-Bash payload.
+- 2026-09-03 (M6, Stage E): the two before-pictures.  At the Stage E
+  entry state (the verified post-D tree, git HEAD 18b7ab6;  the plan
+  measured the same at 8d5a839, probes P12/P13) both fixtures DENIED
+  at exit 2.
+  `_build/default/bin/tot.exe run examples/guard-rewrap.tot < test/fixtures/m6e-rewrap-scrub-comment.json`
+  printed
+  `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"house rule: map over the value instead of a let-then-Ok rewrap (command: cat > demo.rs <<'EOF'\n/*\nlet a = h()?;\nOk(a)\n*/\nEOF)"}}`
+  and
+  `_build/default/bin/tot.exe run examples/guard-rewrap.tot < test/fixtures/m6e-rewrap-scrub-string.json`
+  printed
+  `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"house rule: map over the value instead of a let-then-Ok rewrap (command: cat > demo.rs <<'EOF'\nlet example = \"\nlet a = h()?;\nOk(a)\n\";\nEOF)"}}`.
+  After the port both commands print nothing at exit 0.  The genuine
+  pair (`test/fixtures/m5d-rewrap-deny.json`, probe P10) still denies
+  at exit 2 with the envelope echoing `let a = h()?;`, byte-identical
+  to the entry envelope.
+- 2026-09-03 (M6, Stage E): the corpus was re-measured after the
+  scrubber port and the re-spell.  `python3 dev/hole-anchors.py |
+  tail -1` prints
+  ANCHORS total=101 expected-type-only=62 argument-driven=9 neither=30
+  (151 lines of output) and `python3 dev/hole-anchors.py
+  --count-sites` prints 101;  the three new anchors are the
+  scrubber's `headOr`, `cons` and `nil` sites, all E.  The old line
+  (section 6, total 98 / 59 / 9 / 30) remains the M5 baseline.  The
+  classifier is INVARIANT under the re-spell (probe P20): a
+  re-spelled site prints `anchor=[_]` in the same bucket, so E counts
+  anchors by POSITION, not by whether the anchor is still spelled.
+  `PASS-M6E-ANCHORS` pins the line;  `PASS-M5D-MEASURE-LOG` now
+  reads the NEWEST `expected-type-only=` spelling in this file
+  (`| tail -n 1`, plan E4), which retires Stage C's one-spelling rule
+  (C-C5): the newest spelling must be the textually LAST one, and it
+  lives in the section 6 residual (Stage E conflict note C-E5).
+- 2026-09-03 (M6, Stage E): measured solve count (verdict pin 4, plan
+  conflict C3).  Of the 98-anchor HEAD corpus the expected-type-only
+  pass solves 19 anchors: 19 of the 19 example-file E anchors
+  re-spelled here (7 guard.tot, 9 guard-rewrap.tot, 3
+  guard-classes.tot), 0 of the 40 prelude E anchors (out of scope,
+  scope-out 5), 0 of A and N by design.  The 19 is the denominator's
+  honest form: 59 was never a target, it was the ceiling on what an
+  expected-type-only pass COULD reach, and 40 of those 59 sit in the
+  prelude that Stage E may not touch.  No site fell short of the
+  ceiling: every one of the 19 resolves, and a build-time probe with
+  guard.tot:133's argument-driven slot (arg 0 of the `let*`
+  desugaring, the A bucket) spelled `_` refuses with
+  `guard-asite.tot:133:8: hole: expected Type 0` at exit 1.  With the
+  scrubber's three sites the tree carries 22 `anchor=[_]` rows, all
+  in examples/ (`PASS-M6E-GUARD-HOLES`).
+- 2026-09-03 (M6, Stage E): the FINAL transcript reseal (pin 14).
+  dev/m5e-default-transcript.txt regenerated once by
+  dev/gen-m5e-transcript.sh over the unchanged 99-file corpus
+  (`rg -c '^### ' dev/m5e-default-transcript.txt` = 99), now 10443
+  lines and 666314 bytes (was 10430 / 665829);  the diff against the
+  Stage D seal is one hunk in the `### examples/guard-rewrap.tot`
+  block only: `data Scrub : Type 0`, three ctor lines, nine def lines
+  (quoteTok, beforeFirst, evenPieces, oddQuotes, cutSlash, cutBlock,
+  scrubCode, nextState, scrubLines), additions only;  the guard.tot
+  and guard-classes.tot blocks are absent from the diff (holes
+  changed no output byte, pin 1).  Regenerated once, byte-diffed
+  twice: once against the Stage-D seal for review, and on every
+  battery run by PASS-M5E-DEFAULT-IDENTITY thereafter.
+  `PASS-M6E-TRANSCRIPT-RESEALED` pins block count = glob count, the
+  guard.tot block and the scrubber's presence.  `PASS-M5D-TIERS` went
+  157 -> 166: the Stage E legs add nine direct FAST uses (3 + 2 + 4),
+  measured with
+  `rg -c '"\$watchdog" "\$(FAST|MED|SLOW|SUITE)"' dev/gates.sh`
+  before (157) and after (166) the edit.
+- 2026-09-03 (M6, Stage G): review-round fixes.  Two review lanes read
+  the M6 diff.  Four findings were real and are fixed here;  two are
+  user decisions and are recorded as conflicts C-G1 and C-G2 in
+  dev/M6-BUILD-LOG.md, with nothing changed for them.
+  (i) `examples/guard-rewrap.tot`: `cutSlash` is now quote aware.  A
+  `//` whose prefix holds an odd count of `"` sits inside a string
+  literal, so that line is kept whole.  Before the fix a line such as
+  `let url = "https://example.com";` was cut at the `//`, the cut
+  prefix held one `"`, and the scrubber opened a phantom string state
+  that swallowed the next line.  The guard then ALLOWED a genuine
+  rewrap pair below it: the same payload denied at exit 2 with
+  `let url = 1;` on that line and allowed at exit 0 with the string.
+  The `//` rule in the file header and in the Stage E entry above is
+  narrowed to match.  Every other recorded miss stands.
+  (ii) `PASS-M6E-REWRAP-SCRUB` gains leg (d).
+  `test/fixtures/m6g-rewrap-deny-slash.json` holds a genuine pair
+  BELOW a `//` inside a string and a plain `//` comment line, and must
+  still deny at exit 2 with the echoed `let a = h()?;`.  Legs (a) and
+  (b) assert the ALLOW shape, and the older deny control carries no
+  `//`, no `/*` and no quote, so without leg (d) a selective
+  over-scrub cannot turn this gate red.
+  (iii) `PASS-M6C-HOLE-REPORTS` counts stderr lines on all four legs,
+  not on leg (a) alone, and its four patterns are anchored to whole
+  lines.  The block claims "stderr exactly one pinned pin-3 line";
+  before this change legs (b), (c) and (d) accepted a second stderr
+  line.  Measured: a mutation that appends a second diagnostic line
+  leaves the pre-G conjunction green and turns the post-G one red.
+  (iv) `surface/elab.ml`: the fallback at the check-position `let*`
+  arm, at the var-headed application arm and at the argument fold is
+  now lazy (`unwrap_or`, the lazy sibling of the file's `or_else`),
+  and the `inst_domain` index guard bounds the low end as well
+  (`p >= 0 && p < k`).  No elaborated term changes, so the transcript
+  seal holds with no reseal.
+  `PASS-M5D-TIERS` went 166 -> 167: leg (d) adds one direct FAST use,
+  measured with
+  `rg -c '"\$watchdog" "\$(FAST|MED|SLOW|SUITE)"' dev/gates.sh`
+  before (166) and after (167) the edit.  The battery count stays at
+  370 PASS.
 
 ## 3.  Core calculus (M0 core, M2 inductives, M3 literals and effects)
 
@@ -1187,7 +1593,10 @@ The driver grammar (M5 Stage A adds `--strict-json`):
 A fail-closed installation spells its hook command
 `tot run --strict-json <guard>`;  the flag is enforced by the driver
 at the `readStdin` boundary, so the guard script itself needs no
-edit (section 2, the M5 Stage A `--strict-json` entry).
+edit (section 2, the M5 Stage A `--strict-json` entry).  Since M6
+Stage B the fail-closed spelling covers both driver shapes: an
+`IO Unit` guard's strict-json refusal also exits 2 (one stderr line,
+stdout empty), so a harness that blocks on exit 2 blocks on it.
 
 Quantities: `0` (erased: types, proofs) and `w` (runtime).  The checker
 carries a mode.  Inside types the mode is `0` and every variable is
@@ -1342,9 +1751,6 @@ The `tot` executable (`bin/`) wraps `Run` as `tot (check|run) FILE`.
     name, over an emptiness claim SPEC still records as UNPROVEN.
   - Universe polymorphism (`Eq` is currently `Type 0`-monomorphic).
     Not needed by `Acc` (Stage E probe P1).
-  - A blocking `--strict-json` posture for `IO Unit` scripts.  The
-    Stage A entry in section 2 records the exit-1 route as
-    `IO Verdict`-only fail-closed (review round 2026-09-03).
 
 ## 6.  Known debts (deliberate)
 
@@ -1354,14 +1760,23 @@ The `tot` executable (`bin/`) wraps `Run` as `tot (check|run) FILE`.
   church-encoded tests want them.
 - Apache license text not vendored yet (README notes dual intent).
 - Errors carry mostly pre-rendered strings, not structured values (the
-  M2 variants add small records).  Fine at this scale;  revisit when the
+  M2 variants add small records).  PARTIALLY PAID 2026-09-03 (M6
+  Stage C, scope-in 6): `Serror.Hole` carries the expected type as a
+  kernel `Term.t` plus its name stack (`(string list * Term.t) option`)
+  and renders it only in `to_string`;  every other surface error is
+  unchanged.  Still fine at this scale;  revisit the rest when the
   elaborator wants error recovery.
-- Pin 5's cost half is unpinned (review round 2026-09-03).  Tests pin
-  that a memo HIT returns the cached `e_val`;  no timing leg pins what
-  a re-derive would cost.  The Stage B M9 mutation re-derived at
-  6.212 s against the healthy 0.034 s (183x) and every leg stayed
-  green (FAST ceiling 10 s).  The `gate_timed` MEASURE line is the
-  manual instrument until a leg pins it.
+- Retired (M6 Stage D): pin 5's cost half is now pinned by
+  `PASS-M6D-HIT-RATIO` (64 memo HITs at most 4.0 times one HIT, by
+  ratio, never by absolute time) with `PASS-M6D-HIT-BASELINE` as its
+  byte-exact anti-vacuity anchor;  cutting the HIT branch to a miss
+  flips the ratio leg red.  History: tests pinned that a memo HIT
+  returns the cached `e_val` but no timing leg pinned what a
+  re-derive would cost;  the M5 Stage B M9 mutation re-derived
+  `M5B-BRANCHING-20` at 6.212 s against the healthy 0.034 s (183x)
+  and every leg stayed green under the FAST ceiling of 10 s
+  (dev/M5-BUILD-LOG.md:517-522).  The `gate_timed` MEASURE rows stay
+  the manual instrument for every other leg.
 - Retired (M4 fixes round 2, opus R2;  completed round 3, opus R3-2):
   the CLI file-open no longer raises, and no longer blocks, on ANY
   path.  `surface/source.ml`'s `read` classifies a path before reading
@@ -1623,24 +2038,44 @@ Known debts entering M5 (M4, carried from `dev/M4-PLAN.md`'s own
 - The `$`-mangled instance namespace (M4 Stage D) is flat, matching the
   flat global namespace.  There are no per-module instances because
   there are no modules.
-- No holes, again (a pre-M4 debt too): every proof names its type
-  arguments.  The "measure after M4" instruction is DISCHARGED here
-  (M5 Stage D, scope item 11).  `python3 dev/hole-anchors.py` (add
-  `--log <path>` for the machine line, `--count-sites` for the
-  independent recount) statically classifies every leading erased
-  `Type` anchor argument over stdlib/prelude.tot plus
-  examples/*.tot;  measured 2026-09-02:
+- Holes, the E slice only (the pre-M4 "no holes" debt, restated
+  2026-09-03, M6 Stage C): expected-type-only holes EXIST now (the
+  section 2 entry of that date).  `_` in term position elaborates
+  only from a known expected type;  argument-driven anchors (the A
+  bucket) and the proof/class families (the N bucket) still REFUSE
+  with one stderr line and exit 1, never a default.  The two
+  structural reasons the A bucket stays refused stand at their HEAD
+  locations: `infer`'s App arm consumes one argument at a time and
+  evaluates the stamped argument to instantiate the codomain
+  (lib/check.ml:960-969), and `check` has no App arm at all
+  (lib/check.ml:1208-1211), so an argument-driven slot has no
+  expected type to read before the kernel sees the argument.  The
+  Stage C refusal semantics: a hole outside the descent set reports
+  `hole: no expected type at this position`;  a leading erased slot
+  whose formal is not captured by the rigid match, or whose head is
+  fenced, reports `hole: expected <slot domain>` (the domain is a
+  universe, so the line reads `hole: expected Type 0`).  Counts from
+  `python3 dev/hole-anchors.py` (measured 2026-09-02, re-run
+  2026-09-03 in the Stage C entry probes, identical), the M5
+  baseline:
   ANCHORS total=98 expected-type-only=59 argument-driven=9
-  neither=30.  E = 59 is an UPPER bound on what an
-  expected-type-only hole pass would solve, because the classifier
-  does not run the checker.  The two structural reasons a hole pass
-  is real work stand: `infer`'s App arm consumes one argument at a
-  time and evaluates the stamped argument to instantiate the
-  codomain (lib/check.ml:770-779), and `check` has no App arm at
-  all, so argument-driven anchors need bidirectional application
-  checking that does not exist today.  Holes stay a candidate,
-  now with a number attached (`PASS-M5D-HOLE-ANCHORS`,
-  `PASS-M5D-MEASURE-LOG`).
+  neither=30;  A = 9 and N = 30 are the refused buckets.
+  Re-measured 2026-09-03 at M6 Stage E after the scrubber port and
+  the re-spell of the 19 example-file E anchors (the CURRENT line,
+  the one `PASS-M5D-MEASURE-LOG` reads through `| tail -n 1`, so it
+  must stay the LAST `expected-type-only=` spelling in this file):
+  ANCHORS total=101 expected-type-only=62 argument-driven=9 neither=30
+  (`PASS-M5D-HOLE-ANCHORS`, `PASS-M5D-MEASURE-LOG`,
+  `PASS-M6C-HOLE-RESOLVES`, `PASS-M6C-HOLE-REPORTS`,
+  `PASS-M6E-ANCHORS`, `PASS-M6E-GUARD-HOLES`).  What remains: (1) the
+  9 A anchors need an App arm in `check`;  4 of them sit in the
+  guards, the `String` and `(Option Json)` slots of the two `let*`
+  lines in guard.tot:133-134 and guard-rewrap.tot:253-254, kept
+  explicit;  (2) the 40 prelude E anchors stay spelled until the hole
+  pass has soaked on the examples (scope-out 5;
+  `PASS-M6E-GUARD-HOLES` pins zero prelude holes);  (3) the checker
+  reports one error and stops, so a file with several unresolvable
+  holes surfaces them one at a time.
 - Frozen-guard fixtures (M4 Stage C: m4c-frozen.tot and friends) must be
   maintained as the erasure story evolves.
 - Nested inductives and the `Json` cons-cell migration to
@@ -1696,7 +2131,11 @@ Known debts entering M5 (M4, carried from `dev/M4-PLAN.md`'s own
   an indexed family stamps `0`);  and the erased elimination form for
   `Acc` (coupled to the subsingleton fence).  M6 either promotes the
   prototype behind a sound side condition or deletes the flag;  no
-  stage may promote the spike to a shipped feature.
+  stage may promote the spike to a shipped feature.  DELETED by M6
+  Stage A (ruling R1, 2026-09-03):  the delete arm was taken;  the
+  flag, the `Structural_wf` constructor and the accessibility clause
+  are gone, the WF negative oracles stay flag-free (section 2 entries
+  dated 2026-09-03, item 1), and the M5 history above is untouched.
 - Retired (M5 Stage C, design pin 21, amendment A3): `--require-main`
   was ADVISORY under a fail-open exit mapping (M4 fixes round 2, opus
   R4).  A file that exists but declares no `main` was routed through
@@ -1805,8 +2244,12 @@ compensating instrument):
   the difference from the Python guard are recorded: LOUDER on a
   pre-existing rewrap tail inside a heredoc (no net-new comparison),
   QUIETER on a single-line `let x = e?; Ok(x)` tail (the line-pair
-  shape needs two lines).  The scrubber, the block-tail test and the
-  used-name test are not ported.
+  shape needs two lines).  The block-tail test and the used-name
+  test are not ported;  the scrubber was ported at M6 Stage E
+  (2026-09-03), narrow, with every miss recorded in the file header,
+  so the guard is now QUIETER than the Python one wherever the
+  scrubber drops a whole line (the line holding a closing `*/` or a
+  closing `"`).
 - The echoed command is bounded at 2000 bytes and the elision marker
   `... (elided)` is prose, not a machine-readable flag.  A consumer
   cannot tell an elided command from one that genuinely ends in that

@@ -32,13 +32,23 @@ and t =
           [bindIO A B e (fun x => body)] / [bindDiv A B e (fun x =>
           body)] application needs (no [SHole], no bounded hole pass;
           see dev/M3-BUILD-LOG.md "Stage C" for the argument), then the
-          binder name, the right-hand-side term, and the body. *)
+          binder name, the right-hand-side term, and the body.  M6
+          Stage C: either type-argument slot may now hold an [SHole],
+          which [Elab.term_at] fills from the expected type. *)
   | SAuto of Loc.t
       (** M4 Stage D: "auto", an instance-request atom.  Elaborates to
           [Term.Auto]. *)
   | SInst of Loc.t * t * t
       (** M4 Stage D: "inst C T", pure sugar for
           [Term.Ann (Term.Auto, Term.App (Quantity.Many, C, T))]. *)
+  | SHole of Loc.t
+      (** M6 Stage C (verdict pins 1-3): a term-position [_].  Lives
+          ONLY in surface syntax: [Elab] either fills it from the
+          expected type or fails with [Serror.Hole], so no kernel
+          term ever contains one and [Term.t] has no counterpart.
+          Revives the M3-C3 [SHole] that the FALLBACK SHAPE dropped;
+          [SLetStar]'s two explicit type-argument slots may now hold
+          one. *)
 
 (** M4 Stage D (D5.4): [Syntax.IDef]'s [(rec_, partial)] bool pair,
     collapsed into one sum type so the illegal [partial = true,
@@ -109,3 +119,4 @@ let loc_of (s : t) : Loc.t =
   | SLetStar (loc, _, _, _, _, _, _) -> loc
   | SAuto loc -> loc
   | SInst (loc, _, _) -> loc
+  | SHole loc -> loc

@@ -1,0 +1,11 @@
+-- M6 Stage C (pin 1): the explicit twin of m6c-hole-e.tot, every
+-- hole written out.  Byte-identical check output is
+-- PASS-M6C-HOLE-RESOLVES.
+def flagged : List String := cons String "grep" (cons String "sed" (nil String))
+def idList : (0 A : Type 0) -> List A -> List A :=
+  fun A xs => match xs with | nil => nil A | cons h t => cons A h t end
+def main : IO Verdict :=
+  let* String Verdict raw := readStdin in
+  pureIO Verdict (deny raw)
+check (cons String "x" (nil String) : List String)
+check ((fun xs => idList Nat xs) : List Nat -> List Nat)

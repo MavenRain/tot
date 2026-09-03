@@ -1,0 +1,11 @@
+data T : Type 0 := | mk : (Nat -> T) -> T
+def rec bad2 : T -> Nat := fun t => match t with | mk g => bad2 (g zero) end
+-- M6 Stage A fixture (verdict pin 9): infinitary structural
+-- recursion over a VARIABLE scrutinee, the row the M5 panel did not
+-- state (dev/M5-BUILD-LOG.md:1513-1516).  At M5 HEAD this file was
+-- ACCEPTED under --experimental-wf (probe P6: exit 0) because the
+-- prototype clause inspected the head's status, never the field's
+-- type.  Flag-free it is rejected at bad2.tot:2:1, and after the M6
+-- deletion that rejection is the only behaviour.  Gate
+-- PASS-M6A-INFINITARY-REJECTED pins it; bad2 must stay at line 2
+-- column 1.

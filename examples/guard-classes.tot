@@ -23,7 +23,7 @@ def denyStable : (cmd : String) -> (0 h : Eq String cmd "grep") ->
     cong0 String Verdict cmd "grep" (fun c => verdictOfDanger (flag c)) h
 check denyStable
 
-def flagged : List String := cons String "grep" (cons String "sed" (nil String))
+def flagged : List String := cons _ "grep" (cons _ "sed" (nil _))
 def isFlagged : String -> Bool := fun c => member String auto c flagged
 eval isFlagged "sed"
 eval isFlagged "rg"

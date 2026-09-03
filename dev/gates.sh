@@ -431,7 +431,7 @@ tot_scratch=$(mktemp -d "${TMPDIR:-/tmp}/tot-gate-d-bin.XXXXXX")
 # M5 Stage C: the M5C scratch (generated chains/classes fixtures)
 # rides the same trap; $m5c_scratch resolves at exit time, empty and
 # harmless on any exit before its own mktemp below.
-trap 'rm -rf "$tot_scratch" "$cache_scratch" "$m5c_scratch" "$m5d_scratch" "$m5e_scratch"' EXIT
+trap 'rm -rf "$tot_scratch" "$cache_scratch" "$m5c_scratch" "$m5d_scratch" "$m5e_scratch" "$m6c_scratch" "$m6d_scratch"' EXIT
 cp "$ROOT"/_build/default/bin/tot.exe "$tot_scratch/tot"
 # M3 fixes, C4' (C0, 2026-09-01): chmod ONLY the scratch copy; the
 # tracked examples/guard.tot carries its own executable bit in the
@@ -2248,6 +2248,26 @@ m5d_bin="$ROOT"/_build/default/bin/tot.exe
 # M5 Stage E raised it 116 -> 122: its three legs add six direct tier
 # uses (1 SLOW + 5 FAST), measured with the recipe above before and
 # after the edit.
+# M6 Stage A (2026-09-03) raised it 122 -> 126: the ACC-CHECKS deletion
+# removes one direct call, the WITNESS-REJECTED rewrite removes two
+# (three become one), and the seven PASS-M6A-* legs add seven FAST
+# calls, net +4, measured with the recipe above before (122) and
+# after (126) the edit.
+# M6 Stage B (2026-09-03) raised it 126 -> 134: the four PASS-M6B-*
+# legs add eight MED calls and delete none, measured with the recipe
+# above before (126) and after (134) the edit.
+# M6 Stage C (2026-09-03) raised it 134 -> 151: the five PASS-M6C-*
+# legs add seventeen calls (14 FAST, 2 MED, 1 SLOW) and delete none,
+# measured with the recipe above before (134) and after (151).
+# M6 Stage D raised it 151 -> 157: its legs add six direct tier
+# uses (2 SLOW + 1 FAST + 3 MED), measured with the recipe above
+# before and after the edit.
+# M6 Stage E (2026-09-03) raised it 157 -> 166: the five PASS-M6E-*
+# legs add nine FAST calls (3 + 2 + 4) and delete none, measured with
+# the recipe above before (157) and after (166) the edit.
+# M6 Stage G (2026-09-03) raised it 166 -> 167: leg (d) of
+# PASS-M6E-REWRAP-SCRUB adds one FAST call and deletes none, measured
+# with the recipe above before (166) and after (167) the edit.
 # Do not soften -eq to -ge: -ge would stop the delete-one-leg
 # mutation from flipping, and that mutation is why the count exists.
 # MUTATION PROOFS (plan D9): (1) restore one numeric literal; nolit
@@ -2257,7 +2277,7 @@ m5d_bin="$ROOT"/_build/default/bin/tot.exe
 rg -q '"\$watchdog" [0-9]' "$ROOT/dev/gates.sh"; m5d_nolit=$?
 m5d_tiers=$(rg -c '"\$watchdog" "\$(FAST|MED|SLOW|SUITE)"' "$ROOT/dev/gates.sh")
 m5d_bites=$(rg -c '"\$watchdog" "\$BITE_S"' "$ROOT/dev/gates.sh")
-{ [ "$m5d_nolit" -eq 1 ] && [ "$m5d_tiers" -eq 122 ] && [ "$m5d_bites" -eq 2 ] \
+{ [ "$m5d_nolit" -eq 1 ] && [ "$m5d_tiers" -eq 167 ] && [ "$m5d_bites" -eq 2 ] \
   && [ -s "$ROOT/dev/gates.sh" ]; } \
   && echo PASS-M5D-TIERS \
   || { echo "FAIL-M5D-TIERS (nolit=$m5d_nolit tiers=$m5d_tiers bites=$m5d_bites)"; exit 1; }
@@ -2368,6 +2388,562 @@ m5d_sites=$("$watchdog" "$MED" python3 "$ROOT"/dev/hole-anchors.py --count-sites
   || { printf '%s\n' "$m5d_anchors"; \
        echo "FAIL-M5D-HOLE-ANCHORS (t=$m5d_at e=$m5d_ae a=$m5d_aa n=$m5d_an sites=$m5d_sites)"; exit 1; }
 
+# ---------------------------------------------------------------------
+# M5 Stage E (SPIKE): well-founded recursion behind --experimental-wf
+# (plan E8).  Three legs, each with a mutation proof recorded in
+# dev/M5-BUILD-LOG.md.  Placement (Stage E adjudication of the D12
+# item 11 caveat, conflict note C-E3 in dev/M5-BUILD-LOG.md): the
+# Stage E legs sit BEFORE the two branching legs, so the branching
+# pair stays the file's timing-sensitive tail exactly as Stage D left
+# it; the Stage B placement of PASS-M5B-BRANCHING-20 after
+# PASS-M4FIX-INST-BRANCHING is kept as a recorded no-change.  The
+# scratch rides the Gate D EXIT trap.
+# ---------------------------------------------------------------------
+m5e_scratch=$(mktemp -d "${TMPDIR:-/tmp}/tot-gate-e.XXXXXX")
+
+# Gate E (i), PASS-M5E-DEFAULT-IDENTITY.  The driver's whole check corpus
+# is byte-identical to the transcript resealed at M6 Stage A over the
+# 85-file corpus (pin 14), and accRec still fails the shipped guard.
+"$watchdog" "$SLOW" "$ROOT"/dev/gen-m5e-transcript.sh > "$m5e_scratch"/m5e-now.txt 2>&1
+code=$?
+out2=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/test/fixtures/m5e-acc.tot 2>&1)
+code2=$?
+{ [ "$code" -eq 0 ] && [ "$code2" -eq 1 ] \
+    && diff -q "$ROOT"/dev/m5e-default-transcript.txt "$m5e_scratch"/m5e-now.txt > /dev/null \
+    && printf '%s\n' "$out2" \
+       | rg -q 'm5e-acc\.tot:5:1: recursive definition accRec failed the structural termination guard'; } \
+  && echo PASS-M5E-DEFAULT-IDENTITY \
+  || {
+    diff "$ROOT"/dev/m5e-default-transcript.txt "$m5e_scratch"/m5e-now.txt | head -40
+    printf '%s\n' "$out2"
+    echo "FAIL-M5E-DEFAULT-IDENTITY (exit=$code/$code2)"
+    exit 1
+  }
+
+# ---------------------------------------------------------------------
+# M6 Stage A (verdict pins 7-10, ruling R1): --experimental-wf and the
+# Structural_wf prototype are DELETED.  The WF negative oracles below
+# are flag-free on purpose: they are what M7's admission rule is
+# rebuilt against.  Gate E (i) keeps its M5 name and remains the
+# pin-14 transcript enforcement point over the resealed 85-file
+# corpus.  Mutation proofs in dev/M6-BUILD-LOG.md (plan A10).
+# ---------------------------------------------------------------------
+
+# Gate E (iii), PASS-M5E-WITNESS-REJECTED, REWRITTEN flag-free (M6
+# Stage A, pin 9).  The M5 leg (a) proved the flag live and leg (b)
+# probed it; both died with the flag.  What remains is amendment A4's
+# pinned negative on the shipped rule.
+out=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/test/fixtures/m5e-witness.tot 2>&1)
+code=$?
+wantw='m5e-witness.tot:2:1: recursive definition bad failed the structural termination guard'
+{ [ "$code" -eq 1 ] && printf '%s\n' "$out" | rg -q -- "$wantw"; } \
+  && echo PASS-M5E-WITNESS-REJECTED \
+  || { printf '%s\n' "$out"; echo "FAIL-M5E-WITNESS-REJECTED (exit=$code)"; exit 1; }
+
+# Gate A (i), PASS-M6A-WF-FLAG-UNKNOWN (pin 7).  The deleted spelling
+# takes the unknown-flag contract (bin/tot.ml unknown-flag arm): one
+# stderr line, exit 2, nothing on stdout.  Exact-string match, not a
+# substring: a resurrected accept-and-ignore arm would exit 1 with the
+# guard line instead, and this leg must see that as red.
+out=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  --experimental-wf "$ROOT"/test/fixtures/m5e-acc.tot 2>&1)
+code=$?
+{ [ "$code" -eq 2 ] && [ "$out" = "unknown flag: --experimental-wf" ]; } \
+  && echo PASS-M6A-WF-FLAG-UNKNOWN \
+  || { printf '%s\n' "$out"; echo "FAIL-M6A-WF-FLAG-UNKNOWN (exit=$code)"; exit 1; }
+
+# Gate A (ii), PASS-M6A-ACC-GUARD-REJECTED (pin 9).  m5e-acc.tot is
+# byte-identical to M5 and now rejects in the ONLY mode there is.
+# This is the flag-free replacement for the deleted PASS-M5E-ACC-CHECKS.
+out=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/test/fixtures/m5e-acc.tot 2>&1)
+code=$?
+wanta='m5e-acc.tot:5:1: recursive definition accRec failed the structural termination guard'
+{ [ "$code" -eq 1 ] && printf '%s\n' "$out" | rg -q -- "$wanta"; } \
+  && echo PASS-M6A-ACC-GUARD-REJECTED \
+  || { printf '%s\n' "$out"; echo "FAIL-M6A-ACC-GUARD-REJECTED (exit=$code)"; exit 1; }
+
+# Gate A (iii), PASS-M6A-INFINITARY-REJECTED (pin 9).  bad2 was
+# ACCEPTED under the M5 flag (plan A0 probe P6); after deletion its
+# rejection is the only behaviour, and this leg is what makes the
+# deletion irreversible by accident.
+out=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/test/fixtures/bad2.tot 2>&1)
+code=$?
+wantb='bad2.tot:2:1: recursive definition bad2 failed the structural termination guard'
+{ [ "$code" -eq 1 ] && printf '%s\n' "$out" | rg -q -- "$wantb"; } \
+  && echo PASS-M6A-INFINITARY-REJECTED \
+  || { printf '%s\n' "$out"; echo "FAIL-M6A-INFINITARY-REJECTED (exit=$code)"; exit 1; }
+
+# Gate A (iv), PASS-M6A-CROSSFORMAL-REJECTED (pin 9).  Rejected at M5
+# HEAD in BOTH modes (plan A0 probes P7/P8): what this leg pins is the
+# per-candidate Principal seed, not the deleted flag.  It is the
+# executable tripwire for any M7 admission rule without a provenance
+# side condition (SPEC section 2 entry, 2026-09-03).
+out=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/test/fixtures/crossformal-t.tot 2>&1)
+code=$?
+wantx='crossformal-t.tot:2:1: recursive definition bad failed the structural termination guard'
+{ [ "$code" -eq 1 ] && printf '%s\n' "$out" | rg -q -- "$wantx"; } \
+  && echo PASS-M6A-CROSSFORMAL-REJECTED \
+  || { printf '%s\n' "$out"; echo "FAIL-M6A-CROSSFORMAL-REJECTED (exit=$code)"; exit 1; }
+
+# Gate A (v), PASS-M6A-DEEP2-REJECTED (pin 9).  The depth-2 field
+# application, rejected at M5 HEAD even under the flag (probes
+# P9/P10): pins the Var-only scrutinee rule.
+out=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/test/fixtures/deep2.tot 2>&1)
+code=$?
+wantd='deep2.tot:2:1: recursive definition deep2 failed the structural termination guard'
+{ [ "$code" -eq 1 ] && printf '%s\n' "$out" | rg -q -- "$wantd"; } \
+  && echo PASS-M6A-DEEP2-REJECTED \
+  || { printf '%s\n' "$out"; echo "FAIL-M6A-DEEP2-REJECTED (exit=$code)"; exit 1; }
+
+# Gate A (vi)+(vii), the positivity-fence tripwires (pin 10).  These
+# two legs are DESIGNED to go red the day C3 lands nested inductives,
+# forcing the Frozen-emptiness and guard questions open on purpose
+# (SPEC.md:851-852).  Do not "fix" them by deleting them; re-open the
+# design instead.
+out=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/test/fixtures/nested-pos.tot 2>&1)
+code=$?
+wantp='nested-pos.tot:2:1: invalid constructor mkt2: negative or non-uniform occurrence of T2'
+{ [ "$code" -eq 1 ] && printf '%s\n' "$out" | rg -q -- "$wantp"; } \
+  && echo PASS-M6A-FENCE-COVARIANT \
+  || { printf '%s\n' "$out"; echo "FAIL-M6A-FENCE-COVARIANT (exit=$code)"; exit 1; }
+
+out=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/test/fixtures/nested-neg.tot 2>&1)
+code=$?
+wantn='nested-neg.tot:2:1: invalid constructor mkt3: negative or non-uniform occurrence of T3'
+{ [ "$code" -eq 1 ] && printf '%s\n' "$out" | rg -q -- "$wantn"; } \
+  && echo PASS-M6A-FENCE-CONTRAVARIANT \
+  || { printf '%s\n' "$out"; echo "FAIL-M6A-FENCE-CONTRAVARIANT (exit=$code)"; exit 1; }
+
+# ---- M6 Stage B (plan B8): the blocking Unit strict-json posture
+# (verdict pins 5-6, ruling R3).  Four legs.  None is gate_timed, so
+# the PASS-M5D-MEASURE-LOG literal (count 18, pinned name set) does
+# not move.  The IO Unit fixture is GENERATED into the Gate D scratch
+# dir on purpose (the m5a-envelope.tot precedent): a new
+# test/fixtures/*.tot would enter the gen-m5e-transcript.sh glob and
+# force a transcript reseal this stage does not need (pin 14).
+printf 'def main : IO Unit := let* String Unit raw := readStdin in printLine raw\n' \
+  > "$tot_scratch"/m6b-unit-echo.tot
+m6b_uerr="$tot_scratch/m6b-unit-echo.tot:stdin is not a single well-formed JSON value, and this installation runs with --strict-json"
+m6b_env='{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"strict-json: stdin is not a single well-formed JSON value"}}'
+m6b_err_f=$(mktemp "${TMPDIR:-/tmp}/tot-gate-m6b-err.XXXXXX")
+
+# PASS-M6B-UNIT-STRICT-EXIT2 (pin 5, ruling R3).  Under --strict-json
+# a malformed stdin payload on an IO Unit script exits 2 with the
+# SAME single stderr line M5 printed at exit 1 (tight ":" after the
+# argv path), and NOTHING on stdout.  The explicit -ne 1 is the
+# NEGATIVE of the migration: it states in the leg's own text that the
+# OLD exit-1 route is gone (at HEAD this run measured exit=1, plan
+# B0 P1/P11).  MUTATION PROOF: plan B9 rows M-B1, M-B2, M-B3.
+m6b_x1=$("$watchdog" "$MED" "$ROOT"/_build/default/bin/tot.exe run --strict-json \
+  "$tot_scratch"/m6b-unit-echo.tot < "$fx"/garbage.json 2>"$m6b_err_f"); m6b_x1c=$?
+m6b_x1e=$(cat "$m6b_err_f")
+{ [ "$m6b_x1c" -eq 2 ] && [ "$m6b_x1c" -ne 1 ] && [ -z "$m6b_x1" ] \
+    && [ "$m6b_x1e" = "$m6b_uerr" ]; } \
+  && echo PASS-M6B-UNIT-STRICT-EXIT2 \
+  || {
+    printf '%s\n%s\n' "$m6b_x1" "$m6b_x1e"
+    echo "FAIL-M6B-UNIT-STRICT-EXIT2 (exit=$m6b_x1c)"
+    exit 1
+  }
+
+# PASS-M6B-UNIT-STRICT-NOMAP (pin 5).  The refusal is the literal 2
+# under EVERY --serror-exit value: 0 (a fail-open install cannot
+# remap it to a silent allow), 1 (the sharp one: it distinguishes
+# the literal 2 from BOTH dead routes at once, the old literal 1 and
+# a route through the default mapping, which is also 1), and 7 (the
+# mapping value plainly not taken; at HEAD this run measured exit=1,
+# plan B0 P2).  Same stderr line, empty stdout, all three.
+# MUTATION PROOF: plan B9 row M-B2.
+m6b_n0=$("$watchdog" "$MED" "$ROOT"/_build/default/bin/tot.exe run --serror-exit 0 \
+  --strict-json "$tot_scratch"/m6b-unit-echo.tot < "$fx"/garbage.json \
+  2>"$m6b_err_f"); m6b_n0c=$?
+m6b_n0e=$(cat "$m6b_err_f")
+m6b_n1=$("$watchdog" "$MED" "$ROOT"/_build/default/bin/tot.exe run --serror-exit 1 \
+  --strict-json "$tot_scratch"/m6b-unit-echo.tot < "$fx"/garbage.json \
+  2>"$m6b_err_f"); m6b_n1c=$?
+m6b_n1e=$(cat "$m6b_err_f")
+m6b_n7=$("$watchdog" "$MED" "$ROOT"/_build/default/bin/tot.exe run --serror-exit 7 \
+  --strict-json "$tot_scratch"/m6b-unit-echo.tot < "$fx"/garbage.json \
+  2>"$m6b_err_f"); m6b_n7c=$?
+m6b_n7e=$(cat "$m6b_err_f")
+{ [ "$m6b_n0c" -eq 2 ] && [ "$m6b_n1c" -eq 2 ] && [ "$m6b_n7c" -eq 2 ] \
+    && [ -z "$m6b_n0" ] && [ -z "$m6b_n1" ] && [ -z "$m6b_n7" ] \
+    && [ "$m6b_n0e" = "$m6b_uerr" ] && [ "$m6b_n1e" = "$m6b_uerr" ] \
+    && [ "$m6b_n7e" = "$m6b_uerr" ]; } \
+  && echo PASS-M6B-UNIT-STRICT-NOMAP \
+  || {
+    printf '%s\n%s\n%s\n' "$m6b_n0e" "$m6b_n1e" "$m6b_n7e"
+    echo "FAIL-M6B-UNIT-STRICT-NOMAP (exit=$m6b_n0c/$m6b_n1c/$m6b_n7c)"
+    exit 1
+  }
+
+# PASS-M6B-VERDICT-STRICT-IDENTITY (pin 6).  The IO Verdict half of
+# the strict posture does not move: deny envelope on stdout, nothing
+# on stderr, exit 2, and --serror-exit 7 cannot touch it (the
+# ok-path literal, surface/run.ml Rejected arm).  Byte-identical to
+# the HEAD before-picture (plan B0 P6/P7).  MUTATION PROOF: plan B9
+# row M-B5.
+m6b_v1=$("$watchdog" "$MED" "$ROOT"/_build/default/bin/tot.exe run --strict-json \
+  "$guard" < "$fx"/garbage.json 2>"$m6b_err_f"); m6b_v1c=$?
+m6b_v1e=$(cat "$m6b_err_f")
+m6b_v2=$("$watchdog" "$MED" "$ROOT"/_build/default/bin/tot.exe run --serror-exit 7 \
+  --strict-json "$guard" < "$fx"/garbage.json); m6b_v2c=$?
+{ [ "$m6b_v1c" -eq 2 ] && [ "$m6b_v1" = "$m6b_env" ] && [ -z "$m6b_v1e" ] \
+    && [ "$m6b_v2c" -eq 2 ] && [ "$m6b_v2" = "$m6b_env" ]; } \
+  && echo PASS-M6B-VERDICT-STRICT-IDENTITY \
+  || {
+    printf '%s\n%s\n' "$m6b_v1" "$m6b_v2"
+    echo "FAIL-M6B-VERDICT-STRICT-IDENTITY (exit=$m6b_v1c/$m6b_v2c)"
+    exit 1
+  }
+
+# PASS-M6B-OPEN-IDENTITY (pin 6).  WITHOUT the flag both shapes keep
+# the fail-open posture byte-identical to HEAD: the Unit script
+# echoes the garbage and exits 0 (the printLine echo PRECEDES the
+# per-item def line, and the payload's own trailing newline yields
+# the interior blank line: plan B0 P4/P10 measured these exact
+# bytes), and the Verdict guard allows at exit 0 with empty stdout
+# (plan B0 P8).  This is the leg that keeps "default off" honest for
+# the UNIT shape, which no M5 leg covered (plan B0 P15).
+# MUTATION PROOF: plan B9 row M-B4.
+m6b_owant=$'not json at all\n\ndef main : (IO Unit)'
+m6b_o1=$("$watchdog" "$MED" "$ROOT"/_build/default/bin/tot.exe run \
+  "$tot_scratch"/m6b-unit-echo.tot < "$fx"/garbage.json 2>"$m6b_err_f"); m6b_o1c=$?
+m6b_o1e=$(cat "$m6b_err_f")
+m6b_o2=$("$watchdog" "$MED" "$ROOT"/_build/default/bin/tot.exe run \
+  "$guard" < "$fx"/garbage.json); m6b_o2c=$?
+{ [ "$m6b_o1c" -eq 0 ] && [ "$m6b_o1" = "$m6b_owant" ] && [ -z "$m6b_o1e" ] \
+    && [ "$m6b_o2c" -eq 0 ] && [ -z "$m6b_o2" ]; } \
+  && echo PASS-M6B-OPEN-IDENTITY \
+  || {
+    printf '%s\n%s\n' "$m6b_o1" "$m6b_o2"
+    echo "FAIL-M6B-OPEN-IDENTITY (exit=$m6b_o1c/$m6b_o2c)"
+    exit 1
+  }
+rm -f "$m6b_err_f"
+# ---- end of the M6 Stage B section
+
+# ---------------------------------------------------------------------
+# M6 Stage C: holes core (verdict pins 1-4), underscore reservation
+# (ruling R2).  Five markers.  All fixtures committed under
+# test/fixtures/, so the transcript corpus grew 85 -> 96 in this
+# stage's own commit (pin 14) and Gate C (v) leg (a) holds the reseal.
+# ---------------------------------------------------------------------
+m6c_scratch=$(mktemp -d "${TMPDIR:-/tmp}/tot-gate-m6c.XXXXXX")
+
+# Gate C (i), PASS-M6C-HOLE-RESOLVES.  The conservativity oracle
+# (pin 1): the holed fixture and its explicit twin check at exit 0
+# with byte-identical output.  The sentinel rg kills the both-empty
+# vacuous pass.  MUT-C3 and MUT-C4 must flip this leg.
+outh=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/test/fixtures/m6c-hole-e.tot 2>&1)
+codeh=$?
+oute=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/test/fixtures/m6c-hole-e-explicit.tot 2>&1)
+codee=$?
+{ [ "$codeh" -eq 0 ] && [ "$codee" -eq 0 ] && [ "$outh" = "$oute" ] \
+    && printf '%s\n' "$outh" | rg -q 'def flagged : \(List String\)'; } \
+  && echo PASS-M6C-HOLE-RESOLVES \
+  || {
+    printf '%s\n---\n%s\n' "$outh" "$oute"
+    echo "FAIL-M6C-HOLE-RESOLVES (exit=$codeh/$codee)"
+    exit 1
+  }
+
+# Gate C (ii), PASS-M6C-HOLE-REPORTS.  One A-shaped and three
+# N-shaped refusals, each exit 1, stdout EMPTY, stderr exactly one
+# pinned pin-3 line.  MUT-C2 flips legs (c)/(d); MUT-C3 flips (a).
+outa=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/test/fixtures/m6c-hole-a.tot 2> "$m6c_scratch"/a.err)
+codea=$?
+outb=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/test/fixtures/m6c-hole-n-infer.tot 2> "$m6c_scratch"/b.err)
+codeb=$?
+outc=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/test/fixtures/m6c-hole-n-proof.tot 2> "$m6c_scratch"/c.err)
+codec=$?
+outd=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/test/fixtures/m6c-hole-n-class.tot 2> "$m6c_scratch"/d.err)
+coded=$?
+{ [ "$codea" -eq 1 ] && [ "$codeb" -eq 1 ] && [ "$codec" -eq 1 ] && [ "$coded" -eq 1 ] \
+    && [ -z "$outa" ] && [ -z "$outb" ] && [ -z "$outc" ] && [ -z "$outd" ] \
+    && [ "$(wc -l < "$m6c_scratch"/a.err)" -eq 1 ] \
+    && [ "$(wc -l < "$m6c_scratch"/b.err)" -eq 1 ] \
+    && [ "$(wc -l < "$m6c_scratch"/c.err)" -eq 1 ] \
+    && [ "$(wc -l < "$m6c_scratch"/d.err)" -eq 1 ] \
+    && rg -q '^\S*/m6c-hole-a\.tot:2:8: hole: expected Type 0$' "$m6c_scratch"/a.err \
+    && rg -q '^\S*/m6c-hole-n-infer\.tot:1:6: hole: no expected type at this position$' "$m6c_scratch"/b.err \
+    && rg -q '^\S*/m6c-hole-n-proof\.tot:1:38: hole: expected Type 0$' "$m6c_scratch"/c.err \
+    && rg -q '^\S*/m6c-hole-n-class\.tot:1:51: hole: expected Type 0$' "$m6c_scratch"/d.err; } \
+  && echo PASS-M6C-HOLE-REPORTS \
+  || {
+    cat "$m6c_scratch"/a.err "$m6c_scratch"/b.err "$m6c_scratch"/c.err "$m6c_scratch"/d.err
+    echo "FAIL-M6C-HOLE-REPORTS (exit=$codea/$codeb/$codec/$coded)"
+    exit 1
+  }
+
+# Gate C (iii), PASS-M6C-HOLE-NEVER-RUNS.  A holed file never
+# reaches eval: run refuses BEFORE main, stdout stays empty, and the
+# serror mapping moves only the exit code, never the effects.
+outr=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe run \
+  "$ROOT"/test/fixtures/m6c-hole-run.tot 2> "$m6c_scratch"/r.err)
+coder=$?
+outs=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe run \
+  --serror-exit 0 "$ROOT"/test/fixtures/m6c-hole-run.tot 2> "$m6c_scratch"/s.err)
+codes=$?
+{ [ "$coder" -eq 1 ] && [ "$codes" -eq 0 ] \
+    && [ -z "$outr" ] && [ -z "$outs" ] \
+    && rg -q 'm6c-hole-run\.tot:1:28: hole: expected Type 0' "$m6c_scratch"/r.err \
+    && rg -q 'm6c-hole-run\.tot:1:28: hole: expected Type 0' "$m6c_scratch"/s.err \
+    && { rg -q 'SIDE-EFFECT' "$m6c_scratch"/r.err; [ $? -eq 1 ]; }; } \
+  && echo PASS-M6C-HOLE-NEVER-RUNS \
+  || {
+    cat "$m6c_scratch"/r.err "$m6c_scratch"/s.err
+    echo "FAIL-M6C-HOLE-NEVER-RUNS (exit=$coder/$codes)"
+    exit 1
+  }
+
+# Gate C (iv), PASS-M6C-UNDERSCORE-RESERVED.  The three pin-2
+# fixtures fail with their pinned lines (legs a-c), and the binder
+# positions stay green with the exact four-line output (leg d).
+# MUT-C1 flips leg (a); MUT-C5 and MUT-C6 flip leg (d).
+outud=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/test/fixtures/m6c-underscore-def.tot 2> "$m6c_scratch"/ud.err)
+codeud=$?
+outul=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/test/fixtures/m6c-underscore-lam.tot 2> "$m6c_scratch"/ul.err)
+codeul=$?
+outum=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/test/fixtures/m6c-underscore-match.tot 2> "$m6c_scratch"/um.err)
+codeum=$?
+outub=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/test/fixtures/m6c-underscore-binders.tot 2>&1)
+codeub=$?
+wantub=$'def k : (w _ : Nat) -> Nat\ndef two2 : (w _ : (List Nat)) -> Nat\ndef _foo : Nat\ndef useIt : Nat'
+{ [ "$codeud" -eq 1 ] && [ "$codeul" -eq 1 ] && [ "$codeum" -eq 1 ] && [ "$codeub" -eq 0 ] \
+    && [ -z "$outud" ] && [ -z "$outul" ] && [ -z "$outum" ] \
+    && rg -q "m6c-underscore-def\.tot:1:5: parse error: expected 'NAME : TYPE := TERM' after 'def', found '_'" "$m6c_scratch"/ud.err \
+    && rg -q 'm6c-underscore-lam\.tot:1:32: hole: expected Nat' "$m6c_scratch"/ul.err \
+    && rg -q 'm6c-underscore-match\.tot:1:72: hole: expected Nat' "$m6c_scratch"/um.err \
+    && [ "$outub" = "$wantub" ]; } \
+  && echo PASS-M6C-UNDERSCORE-RESERVED \
+  || {
+    cat "$m6c_scratch"/ud.err "$m6c_scratch"/ul.err "$m6c_scratch"/um.err
+    printf '%s\n' "$outub"
+    echo "FAIL-M6C-UNDERSCORE-RESERVED (exit=$codeud/$codeul/$codeum/$codeub)"
+    exit 1
+  }
+
+# Gate C (v), PASS-M6C-DEFAULT-IDENTITY.  Two legs.  Leg (a): the
+# whole 96-file corpus is byte-identical to the transcript resealed
+# in this stage's commit; the reseal diff was reviewed
+# additions-only (pin 14).  Leg (b): a COLD bootstrap under a fresh
+# private cache re-lexes and re-checks the prelude through the
+# reserved lexer and agrees byte for byte with the warm run; this is
+# the stdlib half of the corpus-zero-break proof, which the
+# transcript (examples + fixtures only) cannot see.  Probed green at
+# HEAD in the plan's C0.
+"$watchdog" "$SLOW" "$ROOT"/dev/gen-m5e-transcript.sh > "$m6c_scratch"/now.txt 2>&1
+codet=$?
+outw=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/examples/guard.tot 2>&1)
+codew=$?
+outcold=$(TOT_CACHE_DIR="$m6c_scratch"/cold "$watchdog" "$MED" \
+  "$ROOT"/_build/default/bin/tot.exe check "$ROOT"/examples/guard.tot 2>&1)
+codecold=$?
+outw2=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/examples/guard-classes.tot 2>&1)
+codew2=$?
+outcold2=$(TOT_CACHE_DIR="$m6c_scratch"/cold2 "$watchdog" "$MED" \
+  "$ROOT"/_build/default/bin/tot.exe check "$ROOT"/examples/guard-classes.tot 2>&1)
+codecold2=$?
+{ [ "$codet" -eq 0 ] \
+    && diff -q "$ROOT"/dev/m5e-default-transcript.txt "$m6c_scratch"/now.txt > /dev/null \
+    && [ "$codew" -eq 0 ] && [ "$codecold" -eq 0 ] && [ "$outw" = "$outcold" ] \
+    && [ "$codew2" -eq 0 ] && [ "$codecold2" -eq 0 ] && [ "$outw2" = "$outcold2" ]; } \
+  && echo PASS-M6C-DEFAULT-IDENTITY \
+  || {
+    diff "$ROOT"/dev/m5e-default-transcript.txt "$m6c_scratch"/now.txt | head -40
+    echo "FAIL-M6C-DEFAULT-IDENTITY (exit=$codet/$codew/$codecold/$codew2/$codecold2)"
+    exit 1
+  }
+
+# ---------------------------------------------------------------------
+# M6 Stage D: the two cost legs (verdict pins 11-13, ruling R4).
+# Five legs, no binary change. m6d_scratch rides the one EXIT trap
+# at the top of the file (line 434 lists it).
+# ---------------------------------------------------------------------
+m6d_scratch=$(mktemp -d "${TMPDIR:-/tmp}/tot-gate-m6d.XXXXXX")
+mkdir -p "$m6d_scratch/warm" "$m6d_scratch/cold" "$m6d_scratch/cb1" "$m6d_scratch/cb2"
+: > "$m6d_scratch/ratio.log"
+# One BARE timed run (conflict note D0-2: the watchdog spawn costs
+# about 4 ms, measured, which is 80 percent of the healthy signal;
+# both fixtures are proven terminating under a WRAPPED run in
+# PASS-M6D-HIT-RATIO before any bare run happens, and check is
+# deterministic). Appends one RATIO row to the leg-local log.
+m6d_time() {
+  local m6d_t0=$SECONDS
+  env TOT_CACHE_DIR="$m6d_scratch/warm" "$ROOT"/_build/default/bin/tot.exe \
+    check "$2" > /dev/null 2>&1
+  local m6d_c=$?
+  printf 'RATIO %s elapsed=%.3f exit=%d\n' "$1" "$((SECONDS - m6d_t0))" "$m6d_c" \
+    >> "$m6d_scratch/ratio.log"
+}
+
+# PASS-M6D-HIT-BASELINE (pin 11).  The one-resolution fixture checks
+# at exit 0 with the EXACT two-line stdout probed on 2026-09-03. A
+# checker that stops resolving `member String auto` exits 1 (the
+# unresolved-instance error), and a checker that prints anything
+# else breaks the byte pin, so the ratio leg below never runs
+# against a fixture that is not doing the work. This wrapped run
+# also warms the block's private cache dir.
+m6d_base=$(gate_timed "$FAST" M6D-HIT-BASELINE env \
+  TOT_CACHE_DIR="$m6d_scratch/warm" "$ROOT"/_build/default/bin/tot.exe \
+  check "$ROOT"/test/fixtures/m6d-hit-one.tot); m6d_bc=$?
+m6d_wantbase=$'def flagged : (List String)\ndef u1 : Bool'
+{ [ "$m6d_bc" -eq 0 ] && [ "$m6d_base" = "$m6d_wantbase" ]; } \
+  && echo PASS-M6D-HIT-BASELINE \
+  || { printf '%s\n' "$m6d_base"; echo "FAIL-M6D-HIT-BASELINE (exit=$m6d_bc)"; exit 1; }
+
+# PASS-M6D-HIT-RATIO (pin 11; ruling R4: threshold 4.0). Protocol:
+# two WRAPPED termination proofs, then 9 bare timed runs per
+# fixture (conflict note D0-2), medians compared multiplicatively
+# so no division can blow up. Honest constants, both measured
+# median-of-9: judge 2026-09-03 healthy 30.4 ms vs 39.0 ms = 1.28;
+# this machine 2026-09-03 healthy 0.005 s vs 0.007 s = 1.40; the
+# attack's probe-bounded mutated ratio is near 8. 4.0 sits above
+# measured noise and below the measured failure. The floor
+# m6d_one > 0 refuses a timer that cannot resolve the signal.
+# The two MEASURE rows below are DERIVED medians: their exit=0 is
+# asserted first over all 18 underlying runs (m6d_ok), then
+# written literally.
+m6d_w1=$("$watchdog" "$SLOW" env TOT_CACHE_DIR="$m6d_scratch/warm" \
+  "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/test/fixtures/m6d-hit-one.tot 2>&1); m6d_wc1=$?
+m6d_w2=$("$watchdog" "$SLOW" env TOT_CACHE_DIR="$m6d_scratch/warm" \
+  "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/test/fixtures/m6d-hit-many.tot 2>&1); m6d_wc2=$?
+{ [ "$m6d_wc1" -eq 0 ] && [ "$m6d_wc2" -eq 0 ]; } \
+  || { printf '%s\n%s\n' "$m6d_w1" "$m6d_w2"; \
+       echo "FAIL-M6D-HIT-RATIO (warmup exit=$m6d_wc1/$m6d_wc2)"; exit 1; }
+m6d_time ONE "$ROOT"/test/fixtures/m6d-hit-one.tot
+m6d_time ONE "$ROOT"/test/fixtures/m6d-hit-one.tot
+m6d_time ONE "$ROOT"/test/fixtures/m6d-hit-one.tot
+m6d_time ONE "$ROOT"/test/fixtures/m6d-hit-one.tot
+m6d_time ONE "$ROOT"/test/fixtures/m6d-hit-one.tot
+m6d_time ONE "$ROOT"/test/fixtures/m6d-hit-one.tot
+m6d_time ONE "$ROOT"/test/fixtures/m6d-hit-one.tot
+m6d_time ONE "$ROOT"/test/fixtures/m6d-hit-one.tot
+m6d_time ONE "$ROOT"/test/fixtures/m6d-hit-one.tot
+m6d_time MANY "$ROOT"/test/fixtures/m6d-hit-many.tot
+m6d_time MANY "$ROOT"/test/fixtures/m6d-hit-many.tot
+m6d_time MANY "$ROOT"/test/fixtures/m6d-hit-many.tot
+m6d_time MANY "$ROOT"/test/fixtures/m6d-hit-many.tot
+m6d_time MANY "$ROOT"/test/fixtures/m6d-hit-many.tot
+m6d_time MANY "$ROOT"/test/fixtures/m6d-hit-many.tot
+m6d_time MANY "$ROOT"/test/fixtures/m6d-hit-many.tot
+m6d_time MANY "$ROOT"/test/fixtures/m6d-hit-many.tot
+m6d_time MANY "$ROOT"/test/fixtures/m6d-hit-many.tot
+m6d_one=$(rg '^RATIO ONE ' "$m6d_scratch/ratio.log" \
+  | rg -o 'elapsed=[0-9]+\.[0-9]{3}' | rg -o '[0-9]+\.[0-9]{3}' \
+  | sort -n | head -n 5 | tail -n 1)
+m6d_many=$(rg '^RATIO MANY ' "$m6d_scratch/ratio.log" \
+  | rg -o 'elapsed=[0-9]+\.[0-9]{3}' | rg -o '[0-9]+\.[0-9]{3}' \
+  | sort -n | head -n 5 | tail -n 1)
+m6d_ok=$(rg -c '^RATIO (ONE|MANY) elapsed=[0-9]+\.[0-9]{3} exit=0$' "$m6d_scratch/ratio.log")
+{ [ "$m6d_ok" -eq 18 ] && [ "$(( m6d_one > 0 ))" -eq 1 ] \
+    && [ "$(( m6d_many <= 4.0 * m6d_one ))" -eq 1 ]; } \
+  && { printf 'MEASURE M6D-HIT-ONE tier=%s elapsed=%.3f exit=0\n' "$SLOW" "$m6d_one" >> "$GATE_LOG"; \
+       printf 'MEASURE M6D-HIT-MANY tier=%s elapsed=%.3f exit=0\n' "$SLOW" "$m6d_many" >> "$GATE_LOG"; \
+       echo PASS-M6D-HIT-RATIO; } \
+  || { cat "$m6d_scratch/ratio.log"; \
+       echo "FAIL-M6D-HIT-RATIO (one=$m6d_one many=$m6d_many ok=$m6d_ok)"; exit 1; }
+
+# PASS-M6D-COLD-WINDOW (pin 12).  (pre) The scratch cache dir holds
+# ZERO prelude-*.bin entries before the run, so a reused dir (a
+# warm leg wearing a cold name) fails here, not silently. (a) The
+# cold run bootstraps the prelude from source, exits 0, and its
+# MEASURE row records the cold window; the row is a measurement,
+# never a ceiling ("A tier is a HANG ceiling, not a performance
+# budget", the line this file pins at its top). (b) The warm rerun
+# in the SAME dir loads the store and must produce byte-identical
+# output. Probed green at HEAD on 2026-09-03: cold 0.017 s, warm
+# 0.006 s, identical bytes, empty stderr both sides (D0-4).
+m6d_pre_a=( "$m6d_scratch/cold"/prelude-*.bin(N) )
+m6d_pre=${#m6d_pre_a}
+m6d_coldout=$(gate_timed "$SLOW" M6D-COLD-WINDOW env \
+  TOT_CACHE_DIR="$m6d_scratch/cold" "$ROOT"/_build/default/bin/tot.exe \
+  check "$ROOT"/test/fixtures/m6d-hit-one.tot); m6d_cc=$?
+m6d_warmout=$("$watchdog" "$FAST" env TOT_CACHE_DIR="$m6d_scratch/cold" \
+  "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/test/fixtures/m6d-hit-one.tot 2>&1); m6d_wc=$?
+{ [ "$m6d_pre" -eq 0 ] && [ "$m6d_cc" -eq 0 ] && [ "$m6d_wc" -eq 0 ] \
+    && [ -n "$m6d_coldout" ] && [ "$m6d_coldout" = "$m6d_warmout" ]; } \
+  && echo PASS-M6D-COLD-WINDOW \
+  || { printf '%s\n%s\n' "$m6d_coldout" "$m6d_warmout"; \
+       echo "FAIL-M6D-COLD-WINDOW (pre=$m6d_pre exit=$m6d_cc/$m6d_wc)"; exit 1; }
+
+# PASS-M6D-COLD-STORE (pin 12, the entry-count graft). After the
+# WINDOW pair the scratch store holds EXACTLY ONE prelude-*.bin
+# (surface/cache.ml:335 names the entries). Zero means the save
+# path died and the "warm" identity above compared two cold runs;
+# more than one means the key wobbled between two invocations of
+# the same binary over the same prelude. The exeid-*.txt stat-memo
+# sidecar also lives in this dir (probed 2026-09-03) and is NOT
+# counted; the pattern is prelude-*.bin on purpose.
+m6d_store_a=( "$m6d_scratch/cold"/prelude-*.bin(N) )
+m6d_store=${#m6d_store_a}
+[ "$m6d_store" -eq 1 ] \
+  && echo PASS-M6D-COLD-STORE \
+  || { ls -l "$m6d_scratch/cold"; \
+       echo "FAIL-M6D-COLD-STORE (store=$m6d_store)"; exit 1; }
+
+# PASS-M6D-COLD-OUTSIDE-BUDGET (pin 12).  The deadline is captured
+# AFTER cached_state_of_src returns (bin/tot.ml:165-166), so a cold
+# bootstrap is outside the budget by construction.
+# (a) cold + trivial + 5 ms: exit 0, empty stderr. Kept from pin
+#     12; the hoist mutation CANNOT flip this run (C-C6, 5 of 5:
+#     under 1024 polls the clock is never read), which is exactly
+#     why (b) exists.
+# (b) cold + m6d-bigcheck + 5 ms: exit 0, empty stderr. Healthy
+#     bracket probed 2026-09-03: the file fires at budget 1 and
+#     passes at budget 5 warm AND cold. Under the hoist mutation
+#     the deadline predates the bootstrap, the cold window (5 to
+#     15 ms wall probed, 2026-09-03) spends the 5 ms budget before
+#     the target's first clock read, and the read at poll 1024
+#     fires: exit 3, `m6d-bigcheck.tot: check budget exhausted
+#     (5 ms)`. FLAKE CONTROL: run (b) 20 times before committing
+#     this marker and record 20 of 20 exit 0 (the M5C leg-(b)
+#     precedent).
+# (c) warm + m6d-bigcheck + 1 ms: exit 3, EMPTY stdout, stderr
+#     exactly the exit-3 line naming 1 ms. This pins the target's
+#     >1024-poll, >1 ms-CPU property, so (b)'s mutation hook stays
+#     fireable; a shrunken target fails HERE first.
+m6d_ba=$("$watchdog" "$MED" env TOT_CACHE_DIR="$m6d_scratch/cb1" \
+  "$ROOT"/_build/default/bin/tot.exe check --check-budget-ms 5 \
+  "$ROOT"/test/fixtures/m6d-hit-one.tot 2> "$m6d_scratch/ba.err"); m6d_ca=$?
+m6d_bb=$("$watchdog" "$MED" env TOT_CACHE_DIR="$m6d_scratch/cb2" \
+  "$ROOT"/_build/default/bin/tot.exe check --check-budget-ms 5 \
+  "$ROOT"/test/fixtures/m6d-bigcheck.tot 2> "$m6d_scratch/bb.err"); m6d_cb=$?
+m6d_bcout=$("$watchdog" "$MED" env TOT_CACHE_DIR="$m6d_scratch/warm" \
+  "$ROOT"/_build/default/bin/tot.exe check --check-budget-ms 1 \
+  "$ROOT"/test/fixtures/m6d-bigcheck.tot 2> "$m6d_scratch/bc.err"); m6d_cc3=$?
+{ [ "$m6d_ca" -eq 0 ] && [ ! -s "$m6d_scratch/ba.err" ] \
+    && [ "$m6d_cb" -eq 0 ] && [ ! -s "$m6d_scratch/bb.err" ] \
+    && [ "$m6d_cc3" -eq 3 ] && [ -z "$m6d_bcout" ] \
+    && rg -q 'm6d-bigcheck\.tot: check budget exhausted \(1 ms\)$' "$m6d_scratch/bc.err"; } \
+  && echo PASS-M6D-COLD-OUTSIDE-BUDGET \
+  || { cat "$m6d_scratch/ba.err" "$m6d_scratch/bb.err" "$m6d_scratch/bc.err"; \
+       echo "FAIL-M6D-COLD-OUTSIDE-BUDGET (exit=$m6d_ca/$m6d_cb/$m6d_cc3)"; exit 1; }
+
 # PASS-M5D-MEASURE-LOG (verdict item 6; plan D9).  Four assertions
 # against $GATE_LOG, run after every UPSTREAM perf leg: the schema'd
 # MEASURE line count equals 18; the LC_ALL=C-sorted name set equals
@@ -2387,13 +2963,24 @@ m5d_sites=$("$watchdog" "$MED" python3 "$ROOT"/dev/hole-anchors.py --count-sites
 # name.  (2) move SPEC's expected-type-only by one; logE and specE
 # differ.  (3) print elapsed=%d instead of %.3f; the schema count
 # goes 0.
+# M6 Stage D (pin 13): count 18 -> 22 and the gate moved below the
+# M6D legs so it still runs after every wrapped leg it counts; the
+# two branching legs stay the file's tail. The four new rows:
+# M6D-HIT-BASELINE and M6D-COLD-WINDOW from gate_timed, plus
+# M6D-HIT-ONE and M6D-HIT-MANY, DERIVED median rows the ratio leg
+# writes only after asserting all 18 underlying exits are 0. The
+# count stays a literal; never re-derive it from call sites.
 m5d_lines=$(rg -c '^MEASURE [A-Za-z0-9-]+ tier=[0-9]+ elapsed=[0-9]+\.[0-9]{3} exit=[0-9]+$' "$GATE_LOG")
 m5d_okexit=$(rg -c '^MEASURE [A-Za-z0-9-]+ tier=[0-9]+ elapsed=[0-9]+\.[0-9]{3} exit=0$' "$GATE_LOG")
 m5d_names=$(rg -o '^MEASURE [A-Za-z0-9-]+' "$GATE_LOG" | rg -o '[A-Za-z0-9-]+$' | LC_ALL=C sort | tr '\n' ' ')
-m5d_wantnames='M4FIX-INST-BINDERS M4FIX-INST-CHAINS M4FIX-INST-CLASSES M4FIX-INST-MEMO-KEY M4FIX-INST-SMALL-REACH M4FIX-INST-SPEC16 M4FIX-INST-TWOCLASS M4FIX-INST-WIDE M5B-FUEL-REACHABLE-LEAF M5B-FUEL-REACHABLE-UNDER M5B-RUNTIME-IDENTITY-m4fix-inst-memo-key M5B-RUNTIME-IDENTITY-m5b-inst-branching-20 M5B-RUNTIME-IDENTITY-m5b-inst-chains-8-40 M5B-RUNTIME-IDENTITY-m5b-inst-zero-dict M5C-CLASSES-61 M5C-LEAF-MARGIN SUITE-KERNEL SUITE-SURFACE '
+m5d_wantnames='M4FIX-INST-BINDERS M4FIX-INST-CHAINS M4FIX-INST-CLASSES M4FIX-INST-MEMO-KEY M4FIX-INST-SMALL-REACH M4FIX-INST-SPEC16 M4FIX-INST-TWOCLASS M4FIX-INST-WIDE M5B-FUEL-REACHABLE-LEAF M5B-FUEL-REACHABLE-UNDER M5B-RUNTIME-IDENTITY-m4fix-inst-memo-key M5B-RUNTIME-IDENTITY-m5b-inst-branching-20 M5B-RUNTIME-IDENTITY-m5b-inst-chains-8-40 M5B-RUNTIME-IDENTITY-m5b-inst-zero-dict M5C-CLASSES-61 M5C-LEAF-MARGIN M6D-COLD-WINDOW M6D-HIT-BASELINE M6D-HIT-MANY M6D-HIT-ONE SUITE-KERNEL SUITE-SURFACE '
 m5d_logE=$(rg -o 'expected-type-only=[0-9]+' "$GATE_LOG")
-m5d_specE=$(rg -o 'expected-type-only=[0-9]+' "$ROOT/SPEC.md")
-{ [ "$m5d_lines" -eq 18 ] && [ "$m5d_okexit" -eq 18 ] \
+# M6 Stage E (2026-09-03, plan E4): SPEC.md now spells the literal
+# more than once (the M5 baseline and the current record);  the
+# NEWEST record is the textually LAST one, so `| tail -n 1` reads it.
+# Stage C's one-spelling rule (C-C5) is retired by this splice.
+m5d_specE=$(rg -o 'expected-type-only=[0-9]+' "$ROOT/SPEC.md" | tail -n 1)
+{ [ "$m5d_lines" -eq 22 ] && [ "$m5d_okexit" -eq 22 ] \
   && [ "$m5d_names" = "$m5d_wantnames" ] \
   && [ -n "$m5d_logE" ] && [ "$m5d_logE" = "$m5d_specE" ]; } \
   && echo PASS-M5D-MEASURE-LOG \
@@ -2401,74 +2988,122 @@ m5d_specE=$(rg -o 'expected-type-only=[0-9]+' "$ROOT/SPEC.md")
        echo "FAIL-M5D-MEASURE-LOG (lines=$m5d_lines ok=$m5d_okexit names=[$m5d_names] logE=$m5d_logE specE=$m5d_specE)"; exit 1; }
 
 # ---------------------------------------------------------------------
-# M5 Stage E (SPIKE): well-founded recursion behind --experimental-wf
-# (plan E8).  Three legs, each with a mutation proof recorded in
-# dev/M5-BUILD-LOG.md.  Placement (Stage E adjudication of the D12
-# item 11 caveat, conflict note C-E3 in dev/M5-BUILD-LOG.md): the
-# Stage E legs sit BEFORE the two branching legs, so the branching
-# pair stays the file's timing-sensitive tail exactly as Stage D left
-# it; the Stage B placement of PASS-M5B-BRANCHING-20 after
-# PASS-M4FIX-INST-BRANCHING is kept as a recorded no-change.  The
-# scratch rides the Gate D EXIT trap.
+# M6 Stage E: corpus growth and reseal (M6 plan, Stage E section E7).
+# Five legs, each with a mutation proof in dev/M6-BUILD-LOG.md.
+# Placement: after the M5E block and the relocated PASS-M5D-MEASURE-LOG
+# block (Stage D's tail move), before the ctxcat id 5 comment and the
+# two branching legs, which stay the file's tail.  No new scratch, no
+# gate_timed: these legs reuse $m5d_bin, $m5d_scratch/hole-sites.txt
+# and $GATE_LOG from Gate D, and the EXIT trap at the top of the file
+# already owns the cleanup.
 # ---------------------------------------------------------------------
-m5e_scratch=$(mktemp -d "${TMPDIR:-/tmp}/tot-gate-e.XXXXXX")
 
-# Gate E (i), PASS-M5E-DEFAULT-IDENTITY. Without the flag the driver's
-# whole check corpus is byte-identical to the transcript committed at
-# Stage D exit, and accRec still fails the shipped guard.
-"$watchdog" "$SLOW" "$ROOT"/dev/gen-m5e-transcript.sh > "$m5e_scratch"/m5e-now.txt 2>&1
-code=$?
-out2=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
-  "$ROOT"/test/fixtures/m5e-acc.tot 2>&1)
-code2=$?
-{ [ "$code" -eq 0 ] && [ "$code2" -eq 1 ] \
-    && diff -q "$ROOT"/dev/m5e-default-transcript.txt "$m5e_scratch"/m5e-now.txt > /dev/null \
-    && printf '%s\n' "$out2" \
-       | rg -q 'm5e-acc\.tot:5:1: recursive definition accRec failed the structural termination guard'; } \
-  && echo PASS-M5E-DEFAULT-IDENTITY \
-  || {
-    diff "$ROOT"/dev/m5e-default-transcript.txt "$m5e_scratch"/m5e-now.txt | head -40
-    printf '%s\n' "$out2"
-    echo "FAIL-M5E-DEFAULT-IDENTITY (exit=$code/$code2)"
-    exit 1
-  }
+# PASS-M6E-REWRAP-SCRUB (scope-in 7).  Criterion 3 is live: a rewrap
+# pair inside a Rust block comment (a) or a multi-line string (b) no
+# longer false-denies (both denied at HEAD, probes P12/P13,
+# 2026-09-03), and the genuine pair (c) still denies with the echoed
+# let line, so a scrub-everything mutation cannot pass.  M6 Stage G
+# (2026-09-03, opus findings 1-2): leg (d) is a genuine pair that
+# FOLLOWS a `//` inside a string literal and a plain `//` comment
+# line;  it still denies, so a selective over-scrub (a `//` inside a
+# string opening a phantom string state, the pre-G behaviour) cannot
+# pass either.  MUT-G4 flips (d).
+m6e_sc=$("$watchdog" "$FAST" "$m5d_bin" run "$ROOT"/examples/guard-rewrap.tot \
+  < "$ROOT"/test/fixtures/m6e-rewrap-scrub-comment.json); m6e_c1=$?
+m6e_ss=$("$watchdog" "$FAST" "$m5d_bin" run "$ROOT"/examples/guard-rewrap.tot \
+  < "$ROOT"/test/fixtures/m6e-rewrap-scrub-string.json); m6e_c2=$?
+m6e_sd=$("$watchdog" "$FAST" "$m5d_bin" run "$ROOT"/examples/guard-rewrap.tot \
+  < "$ROOT"/test/fixtures/m5d-rewrap-deny.json); m6e_c3=$?
+m6e_sg=$("$watchdog" "$FAST" "$m5d_bin" run "$ROOT"/examples/guard-rewrap.tot \
+  < "$ROOT"/test/fixtures/m6g-rewrap-deny-slash.json); m6e_cg=$?
+{ [ "$m6e_c1" -eq 0 ] && [ -z "$m6e_sc" ] \
+  && [ "$m6e_c2" -eq 0 ] && [ -z "$m6e_ss" ] \
+  && [ "$m6e_c3" -eq 2 ] \
+  && printf '%s' "$m6e_sd" | rg -q 'let a = h\(\)\?;' \
+  && [ "$m6e_cg" -eq 2 ] \
+  && printf '%s' "$m6e_sg" | rg -q 'let a = h\(\)\?;'; } \
+  && echo PASS-M6E-REWRAP-SCRUB \
+  || { printf '%s\n%s\n%s\n%s\n' "$m6e_sc" "$m6e_ss" "$m6e_sd" "$m6e_sg"; \
+       echo "FAIL-M6E-REWRAP-SCRUB (c1=$m6e_c1 c2=$m6e_c2 c3=$m6e_c3 cg=$m6e_cg)"; exit 1; }
 
-# Gate E (ii), PASS-M5E-ACC-CHECKS. The Acc plus accRec worked example
-# checks at exit 0 under the flag, with the exact five-line output
-# (plan E4, confirmed byte for byte against the built binary before
-# this gate was committed).
-out=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
-  --experimental-wf "$ROOT"/test/fixtures/m5e-acc.tot 2>&1)
-code=$?
-want=$'data Acc : (0 A : Type 0) -> (0 R : (w _ : A) -> (w _ : A) -> Type 0) -> (0 _ : A) -> Type 0\nctor acc : (0 A : Type 0) -> (0 R : (w _ : A) -> (w _ : A) -> Type 0) -> (w x : A) -> (w _ : (w y : A) -> (w _ : ((R y) x)) -> (((Acc A) R) y)) -> (((Acc A) R) x)\ndef LtNat : (w _ : Nat) -> (w _ : Nat) -> Type 0\ndef accRec : (0 A : Type 0) -> (0 R : (w _ : A) -> (w _ : A) -> Type 0) -> (0 P : (w _ : A) -> Type 0) -> (w _ : (w x : A) -> (w _ : (w y : A) -> (w _ : ((R y) x)) -> (P y)) -> (P x)) -> (w x : A) -> (w _ : (((Acc A) R) x)) -> (P x)\ndef accZero : (((Acc Nat) LtNat) zero)'
-{ [ "$code" -eq 0 ] && [ "$out" = "$want" ]; } \
-  && echo PASS-M5E-ACC-CHECKS \
-  || { printf '%s\n' "$out"; echo "FAIL-M5E-ACC-CHECKS (exit=$code)"; exit 1; }
+# PASS-M6E-REWRAP-OPEN.  The fail-open posture survives the port: a
+# non-JSON payload and a non-Bash payload both allow at exit 0 with
+# empty stdout (HEAD behaviour, probes P17/P18, re-pinned so the
+# scrubber commit cannot flip the posture).
+m6e_og=$("$watchdog" "$FAST" "$m5d_bin" run "$ROOT"/examples/guard-rewrap.tot \
+  < "$ROOT"/test/fixtures/garbage.json); m6e_c4=$?
+m6e_oo=$("$watchdog" "$FAST" "$m5d_bin" run "$ROOT"/examples/guard-rewrap.tot \
+  < "$ROOT"/test/fixtures/other.json); m6e_c5=$?
+{ [ "$m6e_c4" -eq 0 ] && [ -z "$m6e_og" ] \
+  && [ "$m6e_c5" -eq 0 ] && [ -z "$m6e_oo" ]; } \
+  && echo PASS-M6E-REWRAP-OPEN \
+  || { printf '%s\n%s\n' "$m6e_og" "$m6e_oo"; \
+       echo "FAIL-M6E-REWRAP-OPEN (c4=$m6e_c4 c5=$m6e_c5)"; exit 1; }
 
-# Gate E (iii), PASS-M5E-WITNESS-REJECTED. Three legs. Leg (a) proves the
-# flag is LIVE, so a dead flag cannot make legs (b) and (c) pass by
-# accident. Leg (b) is amendment A4's pinned negative. Leg (c) shows the
-# prototype changes nothing about this file.
-outa=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
-  --experimental-wf "$ROOT"/test/fixtures/m5e-acc.tot 2>&1)
-codea=$?
-outb=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
-  --experimental-wf "$ROOT"/test/fixtures/m5e-witness.tot 2>&1)
-codeb=$?
-outc=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
-  "$ROOT"/test/fixtures/m5e-witness.tot 2>&1)
-codec=$?
-wantw='m5e-witness.tot:2:1: recursive definition bad failed the structural termination guard'
-{ [ "$codea" -eq 0 ] && [ "$codeb" -eq 1 ] && [ "$codec" -eq 1 ] \
-    && printf '%s\n' "$outb" | rg -q -- "$wantw" \
-    && printf '%s\n' "$outc" | rg -q -- "$wantw" \
-    && [ "$outb" = "$outc" ]; } \
-  && echo PASS-M5E-WITNESS-REJECTED \
-  || {
-    printf '%s\n%s\n%s\n' "$outa" "$outb" "$outc"
-    echo "FAIL-M5E-WITNESS-REJECTED (exit=$codea/$codeb/$codec)"
-    exit 1
-  }
+# PASS-M6E-GUARD-HOLES (scope-in 8, ruling R5).  Six assertions: the
+# three re-spelled guards check at exit 0; the site list Gate D's
+# classifier run wrote carries exactly 22 holed example anchors
+# (anchor=[_]: 19 re-spelled sites plus the scrubber's three, measured
+# 2026-09-03 with `python3 dev/hole-anchors.py | rg -c 'anchor=\[_\]'`),
+# so an un-respelled tree cannot pass; the prelude carries ZERO holed
+# anchors (scope-out 5 enforced); and guard.tot's deny envelope on the
+# M3 payload is byte-identical to the pre-respell envelope (probe
+# P16), so holes changed no behaviour.
+m6e_g1=$("$watchdog" "$FAST" "$m5d_bin" check "$ROOT"/examples/guard.tot 2>&1); m6e_c6=$?
+m6e_g2=$("$watchdog" "$FAST" "$m5d_bin" check "$ROOT"/examples/guard-rewrap.tot 2>&1); m6e_c7=$?
+m6e_g3=$("$watchdog" "$FAST" "$m5d_bin" check "$ROOT"/examples/guard-classes.tot 2>&1); m6e_c8=$?
+m6e_holes=$(rg -c 'anchor=\[_\]' "$m5d_scratch/hole-sites.txt")
+rg -q 'SITE stdlib/prelude\.tot:.*anchor=\[_\]' "$m5d_scratch/hole-sites.txt"; m6e_pz=$?
+m6e_env=$("$watchdog" "$FAST" "$m5d_bin" run "$ROOT"/examples/guard.tot \
+  < "$ROOT"/test/fixtures/deny.json); m6e_c9=$?
+m6e_wantenv='{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"house rule: use rg instead of grep and sd instead of sed (command: grep foo /tmp/x)"}}'
+{ [ "$m6e_c6" -eq 0 ] && [ "$m6e_c7" -eq 0 ] && [ "$m6e_c8" -eq 0 ] \
+  && [ "$m6e_holes" -eq 22 ] && [ "$m6e_pz" -eq 1 ] \
+  && [ "$m6e_c9" -eq 2 ] && [ "$m6e_env" = "$m6e_wantenv" ]; } \
+  && echo PASS-M6E-GUARD-HOLES \
+  || { printf '%s\n%s\n%s\n%s\n' "$m6e_g1" "$m6e_g2" "$m6e_g3" "$m6e_env"; \
+       echo "FAIL-M6E-GUARD-HOLES (c=$m6e_c6/$m6e_c7/$m6e_c8 holes=$m6e_holes pz=$m6e_pz env=$m6e_c9)"; exit 1; }
+
+# PASS-M6E-ANCHORS (scope-in 7; pins 4 and 17).  The grown corpus was
+# re-measured: the ANCHORS line the classifier wrote into $GATE_LOG
+# this run equals the literal recorded from the build-time rerun
+# (2026-09-03, `python3 dev/hole-anchors.py | tail -1`), and the total
+# grew past the HEAD baseline 98 (the scrubber's list rebuild adds
+# headOr/cons/nil sites).  Schema, bucket sum and the independent
+# --count-sites recount stay owned by PASS-M5D-HOLE-ANCHORS upstream;
+# SPEC-vs-log stays owned by the spliced PASS-M5D-MEASURE-LOG (plan
+# E4).
+m6e_line=$(rg -o '^ANCHORS total=[0-9]+ expected-type-only=[0-9]+ argument-driven=[0-9]+ neither=[0-9]+$' "$GATE_LOG")
+m6e_want='ANCHORS total=101 expected-type-only=62 argument-driven=9 neither=30'
+m6e_tot=$(printf '%s' "$m6e_line" | rg -o 'total=[0-9]+' | rg -o '[0-9]+')
+{ [ "$m6e_line" = "$m6e_want" ] && [ "$m6e_tot" -gt 98 ]; } \
+  && echo PASS-M6E-ANCHORS \
+  || { printf '%s\n' "$m6e_line"; echo "FAIL-M6E-ANCHORS (tot=$m6e_tot)"; exit 1; }
+
+# PASS-M6E-TRANSCRIPT-RESEALED (pin 14, ruling R5).  The FINAL reseal
+# is real and complete: the sealed oracle's block count equals the
+# LIVE glob count (a corpus or glob change without a reseal cannot
+# pass, and PASS-M5E-DEFAULT-IDENTITY alone cannot see a glob
+# narrowed in the generator, mutation M-E7); the guard.tot block is
+# byte-identical to the pre-respell block (probe P23: pin-1
+# conservativity, holes changed no output byte); and the
+# guard-rewrap.tot block carries the scrubber (a stale pre-port seal
+# cannot pass).  Whole-file identity against a fresh regeneration
+# stays owned by PASS-M5E-DEFAULT-IDENTITY above.  The FAIL branch
+# diffs through two scratch files, not process substitution, which
+# the build sandbox refuses (Stage E conflict note C-E4).
+m6e_blocks=$(rg -c '^### ' "$ROOT"/dev/m5e-default-transcript.txt)
+m6e_files=$(ls "$ROOT"/examples/*.tot "$ROOT"/test/fixtures/*.tot | wc -l | tr -d ' ')
+m6e_gblock=$(rg -A 13 -x -F '### examples/guard.tot' "$ROOT"/dev/m5e-default-transcript.txt)
+m6e_wantg=$'### examples/guard.tot\n#exit 0\n#out\ndef firstNonEmpty : (w _ : (List String)) -> String\ndef lastOr : (w _ : String) -> (w _ : (List String)) -> String\ndef splitEach : (w _ : String) -> (w _ : (List String)) -> (List String)\ndef firstToken : (w _ : String) -> String\ndef baseName : (w _ : String) -> String\ndef usesBanned : (w _ : String) -> Bool\ndef orEmpty : (w _ : (Option String)) -> String\ndef elideAt : (w _ : Int) -> (w _ : String) -> String\ndef decide : (w _ : Json) -> Verdict\ndef main : (IO Verdict)\n#err'
+m6e_srub=$(rg -c '^def scrubLines : ' "$ROOT"/dev/m5e-default-transcript.txt)
+{ [ "$m6e_blocks" -eq "$m6e_files" ] && [ "$m6e_gblock" = "$m6e_wantg" ] \
+  && [ "$m6e_srub" -eq 1 ]; } \
+  && echo PASS-M6E-TRANSCRIPT-RESEALED \
+  || { echo "FAIL-M6E-TRANSCRIPT-RESEALED (blocks=$m6e_blocks files=$m6e_files scrub=$m6e_srub)"; \
+       printf '%s\n' "$m6e_wantg" > "$m5d_scratch/m6e-wantg.txt"; \
+       printf '%s\n' "$m6e_gblock" > "$m5d_scratch/m6e-gblock.txt"; \
+       diff "$m5d_scratch/m6e-wantg.txt" "$m5d_scratch/m6e-gblock.txt" | head -20; exit 1; }
 
 # ctxcat id 5: an instance with TWO dictionary binders on the SAME type
 # variable. Round 1's fuel bounded the depth of one resolution PATH,

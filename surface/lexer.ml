@@ -34,6 +34,7 @@ let keywords : (string * Token.kind) list =
     ("instance", Token.KInstance);  (** M4 Stage D *)
     ("auto", Token.KAuto);  (** M4 Stage D *)
     ("inst", Token.KInst);  (** M4 Stage D *)
+    ("_", Token.Underscore);  (** M6 Stage C, ruling R2 *)
   ]
 
 let ident_kind (s : string) : Token.kind =

@@ -408,10 +408,11 @@ let case_usage_channel () : (unit, string) result =
      byte-exact against the driver's own [usage] string.  M5 Stage C:
      it gained [--check-budget-ms N] too (plan C6.1), same discipline.
      M5 Stage E: it gained [--experimental-wf] (plan E1 step 4), same
-     discipline. *)
+     discipline.  M6 Stage A: it LOST [--experimental-wf] (ruling R1),
+     same discipline. *)
   let usage_line =
     "usage: tot (check|run) [--no-prelude] [--no-axioms] [--serror-exit N] \
-     [--check-budget-ms N] [--require-main] [--experimental-wf] [--strict-json] FILE | \
+     [--check-budget-ms N] [--require-main] [--strict-json] FILE | \
      tot prims"
   in
   let* () =
@@ -439,7 +440,6 @@ let case_require_main_rejects_mainless () : (unit, string) result =
       Tot_surface.Run.no_axioms = false;
       require_main = true;
       strict_json = false;
-      wf_rule = Tot_kernel.Totality.Structural;
     }
   in
   Tot_surface.Run.script ~policy:strict_policy ~exec:true src
@@ -753,7 +753,6 @@ let m5a_run_with_policy (bst : Tot_surface.Run.state) ~(strict_json : bool)
             Tot_surface.Run.no_axioms = false;
             require_main = false;
             strict_json;
-            wf_rule = Tot_kernel.Totality.Structural;
           }
         ~exec:true m5a_stdin_allow_src
       |> Result.fold
@@ -769,6 +768,96 @@ let m5a_run_with_policy (bst : Tot_surface.Run.state) ~(strict_json : bool)
                     (show_lines want_lines)
                     (Option.fold ~none:"None" ~some:string_of_int want_exit)))
            ~error:(fun e -> Error ("error: " ^ Tot_surface.Serror.to_string e)))
+
+(* M6 Stage B: the one IO Unit main the strict-json Unit cases run;
+   it reads stdin and echoes, so every behaviour difference below is
+   the FLAG's, never the script's (the m5a_stdin_allow_src
+   discipline). *)
+let m6b_unit_echo_src : string =
+  "def main : IO Unit :=\n\
+  \  let* String Unit raw := readStdin in\n\
+  \  printLine raw\n"
+
+(* M6 Stage B (plan B7, case M6B-1): run [m6b_unit_echo_src] under the
+   given strict-json policy on a garbage stdin payload and pin the
+   surface half of the refusal route: the run must END in
+   [Serror.Json_strict_reject] (its tag), never in an Ok run.  Takes
+   [bst] like [m5a_run_with_policy] above. *)
+let m6b_with_unit_policy (bst : Tot_surface.Run.state) ~(strict_json : bool) :
+    (unit, string) result =
+  m5a_with_stdin_bytes "not json at all\n" (fun () ->
+      Tot_surface.Run.script ~st:bst
+        ~policy:{ Tot_surface.Run.no_axioms = false; require_main = false; strict_json }
+        ~exec:true m6b_unit_echo_src
+      |> Result.fold
+           ~ok:(fun (_lines, _exit) -> Error "expected Serror.Json_strict_reject, got an Ok run")
+           ~error:(fun e ->
+             let t = Tot_surface.Serror.tag e in
+             match () with
+             | () when String.equal t "Json_strict_reject" -> Ok ()
+             | () -> Error (Printf.sprintf "expected Json_strict_reject, got %s" t)))
+
+(* M6 Stage C (plan C9): the holed script and its explicit twin must
+   produce the SAME output lines under check mode (exec = false), and
+   that shared output must be non-empty, so a vacuous pass (two
+   errors) is impossible. *)
+let m6c_twins (bst : Tot_surface.Run.state) ~(holed : string) ~(explicit : string) () :
+    (unit, string) result =
+  let run src =
+    Tot_surface.Run.script ~st:bst ~exec:false src
+    |> Result.map_error Tot_surface.Serror.to_string
+    |> Result.map (fun (lines, _exit) -> lines)
+  in
+  let* h = run holed in
+  let* e = run explicit in
+  match () with
+  | () when List.equal String.equal h e && not (List.is_empty h) -> Ok ()
+  | () -> Error (Printf.sprintf "holed [%s] vs explicit [%s]" (show_lines h) (show_lines e))
+
+(* M6 Stage C (plan C9): a negative pinned by its EXACT rendered error
+   line (the driver prefixes only the path), and by the one-line
+   property: nothing after the first line. *)
+let m6c_expect_err_line (bst : Tot_surface.Run.state) (src : string) (want : string) () :
+    (unit, string) result =
+  Tot_surface.Run.script ~st:bst ~exec:false src
+  |> Result.fold
+       ~ok:(fun (lines, _exit) ->
+         Error (Printf.sprintf "expected [%s], but the script ran: [%s]" want (show_lines lines)))
+       ~error:(fun e ->
+         let got = Tot_surface.Serror.to_string e in
+         match () with
+         | () when String.equal got want && not (String.contains got '\n') -> Ok ()
+         | () -> Error (Printf.sprintf "expected [%s], got [%s]" want got))
+
+let m6c_flagged_holed = "def flagged : List String := cons _ \"grep\" (cons _ \"sed\" (nil _))\n"
+
+let m6c_flagged_explicit =
+  "def flagged : List String := cons String \"grep\" (cons String \"sed\" (nil String))\n"
+
+let m6c_idlist_holed =
+  "def idList : (0 A : Type 0) -> List A -> List A :=\n\
+  \  fun A xs => match xs with | nil => nil _ | cons h t => cons _ h t end\n"
+
+let m6c_idlist_explicit =
+  "def idList : (0 A : Type 0) -> List A -> List A :=\n\
+  \  fun A xs => match xs with | nil => nil A | cons h t => cons A h t end\n"
+
+let m6c_main_holed =
+  "def main : IO Verdict :=\n\
+  \  let* String _ raw := readStdin in\n\
+  \  pureIO _ (deny raw)\n"
+
+let m6c_main_explicit =
+  "def main : IO Verdict :=\n\
+  \  let* String Verdict raw := readStdin in\n\
+  \  pureIO Verdict (deny raw)\n"
+
+let m6c_binders_src =
+  "def k : (w _ : Nat) -> Nat := fun _ => zero\n\
+   def two2 : List Nat -> Nat := fun xs => match xs with | nil => zero | cons _ _ => succ \
+   zero end\n\
+   def _foo : Nat := succ zero\n\
+   def useIt : Nat := _foo\n"
 
 let cases (bst : Tot_surface.Run.state) : (string * (unit -> (unit, string) result)) list =
   [
@@ -1622,7 +1711,6 @@ let cases (bst : Tot_surface.Run.state) : (string * (unit -> (unit, string) resu
               Tot_surface.Run.no_axioms = true;
               require_main = false;
               strict_json = false;
-              wf_rule = Tot_kernel.Totality.Structural;
             }
           ~exec:true
           "axiom bogus : Eq Nat zero (succ zero)\ncheck bogus"
@@ -1714,10 +1802,93 @@ let cases (bst : Tot_surface.Run.state) : (string * (unit -> (unit, string) resu
     ( "M5A-15: Run.script under strict_json=false keeps the fail-open posture on the same \
        payload (allow, exit 0)",
       m5a_run_with_policy bst ~strict_json:false ~want_lines:[] ~want_exit:(Some 0) );
+    (* M6 Stage B (plan B7): the blocking Unit strict-json posture,
+       verdict pins 5-6, ruling R3.  The driver's literal moved 1 -> 2;
+       these two cases pin the surface inputs that literal rests on. *)
+    ( "M6B-1: Run.script under strict_json=true turns a garbage stdin payload on an \
+       IO Unit script into Serror.Json_strict_reject (the surface half; the driver \
+       maps it to the literal exit 2, M6 Stage B)",
+      fun () ->
+        m6b_with_unit_policy bst ~strict_json:true
+        |> Result.fold ~ok:(fun () -> Ok ()) ~error:(fun e -> Error e) );
+    ( "M6B-2: Serror.driver_exit stays true on Json_strict_reject and its rendered \
+       line is byte-identical (the two inputs of the driver's literal-2 arm)",
+      fun () ->
+        let want =
+          "stdin is not a single well-formed JSON value, and this installation runs \
+           with --strict-json"
+        in
+        let got = Tot_surface.Serror.to_string Tot_surface.Serror.Json_strict_reject in
+        match () with
+        | ()
+          when Tot_surface.Serror.driver_exit Tot_surface.Serror.Json_strict_reject
+               && String.equal got want ->
+            Ok ()
+        | () -> Error (Printf.sprintf "driver_exit or line drifted: [%s]" got) );
     (* M5 Stage C (plan C5). *)
     ( "M5C-S1: Run.script under an always-spent budget reports Kernel.Check_budget, and the \
        default stays green",
       case_budget_threads_through_script bst );
+    (* M6 Stage C (plan C9): expected-type-only holes (pins 1-4) and
+       the `_` reservation (ruling R2). *)
+    ( "M6C-1 m6c_fill_root: a def-root spine fills all three holes; lines equal the explicit \
+       twin's",
+      m6c_twins bst ~holed:m6c_flagged_holed ~explicit:m6c_flagged_explicit );
+    ( "M6C-2 m6c_fill_branch_local: branch bodies fill a LOCAL binder's Var through one and \
+       two pattern binders; lines equal the explicit twin's",
+      m6c_twins bst ~holed:m6c_idlist_holed ~explicit:m6c_idlist_explicit );
+    ( "M6C-3 m6c_fill_letstar: the let* B slot fills from the def root and the body \
+       descends; lines equal the explicit twin's",
+      m6c_twins bst ~holed:m6c_main_holed ~explicit:m6c_main_explicit );
+    ( "M6C-4 m6c_fill_nested_arg: a check item's annotation fills a nested argument spine, \
+       the HEAD spelling byte-exact",
+      expect_lines_check ~st:bst "check (cons _ \"x\" (nil _) : List String)\n"
+        [ "(((cons String) \"x\") (nil String)) : (List String)" ] );
+    ( "M6C-5 m6c_refuse_a: the let* A slot is argument-driven, so its hole reports the \
+       slot's declared universe on one line",
+      m6c_expect_err_line bst
+        "def main : IO Verdict :=\n  let* _ Verdict raw := readStdin in\n  pureIO Verdict allow\n"
+        "2:8: hole: expected Type 0" );
+    ( "M6C-6 m6c_refuse_infer: an eval hole and a let-annotation hole both report no \
+       expected type",
+      fun () ->
+        let* () = m6c_expect_err_line bst "eval _\n" "1:6: hole: no expected type at this position" () in
+        m6c_expect_err_line bst "def g : Nat := let x : _ := zero in x\n"
+          "1:24: hole: no expected type at this position" () );
+    ( "M6C-7 m6c_refuse_proof_fence: a hole under the Eq family never resolves (pin 4)",
+      m6c_expect_err_line bst "def agree : Eq Nat zero zero := refl _ zero\n"
+        "1:38: hole: expected Type 0" );
+    ( "M6C-8 m6c_refuse_class_fence: a hole under a head whose type mentions a class former \
+       never resolves (pin 4)",
+      m6c_expect_err_line bst
+        "def isFlagged : String -> Bool := fun c => member _ auto c (cons String \"grep\" (nil \
+         String))\n"
+        "1:51: hole: expected Type 0" );
+    ( "M6C-9 m6c_reserved_names: `def _` and `data _` fall through to the name-position \
+       parse errors naming '_'",
+      fun () ->
+        let* () =
+          m6c_expect_err_line bst "def _ : Nat := zero\n"
+            "1:5: parse error: expected 'NAME : TYPE := TERM' after 'def', found '_'" ()
+        in
+        m6c_expect_err_line bst "data _ : Type 0 :=\n"
+          "1:6: parse error: expected a name after 'data', found '_'" () );
+    ( "M6C-10 m6c_binder_positions: fixture 3's four lines byte-exact, plus a discarded let* \
+       binder checking clean",
+      fun () ->
+        let* () =
+          expect_lines_check ~st:bst m6c_binders_src
+            [
+              "def k : (w _ : Nat) -> Nat";
+              "def two2 : (w _ : (List Nat)) -> Nat";
+              "def _foo : Nat";
+              "def useIt : Nat";
+            ]
+            ()
+        in
+        expect_lines_check ~st:bst
+          "def m : IO Unit := let* Unit Unit _ := printLine \"x\" in pureIO Unit unit\n"
+          [ "def m : (IO Unit)" ] () );
   ]
 
 (** The ordinary in-process suite: bootstrap once, run every [cases]

@@ -1,0 +1,3 @@
+def main : IO Verdict :=
+  let* _ Verdict raw := readStdin in
+  pureIO Verdict allow

@@ -2822,20 +2822,16 @@ let m5e_expect_termination (what : string) ~(rule : Totality.rule) (recname : st
              Error (Printf.sprintf "%s: message moved: %s" what (Error.to_string e))
          | () -> Ok ())
 
-let case_m5e_wf_accepts_acc_rec () : (unit, string) result =
+(* M6 Stage A (verdict pin 9): E1 (Structural_wf accepts accRec)
+   retired with the deleted constructor.  Its no-flag half moved
+   here, so [m5e_acc_rec_body] stays a live negative: the shipped
+   rule must reject BOTH prototype-era shapes, pinned by tag and by
+   rendered message via [m5e_expect_termination]. *)
+let case_m5e_shipped_rule_rejects () : (unit, string) result =
   let* () =
-    Totality.guard ~rule:Totality.Structural_wf ~recname:"accRec" m5e_acc_rec_body
-    |> Result.fold
-         ~ok:(fun k ->
-           if Int.equal k 5 then Ok ()
-           else Error (Printf.sprintf "E1: Structural_wf accepted accRec at k=%d, want 5" k))
-         ~error:(fun e -> Error ("E1: Structural_wf rejected accRec: " ^ Error.to_string e))
+    m5e_expect_termination "E2 (accRec)" ~rule:Totality.Structural "accRec" m5e_acc_rec_body
   in
-  m5e_expect_termination "E1 (no flag)" ~rule:Totality.Structural "accRec" m5e_acc_rec_body
-
-let case_m5e_wf_still_rejects_witness () : (unit, string) result =
-  let* () = m5e_expect_termination "E2 (wf)" ~rule:Totality.Structural_wf "bad" m5e_bad_body in
-  m5e_expect_termination "E2 (structural)" ~rule:Totality.Structural "bad" m5e_bad_body
+  m5e_expect_termination "E2 (witness)" ~rule:Totality.Structural "bad" m5e_bad_body
 
 let cases (globals : Global.t) : (string * (unit -> (unit, string) result)) list =
   [
@@ -3069,8 +3065,7 @@ let cases (globals : Global.t) : (string * (unit -> (unit, string) result)) list
       case_m5c_budget_outranks_fuel globals );
     ("M5C3: the Check_budget error surface is pinned", case_m5c_error_surface);
     (* M5 Stage E (plan E6.3). *)
-    ("E1: Structural_wf accepts the accRec call shape", case_m5e_wf_accepts_acc_rec);
-    ("E2: Structural_wf still rejects the panel witness", case_m5e_wf_still_rejects_witness);
+    ("E2: the shipped rule rejects accRec and the panel witness", case_m5e_shipped_rule_rejects);
   ]
 
 let () =

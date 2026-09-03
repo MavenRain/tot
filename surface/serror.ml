@@ -45,10 +45,26 @@ type t =
       (** M5 Stage A (pin 20): [--strict-json] was given, the script's
           [main] is [IO Unit] (no verdict channel), and the stdin
           payload is not one well-formed JSON value.  Takes the DRIVER
-          exit contract (one stderr line, the literal exit 1, OUTSIDE
-          the [--serror-exit] mapping); an [IO Verdict] script instead
+          exit contract (one stderr line, the literal exit 2 since M6
+          Stage B, ruling R3, exit 1 through M5;  OUTSIDE the
+          [--serror-exit] mapping); an [IO Verdict] script instead
           renders the deny envelope and exits 2, never reaching this
-          constructor.  Installation POLICY, like the two above. *)
+          constructor, so both shapes answer a malformed payload with
+          the blocking code 2.  Installation POLICY, like the two
+          above. *)
+  | Hole of {
+      loc : Loc.t;
+      expected : (string list * Tot_kernel.Term.t) option;
+    }
+      (** M6 Stage C (verdict pin 3): an unresolved hole.
+          [expected = Some (names, ty)] carries the expected type as
+          a STRUCTURED kernel term plus the binder-name stack it is
+          scoped under (innermost first, the same convention
+          [Pp.term] consumes), rendered only at print time.
+          [None]: the hole sits in a position no expected type
+          reaches (infer position).  An ordinary mapped Serror: the
+          [--serror-exit] contract applies, exactly as for
+          [Unknown_name]. *)
 
 let to_string (e : t) : string =
   match e with
@@ -72,6 +88,11 @@ let to_string (e : t) : string =
   | Json_strict_reject ->
       "stdin is not a single well-formed JSON value, and this installation runs with \
        --strict-json"
+  | Hole { loc; expected = Some (names, ty) } ->
+      Printf.sprintf "%s: hole: expected %s" (Loc.to_string loc)
+        (Tot_kernel.Pp.term names ty)
+  | Hole { loc; expected = None } ->
+      Printf.sprintf "%s: hole: no expected type at this position" (Loc.to_string loc)
 
 let tag (e : t) : string =
   match e with
@@ -84,18 +105,21 @@ let tag (e : t) : string =
   | Axioms_disabled _ -> "Axioms_disabled"
   | Missing_main -> "Missing_main"
   | Json_strict_reject -> "Json_strict_reject"
+  | Hole _ -> "Hole"
 
-(** M5 Stage A (pin 20): does [e] take the DRIVER exit contract (the
-    literal exit 1, OUTSIDE the [--serror-exit] mapping)?  Only
+(** M5 Stage A (pin 20), M6 Stage B (ruling R3): does [e] take the
+    DRIVER exit contract (the literal exit 2, OUTSIDE the
+    [--serror-exit] mapping;  exit 1 through M5)?  Only
     [Json_strict_reject] today: a fail-open install ([--serror-exit 0])
-    must not turn a strict-json refusal into a silent exit 0.
-    Enumerated with no catch-all, so a new constructor must decide its
-    posture here explicitly. *)
+    must not turn a strict-json refusal into a silent exit 0, and no
+    configuration can demote it to a non-blocking 1.  Enumerated with
+    no catch-all, so a new constructor must decide its posture here
+    explicitly. *)
 let driver_exit (e : t) : bool =
   match e with
   | Json_strict_reject -> true
   | Lex _ | Parse _ | Unknown_name _ | Bad_level _ | Kernel _ | Main_bad_type _
-  | Axioms_disabled _ | Missing_main ->
+  | Axioms_disabled _ | Missing_main | Hole _ ->
       false
 
 (** M5 Stage C: [true] iff [e] is the kernel's check-budget cutoff,
@@ -105,7 +129,7 @@ let is_check_budget (e : t) : bool =
   match e with
   | Kernel { loc = _loc; err } -> Tot_kernel.Error.is_check_budget err
   | Lex _ | Parse _ | Unknown_name _ | Bad_level _ | Main_bad_type _
-  | Axioms_disabled _ | Missing_main | Json_strict_reject ->
+  | Axioms_disabled _ | Missing_main | Json_strict_reject | Hole _ ->
       false
 
 (** M5 Stage C (pin 21, amendment A3): [true] iff [e] is the mainless
@@ -117,5 +141,5 @@ let is_missing_main (e : t) : bool =
   match e with
   | Missing_main -> true
   | Lex _ | Parse _ | Unknown_name _ | Bad_level _ | Kernel _ | Main_bad_type _
-  | Axioms_disabled _ | Json_strict_reject ->
+  | Axioms_disabled _ | Json_strict_reject | Hole _ ->
       false

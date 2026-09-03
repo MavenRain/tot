@@ -1,0 +1,22 @@
+-- M6 Stage F (pin 11, C-D1 resolved by ruling (a), 2026-09-03):
+-- 64 resolutions of ONE instance key inside ONE `auto`.
+-- GENERATED (~/Documents/tot-m6-probes/stage-f-build/gen-hit-many.py
+-- 32 64); edit the generator, not this file.
+-- The top instance carries 64 dictionary binders on the SAME type
+-- variable, so resolving HC (HTop K) asks for the key HC K 64
+-- times inside one Term.Auto (lib/check.ml, build_instance peels
+-- the telescope and recurses into resolve_auto per binder).  The
+-- memo (inst_state.memo, fresh per Auto) answers asks 2 to 64
+-- from the slot ask 1 recorded: 1 derive + 63 memo HITs.  K is a
+-- chain of 32 HBox levels (one binder each, linear), so one
+-- derive costs 33 telescope peels and a memo cut to a miss (plan
+-- D12 M1) re-derives the chain 64 times: PASS-M6D-HIT-RATIO uses
+-- this file as the numerator fixture and flips red under M1.
+class HC (0 A : Type 0) := { hc : Bool }
+data HBox (0 A : Type 0) : Type 0 := | hbox : A -> HBox A
+data HTop (0 A : Type 0) : Type 0 := | htop : A -> HTop A
+instance : HC Bool := mkHC Bool true
+instance : (0 A : Type 0) -> HC A -> HC (HBox A) := fun A d => mkHC (HBox A) true
+instance : (0 A : Type 0) -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC A -> HC (HTop A) :=
+  fun A d1 d2 d3 d4 d5 d6 d7 d8 d9 d10 d11 d12 d13 d14 d15 d16 d17 d18 d19 d20 d21 d22 d23 d24 d25 d26 d27 d28 d29 d30 d31 d32 d33 d34 d35 d36 d37 d38 d39 d40 d41 d42 d43 d44 d45 d46 d47 d48 d49 d50 d51 d52 d53 d54 d55 d56 d57 d58 d59 d60 d61 d62 d63 d64 => mkHC (HTop A) true
+def hits : Bool := hc (HTop (HBox (HBox (HBox (HBox (HBox (HBox (HBox (HBox (HBox (HBox (HBox (HBox (HBox (HBox (HBox (HBox (HBox (HBox (HBox (HBox (HBox (HBox (HBox (HBox (HBox (HBox (HBox (HBox (HBox (HBox (HBox (HBox Bool))))))))))))))))))))))))))))))))) auto

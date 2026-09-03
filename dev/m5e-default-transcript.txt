@@ -36,6 +36,19 @@ def dropEmpty : (w _ : (List String)) -> (List String)
 def hasRewrapPair : (w _ : (List String)) -> Bool
 def orEmpty : (w _ : (Option String)) -> String
 def elideAt : (w _ : Int) -> (w _ : String) -> String
+data Scrub : Type 0
+ctor sCode : Scrub
+ctor sComment : Scrub
+ctor sString : Scrub
+def quoteTok : String
+def beforeFirst : (w _ : String) -> (w _ : String) -> String
+def evenPieces : (w _ : (List String)) -> Bool
+def oddQuotes : (w _ : String) -> Bool
+def cutSlash : (w _ : String) -> String
+def cutBlock : (w _ : String) -> String
+def scrubCode : (w _ : String) -> String
+def nextState : (w _ : String) -> Scrub
+def scrubLines : (w _ : Scrub) -> (w _ : (List String)) -> (List String)
 def rewrapVerdict : (w _ : String) -> Verdict
 def decideRewrap : (w _ : Json) -> Verdict
 def main : (IO Verdict)
@@ -82,6 +95,11 @@ def main : (IO Unit)
 #out
 def main : (IO Unit)
 #err
+### test/fixtures/bad2.tot
+#exit 1
+#out
+#err
+test/fixtures/bad2.tot:2:1: recursive definition bad2 failed the structural termination guard
 ### test/fixtures/c-json-roundtrip.tot
 #exit 0
 #out
@@ -105,6 +123,16 @@ def main : (IO Unit)
 #out
 eval : (Div Bool)
 #err
+### test/fixtures/crossformal-t.tot
+#exit 1
+#out
+#err
+test/fixtures/crossformal-t.tot:2:1: recursive definition bad failed the structural termination guard
+### test/fixtures/deep2.tot
+#exit 1
+#out
+#err
+test/fixtures/deep2.tot:2:1: recursive definition deep2 failed the structural termination guard
 ### test/fixtures/f1-witness.tot
 #exit 1
 #out
@@ -9574,6 +9602,707 @@ test/fixtures/m5e-acc.tot:5:1: recursive definition accRec failed the structural
 #out
 #err
 test/fixtures/m5e-witness.tot:2:1: recursive definition bad failed the structural termination guard
+### test/fixtures/m6c-hole-a.tot
+#exit 1
+#out
+#err
+test/fixtures/m6c-hole-a.tot:2:8: hole: expected Type 0
+### test/fixtures/m6c-hole-e-explicit.tot
+#exit 0
+#out
+def flagged : (List String)
+def idList : (0 A : Type 0) -> (w _ : (List A)) -> (List A)
+def main : (IO Verdict)
+(((cons String) "x") (nil String)) : (List String)
+fun xs => ((idList Nat) xs) : (w _ : (List Nat)) -> (List Nat)
+#err
+### test/fixtures/m6c-hole-e.tot
+#exit 0
+#out
+def flagged : (List String)
+def idList : (0 A : Type 0) -> (w _ : (List A)) -> (List A)
+def main : (IO Verdict)
+(((cons String) "x") (nil String)) : (List String)
+fun xs => ((idList Nat) xs) : (w _ : (List Nat)) -> (List Nat)
+#err
+### test/fixtures/m6c-hole-n-class.tot
+#exit 1
+#out
+#err
+test/fixtures/m6c-hole-n-class.tot:1:51: hole: expected Type 0
+### test/fixtures/m6c-hole-n-infer.tot
+#exit 1
+#out
+#err
+test/fixtures/m6c-hole-n-infer.tot:1:6: hole: no expected type at this position
+### test/fixtures/m6c-hole-n-proof.tot
+#exit 1
+#out
+#err
+test/fixtures/m6c-hole-n-proof.tot:1:38: hole: expected Type 0
+### test/fixtures/m6c-hole-run.tot
+#exit 1
+#out
+#err
+test/fixtures/m6c-hole-run.tot:1:28: hole: expected Type 0
+### test/fixtures/m6c-underscore-binders.tot
+#exit 0
+#out
+def k : (w _ : Nat) -> Nat
+def two2 : (w _ : (List Nat)) -> Nat
+def _foo : Nat
+def useIt : Nat
+#err
+### test/fixtures/m6c-underscore-def.tot
+#exit 1
+#out
+#err
+test/fixtures/m6c-underscore-def.tot:1:5: parse error: expected 'NAME : TYPE := TERM' after 'def', found '_'
+### test/fixtures/m6c-underscore-lam.tot
+#exit 1
+#out
+#err
+test/fixtures/m6c-underscore-lam.tot:1:32: hole: expected Nat
+### test/fixtures/m6c-underscore-match.tot
+#exit 1
+#out
+#err
+test/fixtures/m6c-underscore-match.tot:1:72: hole: expected Nat
+### test/fixtures/m6d-bigcheck.tot
+#exit 0
+#out
+def b1 : Nat
+def b2 : Nat
+def b3 : Nat
+def b4 : Nat
+def b5 : Nat
+def b6 : Nat
+def b7 : Nat
+def b8 : Nat
+def b9 : Nat
+def b10 : Nat
+def b11 : Nat
+def b12 : Nat
+def b13 : Nat
+def b14 : Nat
+def b15 : Nat
+def b16 : Nat
+def b17 : Nat
+def b18 : Nat
+def b19 : Nat
+def b20 : Nat
+def b21 : Nat
+def b22 : Nat
+def b23 : Nat
+def b24 : Nat
+def b25 : Nat
+def b26 : Nat
+def b27 : Nat
+def b28 : Nat
+def b29 : Nat
+def b30 : Nat
+def b31 : Nat
+def b32 : Nat
+def b33 : Nat
+def b34 : Nat
+def b35 : Nat
+def b36 : Nat
+def b37 : Nat
+def b38 : Nat
+def b39 : Nat
+def b40 : Nat
+def b41 : Nat
+def b42 : Nat
+def b43 : Nat
+def b44 : Nat
+def b45 : Nat
+def b46 : Nat
+def b47 : Nat
+def b48 : Nat
+def b49 : Nat
+def b50 : Nat
+def b51 : Nat
+def b52 : Nat
+def b53 : Nat
+def b54 : Nat
+def b55 : Nat
+def b56 : Nat
+def b57 : Nat
+def b58 : Nat
+def b59 : Nat
+def b60 : Nat
+def b61 : Nat
+def b62 : Nat
+def b63 : Nat
+def b64 : Nat
+def b65 : Nat
+def b66 : Nat
+def b67 : Nat
+def b68 : Nat
+def b69 : Nat
+def b70 : Nat
+def b71 : Nat
+def b72 : Nat
+def b73 : Nat
+def b74 : Nat
+def b75 : Nat
+def b76 : Nat
+def b77 : Nat
+def b78 : Nat
+def b79 : Nat
+def b80 : Nat
+def b81 : Nat
+def b82 : Nat
+def b83 : Nat
+def b84 : Nat
+def b85 : Nat
+def b86 : Nat
+def b87 : Nat
+def b88 : Nat
+def b89 : Nat
+def b90 : Nat
+def b91 : Nat
+def b92 : Nat
+def b93 : Nat
+def b94 : Nat
+def b95 : Nat
+def b96 : Nat
+def b97 : Nat
+def b98 : Nat
+def b99 : Nat
+def b100 : Nat
+def b101 : Nat
+def b102 : Nat
+def b103 : Nat
+def b104 : Nat
+def b105 : Nat
+def b106 : Nat
+def b107 : Nat
+def b108 : Nat
+def b109 : Nat
+def b110 : Nat
+def b111 : Nat
+def b112 : Nat
+def b113 : Nat
+def b114 : Nat
+def b115 : Nat
+def b116 : Nat
+def b117 : Nat
+def b118 : Nat
+def b119 : Nat
+def b120 : Nat
+def b121 : Nat
+def b122 : Nat
+def b123 : Nat
+def b124 : Nat
+def b125 : Nat
+def b126 : Nat
+def b127 : Nat
+def b128 : Nat
+def b129 : Nat
+def b130 : Nat
+def b131 : Nat
+def b132 : Nat
+def b133 : Nat
+def b134 : Nat
+def b135 : Nat
+def b136 : Nat
+def b137 : Nat
+def b138 : Nat
+def b139 : Nat
+def b140 : Nat
+def b141 : Nat
+def b142 : Nat
+def b143 : Nat
+def b144 : Nat
+def b145 : Nat
+def b146 : Nat
+def b147 : Nat
+def b148 : Nat
+def b149 : Nat
+def b150 : Nat
+def b151 : Nat
+def b152 : Nat
+def b153 : Nat
+def b154 : Nat
+def b155 : Nat
+def b156 : Nat
+def b157 : Nat
+def b158 : Nat
+def b159 : Nat
+def b160 : Nat
+def b161 : Nat
+def b162 : Nat
+def b163 : Nat
+def b164 : Nat
+def b165 : Nat
+def b166 : Nat
+def b167 : Nat
+def b168 : Nat
+def b169 : Nat
+def b170 : Nat
+def b171 : Nat
+def b172 : Nat
+def b173 : Nat
+def b174 : Nat
+def b175 : Nat
+def b176 : Nat
+def b177 : Nat
+def b178 : Nat
+def b179 : Nat
+def b180 : Nat
+def b181 : Nat
+def b182 : Nat
+def b183 : Nat
+def b184 : Nat
+def b185 : Nat
+def b186 : Nat
+def b187 : Nat
+def b188 : Nat
+def b189 : Nat
+def b190 : Nat
+def b191 : Nat
+def b192 : Nat
+def b193 : Nat
+def b194 : Nat
+def b195 : Nat
+def b196 : Nat
+def b197 : Nat
+def b198 : Nat
+def b199 : Nat
+def b200 : Nat
+def b201 : Nat
+def b202 : Nat
+def b203 : Nat
+def b204 : Nat
+def b205 : Nat
+def b206 : Nat
+def b207 : Nat
+def b208 : Nat
+def b209 : Nat
+def b210 : Nat
+def b211 : Nat
+def b212 : Nat
+def b213 : Nat
+def b214 : Nat
+def b215 : Nat
+def b216 : Nat
+def b217 : Nat
+def b218 : Nat
+def b219 : Nat
+def b220 : Nat
+def b221 : Nat
+def b222 : Nat
+def b223 : Nat
+def b224 : Nat
+def b225 : Nat
+def b226 : Nat
+def b227 : Nat
+def b228 : Nat
+def b229 : Nat
+def b230 : Nat
+def b231 : Nat
+def b232 : Nat
+def b233 : Nat
+def b234 : Nat
+def b235 : Nat
+def b236 : Nat
+def b237 : Nat
+def b238 : Nat
+def b239 : Nat
+def b240 : Nat
+def b241 : Nat
+def b242 : Nat
+def b243 : Nat
+def b244 : Nat
+def b245 : Nat
+def b246 : Nat
+def b247 : Nat
+def b248 : Nat
+def b249 : Nat
+def b250 : Nat
+def b251 : Nat
+def b252 : Nat
+def b253 : Nat
+def b254 : Nat
+def b255 : Nat
+def b256 : Nat
+def b257 : Nat
+def b258 : Nat
+def b259 : Nat
+def b260 : Nat
+def b261 : Nat
+def b262 : Nat
+def b263 : Nat
+def b264 : Nat
+def b265 : Nat
+def b266 : Nat
+def b267 : Nat
+def b268 : Nat
+def b269 : Nat
+def b270 : Nat
+def b271 : Nat
+def b272 : Nat
+def b273 : Nat
+def b274 : Nat
+def b275 : Nat
+def b276 : Nat
+def b277 : Nat
+def b278 : Nat
+def b279 : Nat
+def b280 : Nat
+def b281 : Nat
+def b282 : Nat
+def b283 : Nat
+def b284 : Nat
+def b285 : Nat
+def b286 : Nat
+def b287 : Nat
+def b288 : Nat
+def b289 : Nat
+def b290 : Nat
+def b291 : Nat
+def b292 : Nat
+def b293 : Nat
+def b294 : Nat
+def b295 : Nat
+def b296 : Nat
+def b297 : Nat
+def b298 : Nat
+def b299 : Nat
+def b300 : Nat
+def b301 : Nat
+def b302 : Nat
+def b303 : Nat
+def b304 : Nat
+def b305 : Nat
+def b306 : Nat
+def b307 : Nat
+def b308 : Nat
+def b309 : Nat
+def b310 : Nat
+def b311 : Nat
+def b312 : Nat
+def b313 : Nat
+def b314 : Nat
+def b315 : Nat
+def b316 : Nat
+def b317 : Nat
+def b318 : Nat
+def b319 : Nat
+def b320 : Nat
+def b321 : Nat
+def b322 : Nat
+def b323 : Nat
+def b324 : Nat
+def b325 : Nat
+def b326 : Nat
+def b327 : Nat
+def b328 : Nat
+def b329 : Nat
+def b330 : Nat
+def b331 : Nat
+def b332 : Nat
+def b333 : Nat
+def b334 : Nat
+def b335 : Nat
+def b336 : Nat
+def b337 : Nat
+def b338 : Nat
+def b339 : Nat
+def b340 : Nat
+def b341 : Nat
+def b342 : Nat
+def b343 : Nat
+def b344 : Nat
+def b345 : Nat
+def b346 : Nat
+def b347 : Nat
+def b348 : Nat
+def b349 : Nat
+def b350 : Nat
+def b351 : Nat
+def b352 : Nat
+def b353 : Nat
+def b354 : Nat
+def b355 : Nat
+def b356 : Nat
+def b357 : Nat
+def b358 : Nat
+def b359 : Nat
+def b360 : Nat
+def b361 : Nat
+def b362 : Nat
+def b363 : Nat
+def b364 : Nat
+def b365 : Nat
+def b366 : Nat
+def b367 : Nat
+def b368 : Nat
+def b369 : Nat
+def b370 : Nat
+def b371 : Nat
+def b372 : Nat
+def b373 : Nat
+def b374 : Nat
+def b375 : Nat
+def b376 : Nat
+def b377 : Nat
+def b378 : Nat
+def b379 : Nat
+def b380 : Nat
+def b381 : Nat
+def b382 : Nat
+def b383 : Nat
+def b384 : Nat
+def b385 : Nat
+def b386 : Nat
+def b387 : Nat
+def b388 : Nat
+def b389 : Nat
+def b390 : Nat
+def b391 : Nat
+def b392 : Nat
+def b393 : Nat
+def b394 : Nat
+def b395 : Nat
+def b396 : Nat
+def b397 : Nat
+def b398 : Nat
+def b399 : Nat
+def b400 : Nat
+def b401 : Nat
+def b402 : Nat
+def b403 : Nat
+def b404 : Nat
+def b405 : Nat
+def b406 : Nat
+def b407 : Nat
+def b408 : Nat
+def b409 : Nat
+def b410 : Nat
+def b411 : Nat
+def b412 : Nat
+def b413 : Nat
+def b414 : Nat
+def b415 : Nat
+def b416 : Nat
+def b417 : Nat
+def b418 : Nat
+def b419 : Nat
+def b420 : Nat
+def b421 : Nat
+def b422 : Nat
+def b423 : Nat
+def b424 : Nat
+def b425 : Nat
+def b426 : Nat
+def b427 : Nat
+def b428 : Nat
+def b429 : Nat
+def b430 : Nat
+def b431 : Nat
+def b432 : Nat
+def b433 : Nat
+def b434 : Nat
+def b435 : Nat
+def b436 : Nat
+def b437 : Nat
+def b438 : Nat
+def b439 : Nat
+def b440 : Nat
+def b441 : Nat
+def b442 : Nat
+def b443 : Nat
+def b444 : Nat
+def b445 : Nat
+def b446 : Nat
+def b447 : Nat
+def b448 : Nat
+def b449 : Nat
+def b450 : Nat
+def b451 : Nat
+def b452 : Nat
+def b453 : Nat
+def b454 : Nat
+def b455 : Nat
+def b456 : Nat
+def b457 : Nat
+def b458 : Nat
+def b459 : Nat
+def b460 : Nat
+def b461 : Nat
+def b462 : Nat
+def b463 : Nat
+def b464 : Nat
+def b465 : Nat
+def b466 : Nat
+def b467 : Nat
+def b468 : Nat
+def b469 : Nat
+def b470 : Nat
+def b471 : Nat
+def b472 : Nat
+def b473 : Nat
+def b474 : Nat
+def b475 : Nat
+def b476 : Nat
+def b477 : Nat
+def b478 : Nat
+def b479 : Nat
+def b480 : Nat
+def b481 : Nat
+def b482 : Nat
+def b483 : Nat
+def b484 : Nat
+def b485 : Nat
+def b486 : Nat
+def b487 : Nat
+def b488 : Nat
+def b489 : Nat
+def b490 : Nat
+def b491 : Nat
+def b492 : Nat
+def b493 : Nat
+def b494 : Nat
+def b495 : Nat
+def b496 : Nat
+def b497 : Nat
+def b498 : Nat
+def b499 : Nat
+def b500 : Nat
+def b501 : Nat
+def b502 : Nat
+def b503 : Nat
+def b504 : Nat
+def b505 : Nat
+def b506 : Nat
+def b507 : Nat
+def b508 : Nat
+def b509 : Nat
+def b510 : Nat
+def b511 : Nat
+def b512 : Nat
+def b513 : Nat
+def b514 : Nat
+def b515 : Nat
+def b516 : Nat
+def b517 : Nat
+def b518 : Nat
+def b519 : Nat
+def b520 : Nat
+def b521 : Nat
+def b522 : Nat
+def b523 : Nat
+def b524 : Nat
+def b525 : Nat
+def b526 : Nat
+def b527 : Nat
+def b528 : Nat
+def b529 : Nat
+def b530 : Nat
+def b531 : Nat
+def b532 : Nat
+def b533 : Nat
+def b534 : Nat
+def b535 : Nat
+def b536 : Nat
+def b537 : Nat
+def b538 : Nat
+def b539 : Nat
+def b540 : Nat
+def b541 : Nat
+def b542 : Nat
+def b543 : Nat
+def b544 : Nat
+def b545 : Nat
+def b546 : Nat
+def b547 : Nat
+def b548 : Nat
+def b549 : Nat
+def b550 : Nat
+def b551 : Nat
+def b552 : Nat
+def b553 : Nat
+def b554 : Nat
+def b555 : Nat
+def b556 : Nat
+def b557 : Nat
+def b558 : Nat
+def b559 : Nat
+def b560 : Nat
+def b561 : Nat
+def b562 : Nat
+def b563 : Nat
+def b564 : Nat
+def b565 : Nat
+def b566 : Nat
+def b567 : Nat
+def b568 : Nat
+def b569 : Nat
+def b570 : Nat
+def b571 : Nat
+def b572 : Nat
+def b573 : Nat
+def b574 : Nat
+def b575 : Nat
+def b576 : Nat
+def b577 : Nat
+def b578 : Nat
+def b579 : Nat
+def b580 : Nat
+def b581 : Nat
+def b582 : Nat
+def b583 : Nat
+def b584 : Nat
+def b585 : Nat
+def b586 : Nat
+def b587 : Nat
+def b588 : Nat
+def b589 : Nat
+def b590 : Nat
+def b591 : Nat
+def b592 : Nat
+def b593 : Nat
+def b594 : Nat
+def b595 : Nat
+def b596 : Nat
+def b597 : Nat
+def b598 : Nat
+def b599 : Nat
+def b600 : Nat
+#err
+### test/fixtures/m6d-hit-many.tot
+#exit 0
+#out
+data HC : (0 A : Type 0) -> Type 0
+ctor mkHC : (0 A : Type 0) -> (w _ : Bool) -> (HC A)
+def hc : (0 A : Type 0) -> (w d : (HC A)) -> Bool
+data HBox : (0 A : Type 0) -> Type 0
+ctor hbox : (0 A : Type 0) -> (w _ : A) -> (HBox A)
+data HTop : (0 A : Type 0) -> Type 0
+ctor htop : (0 A : Type 0) -> (w _ : A) -> (HTop A)
+def inst$HC$Bool : (HC Bool)
+def inst$HC$HBox : (0 A : Type 0) -> (w _ : (HC A)) -> (HC (HBox A))
+def inst$HC$HTop : (0 A : Type 0) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (w _ : (HC A)) -> (HC (HTop A))
+def hits : Bool
+#err
+### test/fixtures/m6d-hit-one.tot
+#exit 0
+#out
+def flagged : (List String)
+def u1 : Bool
+#err
+### test/fixtures/nested-neg.tot
+#exit 1
+#out
+#err
+test/fixtures/nested-neg.tot:2:1: invalid constructor mkt3: negative or non-uniform occurrence of T3
+### test/fixtures/nested-pos.tot
+#exit 1
+#out
+#err
+test/fixtures/nested-pos.tot:2:1: invalid constructor mkt2: negative or non-uniform occurrence of T2
 ### test/fixtures/s0-erased-guard.tot
 #exit 1
 #out

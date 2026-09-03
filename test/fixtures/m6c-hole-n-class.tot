@@ -1,0 +1,1 @@
+def isFlagged : String -> Bool := fun c => member _ auto c (cons String "grep" (nil String))

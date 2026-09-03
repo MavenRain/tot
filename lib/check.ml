@@ -1456,11 +1456,12 @@ let ensure_fresh (globals : Global.t) (name : string) : (unit, Error.t) result =
     caller ([define_instance]) meets it: [stamped_ty] is
     [infer_univ globals empty_ctx ty]'s own output term, for this same
     [globals] and this same [ty].  Absent it, nothing changes. *)
-(** [rule] (M5 Stage E, SPIKE) selects the totality rule the [rec_]
-    path's guard runs: [Totality.Structural] is the shipped behaviour,
-    [Totality.Structural_wf] the measured prototype behind
-    --experimental-wf.  REQUIRED, not optional, so the compiler
-    enumerates every call site and none can pick up a silent default. *)
+(** [rule] (M6 Stage A, verdict pin 8): the totality rule the [rec_]
+    path's guard runs.  [Totality.rule] has the single constructor
+    [Totality.Structural], the shipped M2 rule;  an M7 admission rule
+    re-enters by adding a constructor.  REQUIRED, not optional, so the
+    compiler enumerates every call site and none can pick up a silent
+    default. *)
 let define ?(rec_ = false) ?(partial = false) ?(stamped_ty : Term.t option)
     ?(budget : Budget.t = Budget.unlimited) ~(rule : Totality.rule) (globals : Global.t)
     ~(name : string) ~(reducible : bool) ~(ty : Term.t) ~(def : Term.t) :
@@ -1766,9 +1767,11 @@ let define_instance ?(budget : Budget.t = Budget.unlimited) (globals : Global.t)
   (* M4 fixes round 1 (ctxcat id 9): install the very artifact the shape
      validator just accepted, rather than a second elaboration of the
      same source type that agrees with it only by determinism. *)
-  (* M5 Stage E: an instance body is never a [def rec], so the
-     prototype rule must not be reachable from it; the shipped rule is
-     passed literally. *)
+  (* M6 Stage A (verdict pin 8), the dead-spot record: an instance body
+     passes [~rule] but never [~rec_], so [define]'s guard cannot run on
+     it and the threading here is inert plumbing, not a live gate.  M7
+     decides whether instances gain a real [rec_] story or the
+     threading simplifies (verdict, Known debts). *)
   define ~reducible:true ~stamped_ty:ty' ~budget ~rule:Totality.Structural globals ~name
     ~ty ~def
 

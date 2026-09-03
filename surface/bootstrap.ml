@@ -87,7 +87,8 @@ let rec kept_pi_count (s : Syntax.t) : int =
   | Syntax.SVar (_, _) | Syntax.SType (_, _) | Syntax.SLam (_, _, _)
   | Syntax.SApp (_, _, _) | Syntax.SLet (_, _, _, _, _) | Syntax.SAnn (_, _, _)
   | Syntax.SMatch (_, _, _, _) | Syntax.SStr (_, _) | Syntax.SInt (_, _)
-  | Syntax.SLetStar (_, _, _, _, _, _, _) | Syntax.SAuto _ | Syntax.SInst (_, _, _) ->
+  | Syntax.SLetStar (_, _, _, _, _, _, _) | Syntax.SAuto _ | Syntax.SInst (_, _, _)
+  | Syntax.SHole _ ->
       0
 
 (** Phase-1 prims: their source-text type mentions only builtins. M3

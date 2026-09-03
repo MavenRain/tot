@@ -81,9 +81,12 @@ let run_file ~(exec : bool) ~(policy : Tot_surface.Run.policy) ~(serror_exit : i
                    separate change). M5 Stage A (pin 20): the one
                    [Serror.driver_exit] error, a strict-json refusal on
                    an IO Unit script, takes the DRIVER contract's
-                   literal 1 instead, OUTSIDE the mapping, so a
-                   fail-open install (--serror-exit 0) cannot turn the
-                   refusal into a silent allow. M5 Stage C: two more
+                   literal 2 instead (M6 Stage B, ruling R3;  exit 1
+                   through M5), OUTSIDE the mapping, so a fail-open
+                   install (--serror-exit 0) cannot turn the refusal
+                   into a silent allow, and a harness that blocks only
+                   on exit 2 now sees the Unit-shape refusal too.
+                   M5 Stage C: two more
                    arms OUTSIDE the mapping. Budget exhaustion (pins 10
                    and 19) exits the reserved 3 with ONE exact stderr
                    line naming the CONFIGURED milliseconds; the LINE,
@@ -105,7 +108,7 @@ let run_file ~(exec : bool) ~(policy : Tot_surface.Run.policy) ~(serror_exit : i
                     1
                 | () when Tot_surface.Serror.driver_exit e ->
                     prerr_endline (path ^ ":" ^ Tot_surface.Serror.to_string e);
-                    1
+                    2
                 | () ->
                     prerr_endline (path ^ ":" ^ Tot_surface.Serror.to_string e);
                     serror_exit))
@@ -221,11 +224,6 @@ type opts = {
           `run`, covering elaboration and type-checking only, never
           [Interp] execution (decision 13's external `timeout` stays
           the belt there). *)
-  experimental_wf : bool;
-      (** M5 Stage E (SPIKE): run the PROTOTYPE accessibility clause in
-          [Totality] instead of the shipped structural rule.  Default
-          false.  The prototype is known to be too permissive; it exists
-          to be measured, not to be relied on. *)
 }
 
 let default_opts : opts =
@@ -236,12 +234,11 @@ let default_opts : opts =
     require_main = false;
     strict_json = false;
     check_budget_ms = 0;
-    experimental_wf = false;
   }
 
 let usage : string =
   "usage: tot (check|run) [--no-prelude] [--no-axioms] [--serror-exit N] \
-   [--check-budget-ms N] [--require-main] [--experimental-wf] [--strict-json] FILE | tot \
+   [--check-budget-ms N] [--require-main] [--strict-json] FILE | tot \
    prims"
 
 (** Consume leading flags; the first non-flag argument ends the scan. A
@@ -254,7 +251,6 @@ let rec parse_flags (opts : opts) (args : string list) : (opts * string list, st
   | "--no-prelude" :: rest -> parse_flags { opts with no_prelude = true } rest
   | "--no-axioms" :: rest -> parse_flags { opts with no_axioms = true } rest
   | "--require-main" :: rest -> parse_flags { opts with require_main = true } rest
-  | "--experimental-wf" :: rest -> parse_flags { opts with experimental_wf = true } rest
   | "--strict-json" :: rest -> parse_flags { opts with strict_json = true } rest
   | "--serror-exit" :: n :: rest ->
       int_of_string_opt n
@@ -284,9 +280,6 @@ let dispatch ~(exec : bool) (opts : opts) (path : string) : int =
       Tot_surface.Run.no_axioms = opts.no_axioms;
       require_main = opts.require_main;
       strict_json = opts.strict_json;
-      wf_rule =
-        (if opts.experimental_wf then Tot_kernel.Totality.Structural_wf
-         else Tot_kernel.Totality.Structural);
     }
   in
   if opts.no_prelude then

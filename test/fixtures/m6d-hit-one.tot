@@ -1,0 +1,5 @@
+-- M6 Stage D (pin 11): ONE `member String auto` resolution.
+-- PASS-M6D-HIT-BASELINE pins this file's stdout; the ratio leg
+-- uses it as the denominator fixture.
+def flagged : List String := cons String "grep" (cons String "sed" (nil String))
+def u1 : Bool := member String auto "x" flagged

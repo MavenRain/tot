@@ -1,0 +1,9 @@
+data U (0 A : Type 0) : Type 0 := | mku : (Nat -> A) -> U A
+data T2 : Type 0 := | mkt2 : U T2 -> T2
+-- M6 Stage A fixture (verdict pin 10, graft from the semantics
+-- panel): a COVARIANT nested occurrence under a foreign
+-- parameterized head.  The strict-positivity fence rejects it today
+-- with the exact message below.  Gate PASS-M6A-FENCE-COVARIANT is
+-- DESIGNED to fail the day C3 lands nesting, forcing the guard and
+-- Frozen-emptiness questions (SPEC.md:851-852) open on purpose;
+-- mkt2 must stay at line 2 column 1.

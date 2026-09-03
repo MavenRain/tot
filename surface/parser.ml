@@ -31,6 +31,7 @@ let describe_syntax (s : Syntax.t) : string =
   | Syntax.SLetStar (_, _, _, _, _, _, _) -> "a let* expression"
   | Syntax.SAuto _ -> "'auto'"
   | Syntax.SInst (_, _, _) -> "an 'inst' expression"
+  | Syntax.SHole _ -> "'_'"
 
 let eof_err : ('a, Serror.t) result =
   (* unreachable: the lexer always materializes an Eof token *)
@@ -38,7 +39,9 @@ let eof_err : ('a, Serror.t) result =
 
 let kind_starts_atom (k : Token.kind) : bool =
   match k with
-  | Token.Ident _ | Token.KType | Token.LParen | Token.Nat _ | Token.Str _ | Token.KAuto -> true
+  | Token.Ident _ | Token.KType | Token.LParen | Token.Nat _ | Token.Str _ | Token.KAuto
+  | Token.Underscore ->
+      true
   | Token.RParen | Token.Colon | Token.ColonEq | Token.Arrow | Token.DArrow
   | Token.KFun | Token.KLet | Token.KIn | Token.KDef | Token.KReducible | Token.KEval
   | Token.KCheck | Token.KData | Token.KMatch | Token.KWith | Token.KAs | Token.KReturn
@@ -59,14 +62,39 @@ let rec collect_idents (ts : Token.t list) : string list * Token.t list =
   | { Token.kind = Token.Ident x; loc = _ } :: rest ->
       let names, rest' = collect_idents rest in
       (x :: names, rest')
+  | { Token.kind = Token.Underscore; loc = _ } :: rest ->
+      (* M6 Stage C (ruling R2): the anonymous binder, named "_" *)
+      let names, rest' = collect_idents rest in
+      ("_" :: names, rest')
   | ({ Token.kind = _; loc = _ } :: _ | []) as same -> ([], same)
 
-(** First name that occurs twice in the list, if any. Total. *)
+(** First name that occurs twice in the list, if any. Total.  M6 Stage
+    C (design note C13-N4): "_" entries are skipped, since two
+    anonymous binders collide only if [_] can be referenced, and the
+    reservation makes that impossible. *)
 let rec find_dup (xs : string list) : string option =
   match xs with
   | [] -> None
   | x :: rest ->
-      if List.exists (String.equal x) rest then Some x else find_dup rest
+      if (not (String.equal x "_")) && List.exists (String.equal x) rest then Some x
+      else find_dup rest
+
+(** M6 Stage C (ruling R2): the name a BINDER-position token binds,
+    an identifier's own name or "_" for the anonymous binder.  Total:
+    every caller has already matched [Ident _ | Underscore], so the
+    "_" fallback for the remaining kinds is never reached. *)
+let binder_name (k : Token.kind) : string =
+  match k with
+  | Token.Ident x -> x
+  | Token.Underscore | Token.KType | Token.LParen | Token.Nat _ | Token.Str _ | Token.KAuto
+  | Token.RParen | Token.Colon | Token.ColonEq | Token.Arrow | Token.DArrow
+  | Token.KFun | Token.KLet | Token.KIn | Token.KDef | Token.KReducible | Token.KEval
+  | Token.KCheck | Token.KData | Token.KMatch | Token.KWith | Token.KAs | Token.KReturn
+  | Token.KRec | Token.KEnd | Token.KLetStar | Token.KLetStarDiv | Token.KPartial
+  | Token.KAxiom | Token.KClass | Token.KInstance | Token.KInst
+  | Token.LBrace | Token.RBrace | Token.Semi
+  | Token.Pipe | Token.Eof ->
+      "_"
 
 (** The optional quantity marker at the head of a binder group. "0" means
     Zero. "w" is a Many marker ONLY when another identifier follows it;
@@ -76,7 +104,9 @@ let quantity_prefix (ts : Token.t list) : Quantity.t * Token.t list =
   match ts with
   | { Token.kind = Token.Nat 0; loc = _ } :: rest -> (Quantity.Zero, rest)
   | { Token.kind = Token.Ident "w"; loc = _ }
-    :: ({ Token.kind = Token.Ident _; loc = _ } :: _rest2 as rest) ->
+    :: ({ Token.kind = Token.Ident _ | Token.Underscore; loc = _ } :: _rest2 as rest) ->
+      (* M6 Stage C: [_] is a binder follower too, so "(w _ : Nat)" is
+         ONE anonymous Many binder, the printer's own spelling *)
       (Quantity.Many, rest)
   | ({ Token.kind = _; loc = _ } :: _ | []) as same -> (Quantity.Many, same)
 
@@ -119,9 +149,10 @@ and parse_fun (loc : Loc.t) (ts : Token.t list) :
 and parse_let (loc : Loc.t) (ts : Token.t list) :
     (Syntax.t * Token.t list, Serror.t) result =
   match ts with
-  | { Token.kind = Token.Ident x; loc = _ }
+  | { Token.kind = Token.Ident _ | Token.Underscore as k; loc = _ }
     :: { Token.kind = Token.Colon; loc = _ }
     :: rest ->
+      let x = binder_name k in
       let* ty, rest2 = parse_term rest in
       (match rest2 with
       | { Token.kind = Token.ColonEq; loc = _ } :: rest3 ->
@@ -147,14 +178,17 @@ and parse_let (loc : Loc.t) (ts : Token.t list) :
     [bindIO]/[bindDiv] application needs, parsed the same way an
     ordinary application argument is (one [parse_atom] each, so a
     compound type needs parens, e.g. "let* (Option String) Verdict x
-    := ... in ..."), NOT a bounded hole pass. *)
+    := ... in ..."), NOT a bounded hole pass.  M6 Stage C: either atom
+    may be the hole [_], filled by [Elab.term_at] from the expected
+    type. *)
 and parse_let_star (loc : Loc.t) ~(is_div : bool) (ts : Token.t list) :
     (Syntax.t * Token.t list, Serror.t) result =
   let* ty_a, rest = parse_atom ts in
   let* ty_b, rest2 = parse_atom rest in
   match rest2 with
-  | { Token.kind = Token.Ident x; loc = _ } :: { Token.kind = Token.ColonEq; loc = _ } :: rest3
+  | { Token.kind = Token.Ident _ | Token.Underscore as k; loc = _ } :: { Token.kind = Token.ColonEq; loc = _ } :: rest3
     ->
+      let x = binder_name k in
       let* rhs, rest4 = parse_term rest3 in
       (match rest4 with
       | { Token.kind = Token.KIn; loc = _ } :: rest5 ->
@@ -184,10 +218,11 @@ and parse_match (loc : Loc.t) (ts : Token.t list) :
      "let .. in .." scrutinee (which [parse_term] has already fully
      consumed by the time this arm looks for 'in'). *)
   | { Token.kind = Token.KAs; loc = _ }
-    :: { Token.kind = Token.Ident x; loc = _ }
+    :: { Token.kind = Token.Ident _ | Token.Underscore as k; loc = _ }
     :: { Token.kind = Token.KIn; loc = _ }
     :: { Token.kind = Token.Ident iname; loc = _ }
     :: rest2 ->
+      let x = binder_name k in
       let idx_names, rest3 = collect_idents rest2 in
       (match rest3 with
       | { Token.kind = Token.KReturn; loc = _ } :: rest4 ->
@@ -211,9 +246,10 @@ and parse_match (loc : Loc.t) (ts : Token.t list) :
           parse_err bad_loc ("expected 'return', found " ^ Token.describe kind)
       | [] -> eof_err)
   | { Token.kind = Token.KAs; loc = _ }
-    :: { Token.kind = Token.Ident x; loc = _ }
+    :: { Token.kind = Token.Ident _ | Token.Underscore as k; loc = _ }
     :: { Token.kind = Token.KReturn; loc = _ }
     :: rest2 ->
+      let x = binder_name k in
       let* motive, rest3 = parse_term rest2 in
       (match rest3 with
       | { Token.kind = Token.KWith; loc = _ } :: rest4 ->
@@ -330,6 +366,7 @@ and parse_atom (ts : Token.t list) : (Syntax.t * Token.t list, Serror.t) result 
   match ts with
   | { Token.kind = Token.Ident x; loc } :: rest -> Ok (Syntax.SVar (loc, x), rest)
   | { Token.kind = Token.KAuto; loc } :: rest -> Ok (Syntax.SAuto loc, rest)
+  | { Token.kind = Token.Underscore; loc } :: rest -> Ok (Syntax.SHole loc, rest)
   | { Token.kind = Token.KType; loc } :: { Token.kind = Token.Nat n; loc = _ } :: rest ->
       Ok (Syntax.SType (loc, n), rest)
   | { Token.kind = Token.KType; loc } :: rest -> Ok (Syntax.SType (loc, 0), rest)
@@ -488,7 +525,7 @@ and peel_data_codomain (t : Syntax.t) :
   | ( Syntax.SVar (loc, _) | Syntax.SLam (loc, _, _) | Syntax.SApp (loc, _, _)
     | Syntax.SLet (loc, _, _, _, _) | Syntax.SAnn (loc, _, _) | Syntax.SMatch (loc, _, _, _)
     | Syntax.SStr (loc, _) | Syntax.SInt (loc, _) | Syntax.SLetStar (loc, _, _, _, _, _, _)
-    | Syntax.SAuto loc | Syntax.SInst (loc, _, _) ) as
+    | Syntax.SAuto loc | Syntax.SInst (loc, _, _) | Syntax.SHole loc ) as
     s ->
       parse_err loc ("expected 'Type', found " ^ describe_syntax s)
 

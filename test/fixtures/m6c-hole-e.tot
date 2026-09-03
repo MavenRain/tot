@@ -1,0 +1,11 @@
+-- M6 Stage C (pin 1): every hole below is expected-type-only.
+-- Twin: m6c-hole-e-explicit.tot.  Byte-identical check output is
+-- PASS-M6C-HOLE-RESOLVES.
+def flagged : List String := cons _ "grep" (cons _ "sed" (nil _))
+def idList : (0 A : Type 0) -> List A -> List A :=
+  fun A xs => match xs with | nil => nil _ | cons h t => cons _ h t end
+def main : IO Verdict :=
+  let* String _ raw := readStdin in
+  pureIO _ (deny raw)
+check (cons _ "x" (nil _) : List String)
+check ((fun xs => idList _ xs) : List Nat -> List Nat)

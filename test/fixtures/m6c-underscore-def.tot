@@ -1,0 +1,2 @@
+def _ : Nat := succ zero
+def g : Nat := _

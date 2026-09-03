@@ -1,0 +1,7 @@
+data N (0 A : Type 0) : Type 0 := | mkn : (A -> Nat) -> N A
+data T3 : Type 0 := | mkt3 : N T3 -> T3
+-- M6 Stage A fixture (verdict pin 10): the CONTRAVARIANT smuggle.
+-- T3 sits in N's parameter in a negative position inside mkn's
+-- field.  Same fence, same exact-message pin, same tripwire intent
+-- as nested-pos.tot.  Gate PASS-M6A-FENCE-CONTRAVARIANT; mkt3 must
+-- stay at line 2 column 1.

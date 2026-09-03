@@ -14,12 +14,30 @@
 --   * only the LINE-PAIR shape: a line whose first token is `let` and
 --     whose last token ends with `?;`, immediately followed by a
 --     non-empty line whose first token starts with `Ok(`.
--- Everything else ALLOWS.  The scrubber, the block-tail test, the
--- used-name test and the net-new comparison are NOT ported, so this
--- guard is louder than the Python one on a pre-existing rewrap tail
--- inside a heredoc and quieter than it on a single-line tail (both
--- directions recorded in SPEC section 6).  It fails open on
--- everything it does not recognise, matching the other two guards.
+-- Everything else ALLOWS.
+--
+-- M6 Stage E (criterion 3): the SCRUBBER is ported, line-based and
+-- narrow, applied to the command's lines before the pair test:
+--   * `//` cuts the rest of its line, unless the text before it holds
+--     an odd count of `"` (then the `//` sits inside a string and the
+--     line is kept whole, so a `//` comment AFTER that string on the
+--     same line is not cut;  M6 Stage G);
+--   * an unmatched `/*` cuts its line and opens comment state;  the
+--     line holding the closing `*/` is dropped WHOLE (code after `*/`
+--     on that line is lost, fail-open);
+--   * a line holding both `/*` and `*/` keeps only the text before
+--     `/*`;
+--   * an odd count of `"` cuts the line at its first `"` and opens
+--     string state;  the line holding the closing `"` is dropped
+--     WHOLE;  balanced inline quotes are NOT blanked;
+--   * no escapes, char literals or raw strings are understood;
+--   * the trailing-whitespace miss of lastToken (below) carries over.
+-- The block-tail test, the used-name test and the net-new comparison
+-- are NOT ported, so this guard is louder than the Python one on a
+-- pre-existing rewrap tail inside a heredoc and quieter than it on a
+-- single-line tail (both directions recorded in SPEC section 6).  It
+-- fails open on everything it does not recognise, matching the other
+-- two guards.
 --
 -- The tokenizer helpers (firstNonEmpty, lastOr, splitEach,
 -- firstToken) are COPIED from examples/guard.tot on purpose: there
@@ -45,8 +63,8 @@ def rec lastOr : String -> List String -> String :=
 def rec splitEach : String -> List String -> List String :=
   fun sep xs =>
     match xs with
-    | nil => nil String
-    | cons h t => append String (stringSplit h sep) (splitEach sep t)
+    | nil => nil _
+    | cons h t => append _ (stringSplit h sep) (splitEach sep t)
     end
 
 def firstToken : String -> String :=
@@ -84,11 +102,11 @@ def endsWith : String -> String -> Bool :=
 def rec dropEmpty : List String -> List String :=
   fun xs =>
     match xs with
-    | nil => nil String
+    | nil => nil _
     | cons h t =>
         match stringEq (firstToken h) "" with
         | true => dropEmpty t
-        | false => cons String h (dropEmpty t)
+        | false => cons _ h (dropEmpty t)
         end
     end
 
@@ -126,11 +144,95 @@ def elideAt : Int -> String -> String :=
     | gt => stringConcat (orEmpty (stringSlice s 0 n)) "... (elided)"
     end
 
+-- M6 Stage E: criterion 3, the scrubber.  Line-based, narrow,
+-- fail-open; the recorded misses are listed above.
+data Scrub : Type 0 :=
+  | sCode : Scrub
+  | sComment : Scrub
+  | sString : Scrub
+
+def quoteTok : String := "\""
+
+-- text before the first occurrence of sep (the whole string when
+-- sep is absent: stringSplit then yields the one-piece list)
+def beforeFirst : String -> String -> String :=
+  fun sep s => headOr _ s (stringSplit s sep)
+
+def rec evenPieces : List String -> Bool :=
+  fun xs =>
+    match xs with
+    | nil => true
+    | cons h t => boolEq (evenPieces t) false
+    end
+
+-- odd count of '"' in s  <=>  stringSplit s quoteTok has even length
+def oddQuotes : String -> Bool :=
+  fun s => evenPieces (stringSplit s quoteTok)
+
+-- M6 Stage G: a `//` whose prefix has an odd quote count is inside a
+-- string, so it does not cut (a `let url = "https://x";` line used to
+-- open a phantom string state and drop the next line whole).
+def cutSlash : String -> String :=
+  fun l =>
+    match oddQuotes (beforeFirst "//" l) with
+    | true => l
+    | false => beforeFirst "//" l
+    end
+
+def cutBlock : String -> String :=
+  fun l =>
+    match stringContains (cutSlash l) "/*" with
+    | true => beforeFirst "/*" (cutSlash l)
+    | false => cutSlash l
+    end
+
+-- the kept text of a code-state line
+def scrubCode : String -> String :=
+  fun l =>
+    match oddQuotes (cutBlock l) with
+    | true => beforeFirst quoteTok (cutBlock l)
+    | false => cutBlock l
+    end
+
+-- the state AFTER a code-state line.  An unmatched /* wins over a
+-- quote: a quote inside an opened comment is comment text.
+def nextState : String -> Scrub :=
+  fun l =>
+    match andb (stringContains (cutSlash l) "/*")
+               (boolEq (stringContains (cutSlash l) "*/") false) with
+    | true => sComment
+    | false =>
+        match oddQuotes (cutBlock l) with
+        | true => sString
+        | false => sCode
+        end
+    end
+
+def rec scrubLines : Scrub -> List String -> List String :=
+  fun st ls =>
+    match ls with
+    | nil => nil _
+    | cons l t =>
+        match st with
+        | sCode => cons _ (scrubCode l) (scrubLines (nextState l) t)
+        | sComment =>
+            match stringContains l "*/" with
+            | true => scrubLines sCode t
+            | false => scrubLines sComment t
+            end
+        | sString =>
+            match stringContains l quoteTok with
+            | true => scrubLines sCode t
+            | false => scrubLines sString t
+            end
+        end
+    end
+
 def rewrapVerdict : String -> Verdict :=
   fun cmd =>
     match stringContains cmd ".rs" with
     | true =>
-        match hasRewrapPair (dropEmpty (stringSplit cmd "\n")) with
+        match hasRewrapPair (dropEmpty (scrubLines sCode (stringSplit cmd "\n"))) with
         | true =>
             deny (stringConcat
                     "house rule: map over the value instead of a let-then-Ok rewrap (command: "
@@ -159,9 +261,9 @@ def decideRewrap : Json -> Verdict :=
 -- keep (an installation that wants fail-closed spells the hook
 -- command `tot run --strict-json <this file>`).
 def main : IO Verdict :=
-  let* String Verdict raw := readStdin in
-  let* (Option Json) Verdict parsed := liftIO (Option Json) (jsonParse raw) in
+  let* String _ raw := readStdin in
+  let* (Option Json) _ parsed := liftIO _ (jsonParse raw) in
   match parsed with
-  | none => pureIO Verdict allow
-  | some payload => pureIO Verdict (decideRewrap payload)
+  | none => pureIO _ allow
+  | some payload => pureIO _ (decideRewrap payload)
   end

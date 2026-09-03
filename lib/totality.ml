@@ -5,14 +5,19 @@
     whose argument [k] is a variable made structurally smaller by a match
     on the principal (or on something already smaller). *)
 
-(** M5 Stage E (SPIKE): which totality rule [guard] runs.  [Structural]
-    is the shipped M2 rule, byte for byte.  [Structural_wf] adds the
-    PROTOTYPE accessibility clause and is reachable only through
-    --experimental-wf.  The prototype admits shapes the shipped rule
-    rejects; SPEC section 2's Stage E entry records which ones. *)
-type rule =
-  | Structural
-  | Structural_wf
+(** M6 Stage A (verdict pin 8, ruling R1): the totality rule [guard]
+    runs.  A single-constructor type ON PURPOSE.  [Check.define]
+    keeps its REQUIRED named [~rule] argument, every call site names
+    [Structural], and every match on [rule] is exhaustive with no
+    wildcard, so an M7 admission rule (the WF package) re-enters by
+    compiler error at every consumer.  The M5 [Structural_wf] spike
+    is DELETED, not dark: re-entry is a rebuild of the [Term.App] arm
+    of [guarded_call] below, against the pin-9 oracle fixtures
+    (test/fixtures/bad2.tot, crossformal-t.tot, deep2.tot), and any
+    such rule must carry a PROVENANCE side condition tying the
+    Smaller head to the candidate position (the seed invariant, SPEC
+    section 2 entry dated 2026-09-03). *)
+type rule = Structural
 
 (** Status of one binder, tracked newest first alongside de Bruijn use. *)
 type status =
@@ -95,24 +100,13 @@ let passes ~(rule : rule) ~(recname : string) (k : int) (formals : int) (body : 
            match a with
            | Term.Var ix -> smaller_at st ix
            | Term.App (_, _, _) -> (
-               (* M5 Stage E (SPIKE): the accessibility clause.  A call
-                  whose argument k applies a match-bound field of the
-                  scrutinee is the accRec shape.  Reachable only at
-                  [Structural_wf]. *)
+               (* M6 Stage A: the M5 spike's accessibility clause is
+                  deleted (ruling R1).  A call whose argument [k] is
+                  an APPLICATION is never guarded, which is the M2
+                  rule byte for byte.  The match on [rule] is kept so
+                  the M7 rule re-enters HERE by non-exhaustiveness. *)
                match rule with
-               | Structural -> false
-               | Structural_wf -> (
-                   let head, _sub = spine a [] in
-                   match head with
-                   | Term.Var ix -> smaller_at st ix
-                   | Term.Univ _ | Term.Auto
-                   | Term.Pi (_, _, _, _)
-                   | Term.Lam (_, _, _)
-                   | Term.App (_, _, _)
-                   | Term.Let (_, _, _, _)
-                   | Term.Ann (_, _)
-                   | Term.Global _ | Term.Match _ | Term.Lit _ ->
-                       false))
+               | Structural -> false)
            | Term.Univ _ | Term.Auto
            | Term.Pi (_, _, _, _)
            | Term.Lam (_, _, _)
@@ -187,10 +181,10 @@ let passes ~(rule : rule) ~(recname : string) (k : int) (formals : int) (body : 
   ok seed body
 
 (** Find the first formal position (0-based, outermost first) on which the
-    stamped body of [def rec recname] is structurally recursive.  [rule]
-    selects the totality rule (M5 Stage E): [Structural] is the shipped
-    behaviour, [Structural_wf] the measured prototype behind
-    --experimental-wf. *)
+    stamped body of [def rec recname] is structurally recursive under
+    [Structural], the single shipped rule (M6 Stage A, pin 8: an M7
+    admission rule re-enters through [type rule] and the [Term.App] arm
+    of [guarded_call], never through a driver flag). *)
 let guard ~(rule : rule) ~(recname : string) (body : Term.t) : (int, Error.t) result =
   let formals, inner = peel 0 body in
   let rec first_fit (k : int) : (int, Error.t) result =

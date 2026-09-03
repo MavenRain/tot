@@ -1231,7 +1231,22 @@ verdict CLIs, small tools.  The house rules are the semantics:
   (test/fixtures/m6c-underscore-{def,lam,match}.tot;
   `PASS-M6C-UNDERSCORE-RESERVED`) and `(w _ : A)` still parses as ONE
   binder (note N5, the `quantity_prefix` lookahead accepts
-  `Underscore`).
+  `Underscore`).  MIGRATION NOTE (conflict C-G1, ruling (a),
+  2026-09-03): a file that used `_` as an ordinary name stops
+  checking from this version on.  That covers a `def _` and a `_`
+  binder whose body then references it.  The definition is a parse
+  error naming `'_'`, and a `_` in term position is a hole;  both
+  exit 1 through the ordinary `--serror-exit` mapping.  That is the
+  point of the change.  No flag restores the old meaning and no new
+  opt-in flag exists.  An unresolved hole is exit 1, the mapped
+  `Serror` class, NOT the blocking exit 2.  The PreToolUse harness
+  treats exit codes other than 0 and 2 as non-blocking, so an
+  installation that must BLOCK on a holed guard maps the class with
+  `--serror-exit 2`, the mapping `Unknown_name` already rides, and
+  tells a hole from the other mapped errors by matching the stderr
+  LINE (the `: hole: ` marker), not the code, the same
+  discrimination rule the budget exit 3 and the strict-json refusal
+  already document.
 - 2026-09-03 (M6, Stage C): expected-type-only holes (verdict pins 1
   and 3).  `Elab.term_at globals scope ~expected` carries a kernel
   expected type down a DESCENT SET: def and instance bodies (the
@@ -1257,7 +1272,8 @@ verdict CLIs, small tools.  The house rules are the semantics:
   domain is known but no fill exists (buckets A and N), and
   `<file>:<l>:<c>: hole: no expected type at this position`
   (inference positions: `eval _`, a `let` annotation, a bare
-  argument under an unfenced head with no captured formal).
+  argument under an unfenced head with no captured formal)
+  (narrowed at M6 Stage H, see the Stage H entry below).
   CONSERVATIVITY: the change is surface-only;  `Term.t`,
   `Cache.format_version` (10) and every `lib/` file are untouched,
   and every fill is spliced as an ordinary kernel term and
@@ -1518,6 +1534,46 @@ verdict CLIs, small tools.  The house rules are the semantics:
   `rg -c '"\$watchdog" "\$(FAST|MED|SLOW|SUITE)"' dev/gates.sh`
   before (166) and after (167) the edit.  The battery count stays at
   370 PASS.
+- 2026-09-03 (M6, Stage H): conflicts C-G1 and C-G2 resolved by
+  ruling.  The user chose (a) for C-G1 and "report the instantiated
+  declared domain" for C-G2.
+  (i) C-G1 is documentation only.  The MIGRATION NOTE on the `_`
+  reservation above carries it.  No exit class moves: `Serror.Hole`
+  keeps riding the ordinary `--serror-exit` mapping, exit 1 by
+  default.
+  (ii) C-G2 changes one wording.  A hole at a FENCED argument slot
+  above the leading type formals now reports the INSTANTIATED
+  declared domain of its slot.  `surface/elab.ml`'s fence arm in
+  `spine` matches its argument exhaustively: a `Syntax.SHole` runs
+  `inst_domain` over the settled leading args and reports
+  `hole: expected <domain>`, and every other constructor still
+  elaborates in infer mode, so a hole NESTED inside a non-hole
+  argument is untouched.  When `inst_domain` returns `None` the
+  domain keeps a telescope Var, no instantiated domain exists, and
+  the old `hole: no expected type at this position` wording stands.
+  The FENCE STILL REFUSES: no fill path exists for a hole under a
+  fence, nothing is filled, and both shapes exit 1 with empty
+  stdout.  The unfenced arm already reported the instantiated
+  domain and did not move.
+  (iii) Two refusal fixtures pin the two fence triggers:
+  `test/fixtures/m6h-hole-n-fence-proof.tot` (the proof set, `refl`,
+  `1:42: hole: expected Nat`) and
+  `test/fixtures/m6h-hole-n-fence-class.tot` (the class former,
+  `member` under `EqD`, `1:65: hole: expected (List String)`).
+  `PASS-M6H-HOLE-FENCE-DOMAIN` runs both: exit 1, empty stdout, one
+  stderr line each, whole-line anchors.
+  (iv) The two fixtures grow the transcript, so
+  `dev/m5e-default-transcript.txt` was resealed once (pin 14):
+  blocks 99 -> 101, md5 2da162428641f61008255d2c3d366b39 ->
+  a27d9e06814822884b1821148d9c0fc4.  The reseal is PURE GROWTH: the
+  99 old blocks are byte-identical and the diff adds ten lines, all
+  inside the two new blocks.
+  `PASS-M5D-TIERS` went 167 -> 169: the two new legs add two direct
+  FAST uses, measured with
+  `rg -c '"\$watchdog" "\$(FAST|MED|SLOW|SUITE)"' dev/gates.sh`
+  before (167) and after (169) the edit.  The battery count goes
+  370 -> 371 PASS.  The hole-anchor classes do not move:
+  `dev/hole-anchors.py` excludes test fixtures (its lines 13-15).
 
 ## 3.  Core calculus (M0 core, M2 inductives, M3 literals and effects)
 

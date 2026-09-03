@@ -10293,6 +10293,16 @@ def hits : Bool
 def flagged : (List String)
 def u1 : Bool
 #err
+### test/fixtures/m6h-hole-n-fence-class.tot
+#exit 1
+#out
+#err
+test/fixtures/m6h-hole-n-fence-class.tot:1:65: hole: expected (List String)
+### test/fixtures/m6h-hole-n-fence-proof.tot
+#exit 1
+#out
+#err
+test/fixtures/m6h-hole-n-fence-proof.tot:1:42: hole: expected Nat
 ### test/fixtures/nested-neg.tot
 #exit 1
 #out

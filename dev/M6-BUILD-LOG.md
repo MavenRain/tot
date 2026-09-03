@@ -2098,3 +2098,303 @@ surface/elab.ml, examples/guard-rewrap.tot, dev/gates.sh, SPEC.md,
 dev/M6-BUILD-LOG.md and test/fixtures/m6g-rewrap-deny-slash.json.
 Evidence outside the repo: ~/Documents/tot-m6-probes/stage-g-build/
 and ~/Documents/tot-m6-stageG-*.log.
+
+## Stage H (2026-09-03): conflicts C-G1 and C-G2 resolved by ruling
+
+The user ruled both open conflicts on 2026-09-03, verbatim: "For C-G1,
+I choose option (a).  For C-G2, report the instantiated declared
+domain."
+
+C-G1 (a) is a MIGRATION NOTE on the `_` reservation, in ruling R3's
+shape.  No exit class moves.  `Serror.Hole` keeps riding the ordinary
+`--serror-exit` mapping, exit 1 by default.
+
+C-G2: a hole at a FENCED argument slot above the leading type formals
+reports `hole: expected <instantiated declared domain>` instead of
+`hole: no expected type at this position`.  The fence still REFUSES
+the hole.  Nothing is filled.
+
+This stage implements both rulings and nothing else.  It never widens
+them.  Nothing was staged.  HEAD stays 39234e4.
+
+Files touched: surface/elab.ml, dev/gates.sh, SPEC.md,
+dev/M6-BUILD-LOG.md, dev/m5e-default-transcript.txt,
+test/fixtures/m6h-hole-n-fence-proof.tot (new),
+test/fixtures/m6h-hole-n-fence-class.tot (new).  lib/, bin/,
+surface/serror.ml, surface/parser.ml and surface/lexer.ml are
+byte-identical to HEAD.
+
+| file | md5 post-G (HEAD 39234e4) | md5 post-H |
+|---|---|---|
+| surface/elab.ml | 25f429ca375f93b80d6253c231f197da | 6739186f467f550e7bb66813792a67ce |
+| dev/gates.sh | adea43dfdc73fa0403196fde3407ab1b | fa2d8a035286549957faf969d03b7054 |
+| dev/m5e-default-transcript.txt | 2da162428641f61008255d2c3d366b39 | a27d9e06814822884b1821148d9c0fc4 |
+| SPEC.md | fc55cafa1ba689f85075bed908e9f45b | e3f65f4d6ea8c914d6888383be59111b |
+| test/fixtures/m6h-hole-n-fence-proof.tot | (new) | 214e15a58610a0d8bdb13bf43c2fa35a |
+| test/fixtures/m6h-hole-n-fence-class.tot | (new) | 7ddf52d803da1766cfed69f68651030a |
+
+### 1.  Rulings
+
+Both rulings are quoted verbatim above.  They are fixed.  This
+section records what each one changed and nothing more.
+
+### 2.  Changes (H1, H2, H3)
+
+surface/elab.ml:511-522, ONE hunk, inside `spine`'s fold.  The arm
+`| () when fence -> term globals scope arg` became an exhaustive
+match on `arg`, spelling the same constructor list the `j < k` arm
+spells, with no `_` arm:
+
+    | () when fence -> (
+        match arg with
+        | Syntax.SHole loc ->
+            inst_domain ~j ~k (List.rev settled) ~d:0 dom
+            |> Option.map (fun dom' ->
+                   Error (Serror.Hole { loc; expected = Some (scope, dom') }))
+            |> unwrap_or (fun () -> term globals scope arg)
+        | Syntax.SVar _ | Syntax.SType _ | Syntax.SPi _ | Syntax.SLam _
+        | Syntax.SApp _ | Syntax.SLet _ | Syntax.SAnn _ | Syntax.SMatch _
+        | Syntax.SStr _ | Syntax.SInt _ | Syntax.SLetStar _ | Syntax.SAuto _
+        | Syntax.SInst _ ->
+            term globals scope arg)
+
+The fallback is `unwrap_or`, the file's lazy sibling of `or_else`
+(surface/elab.ml:21-25), never `Option.value ~default:` and never
+`Option.fold ~none:` with a non-constant fallback.
+
+NOTE, not a conflict: the `None` case keeps the OLD wording.
+`inst_domain` returns `None` when the slot's declared domain keeps a
+telescope Var, so no instantiated domain exists at that slot and
+`hole: no expected type at this position` is the only honest line
+there.
+
+NOTE, not a conflict: every non-hole constructor still routes to
+`term globals scope arg`, byte-for-byte the pre-H behaviour.  A
+non-hole argument under a fence is elaborated in infer mode, so a
+hole NESTED inside it is never filled (pin 4 holds).
+
+NOTE, not a conflict: the `spine` doc comment at surface/elab.ml:466-476
+still reads "or [term] when the fence is up".  The brief pins ONE hunk
+in this file, so the comment was left as written.  It now describes
+the non-hole path only.  Recorded here, not tuned away.
+
+test/fixtures/m6h-hole-n-fence-proof.tot (new, one line, no comment):
+
+    def agree : Eq Nat zero zero := refl Nat _
+
+test/fixtures/m6h-hole-n-fence-class.tot (new, one line, no comment):
+
+    def isFlagged : String -> Bool := fun c => member String auto c _
+
+Probed on the post-H1 binary, the two pinned stderr lines verbatim
+(the `(List String)` rendering is what `Pp.term` prints, pinned as
+printed, not guessed):
+
+    /Users/oobi/Documents/tot/test/fixtures/m6h-hole-n-fence-proof.tot:1:42: hole: expected Nat
+    /Users/oobi/Documents/tot/test/fixtures/m6h-hole-n-fence-class.tot:1:65: hole: expected (List String)
+
+Both exit 1 with EMPTY stdout and exactly one stderr line.
+
+dev/gates.sh:2718-2745, PASS-M6H-HOLE-FENCE-DOMAIN, placed directly
+after PASS-M6C-HOLE-NEVER-RUNS in the HOLE-REPORTS leg shape.  Leg (a)
+is the proof fixture, leg (b) the class fixture.  Each asserts exit 1,
+empty stdout, `wc -l` of the stderr file equal to 1, and a whole-line
+anchored `rg -q`.  The FAIL branch prints both stderr files and
+`FAIL-M6H-HOLE-FENCE-DOMAIN (exit=$codefa/$codefb)`, then exits 1.
+The block reuses `$m6c_scratch`, `$watchdog` and `$FAST` exactly as
+the neighbouring legs do.
+
+dev/gates.sh:2280, the PASS-M5D-TIERS literal went 167 -> 169: the two
+new legs add two direct FAST uses and delete none, measured with
+`rg -c '"\$watchdog" "\$(FAST|MED|SLOW|SUITE)"' dev/gates.sh` before
+(167) and after (169) the edit.  The brief's simpler recipe
+`rg -c '"\$FAST"' dev/gates.sh` agrees on the delta: 56 before, 58
+after, +2.  The comment above the literal records the bump next to the
+Stage G one (dev/gates.sh:2268-2274).
+
+The battery grew by exactly ONE PASS line: 370 -> 371.
+
+### 3.  Mutation proofs (H4, plan section 6)
+
+Runner: ~/Documents/tot-m6-probes/stage-h-build/gate-h-legs.sh, which
+holds the PASS-M6C-HOLE-REPORTS and PASS-M6H-HOLE-FENCE-DOMAIN blocks
+copied VERBATIM out of the post-H dev/gates.sh (lines 2665-2695 and
+2718-2745) plus the four variables they read.  dev/gates.sh is never
+edited for a mutation run.
+
+Why the isolated runner is needed: all three mutations also move the
+transcript, and PASS-M5E-DEFAULT-IDENTITY sits at dev/gates.sh:2404,
+BEFORE the two hole blocks.  The full battery exits at that first FAIL
+and never reaches the leg under proof.  The mutant full battery is
+recorded below for MUT-H1, and the leg-level flip comes from the
+runner.  Every GREEN run after a revert is a FULL battery.
+
+MUT-H1 (source).  In the new fence arm, the `SHole` branch falls back
+to `term globals scope arg` unconditionally, the pre-H wording:
+`sd -s` replaced the line
+`                         inst_domain ~j ~k (List.rev settled) ~d:0 dom`
+(25 spaces of indent, unique;  the unfenced arm's copy sits at 21) by
+`                         None`, so the `Option.map` never fires and
+`unwrap_or` always runs the fallback.  Rebuilt with `dunecho build`,
+0 errors, 0 warnings.  Runner output, RED line verbatim
+(~/Documents/tot-m6-probes/stage-h-build/mut-H1-legs.log):
+
+    PASS-M6C-HOLE-REPORTS
+    /Users/oobi/Documents/tot/test/fixtures/m6h-hole-n-fence-proof.tot:1:42: hole: no expected type at this position
+    /Users/oobi/Documents/tot/test/fixtures/m6h-hole-n-fence-class.tot:1:65: hole: no expected type at this position
+    FAIL-M6H-HOLE-FENCE-DOMAIN (exit=1/1)
+
+PASS-M6C-HOLE-REPORTS stays PASS and prints BEFORE the FAIL line.  The
+new gate names the fenced-slot property and the old gate cannot see
+it.  Full mutant battery
+(~/Documents/tot-m6-probes/stage-h-build/mut-H1-battery.log): 339 PASS,
+`414:FAIL-M5E-DEFAULT-IDENTITY (exit=0/1)`, GATE-EXIT=1, which is the
+transcript stopping the run early as described above.  Restore: the
+inverse `sd -s`;  md5 of surface/elab.ml back to
+6739186f467f550e7bb66813792a67ce, identical to the post-H1 value;
+rebuilt;  runner PASS/PASS/LEGS-OK;  full battery 371 PASS, 0 FAIL,
+GATE-EXIT=0 (mut-H1-green.log).
+
+MUT-H2 (fixture).  `sd -s 'refl Nat _' 'refl Nat zero'` in
+test/fixtures/m6h-hole-n-fence-proof.tot.  The file then checks: exit
+0, stdout `def agree : (((Eq Nat) zero) zero)`, which is non-empty, so
+leg (a) fails on both the code and the emptiness clause.  RED line
+verbatim (mut-H2-legs.log):
+
+    FAIL-M6H-HOLE-FENCE-DOMAIN (exit=0/1)
+
+Restore: the inverse `sd -s`;  md5 back to
+214e15a58610a0d8bdb13bf43c2fa35a, identical;  full battery 371 PASS,
+0 FAIL, GATE-EXIT=0 (mut-H2-green.log).
+
+MUT-H3 (fixture).  `sd -s 'auto c _' 'auto c (nil String)'` in
+test/fixtures/m6h-hole-n-fence-class.tot.  The file then checks: exit
+0, stdout `def isFlagged : (w _ : String) -> Bool`.  RED line verbatim
+(mut-H3-legs.log):
+
+    FAIL-M6H-HOLE-FENCE-DOMAIN (exit=1/0)
+
+Restore: the inverse `sd -s`;  md5 back to
+7ddf52d803da1766cfed69f68651030a, identical;  full battery 371 PASS,
+0 FAIL, GATE-EXIT=0 (mut-H3-green.log).
+
+One mutation was applied at a time.  No mutation is left applied.
+
+### 4.  Battery (H8)
+
+`zsh dev/gates.sh 2>&1 | tee ~/Documents/tot-m6-stageH-gate.log` with
+`GATE-EXIT=$pipestatus[1]` appended.  Result: 371 PASS, 0 FAIL,
+GATE-EXIT=0.  Tail:
+
+    PASS-M6E-REWRAP-OPEN
+    PASS-M6E-GUARD-HOLES
+    PASS-M6E-ANCHORS
+    PASS-M6E-TRANSCRIPT-RESEALED
+    PASS-M4FIX-INST-BRANCHING
+    PASS-M5B-BRANCHING-20
+    GATE-LOG=/tmp/claude-501/tot-gate-measure.log
+    GATE-EXIT=0
+
+The PASS-line set equals the Stage G set plus exactly
+PASS-M6H-HOLE-FENCE-DOMAIN (`rg -o '^PASS-[A-Z0-9-]+' | sort -u`,
+one added line, none removed).
+
+ANCHORS line, unchanged from Stage G because dev/hole-anchors.py
+excludes test fixtures (its lines 13-15):
+
+    ANCHORS total=101 expected-type-only=62 argument-driven=9 neither=30
+
+Behaviour probes on the post-H binary, all four as the brief's
+"Starting state" requires:
+
+    def agree : Eq Nat zero zero := refl Nat _
+      -> 1:42: hole: expected Nat, exit 1 (was "no expected type at this position")
+    def isFlagged : String -> Bool := fun c => member String auto c _
+      -> 1:65: hole: expected (List String), exit 1 (was "no expected type at this position")
+    def t : Type 0 := Eq Nat zero _
+      -> 1:31: hole: expected Nat, exit 1 (UNCHANGED)
+    def agree : Eq Nat zero zero := refl Nat zero
+      -> def agree : (((Eq Nat) zero) zero), exit 0 (UNCHANGED)
+
+### 5.  Reseal (H5, pin 14)
+
+Resealed ONCE, after H1 and H2 were in place and built:
+`zsh dev/gen-m5e-transcript.sh > dev/m5e-default-transcript.txt`, exit
+0.  Old seal md5 2da162428641f61008255d2c3d366b39, 99 `### ` blocks.
+New seal md5 a27d9e06814822884b1821148d9c0fc4, 101 blocks, 10399
+lines, 667236 bytes.
+
+PURE GROWTH, proved two ways.  First, `diff` of HEAD's seal against
+the working-tree seal has ZERO `<` lines and ten `>` lines, and every
+one of the ten belongs to the two new sections:
+
+    10294a10295,10303
+    > #err
+    > ### test/fixtures/m6h-hole-n-fence-class.tot
+    > #exit 1
+    > #out
+    > #err
+    > test/fixtures/m6h-hole-n-fence-class.tot:1:65: hole: expected (List String)
+    > ### test/fixtures/m6h-hole-n-fence-proof.tot
+    > #exit 1
+    > #out
+    10295a10305
+    > test/fixtures/m6h-hole-n-fence-proof.tot:1:42: hole: expected Nat
+
+The two hunks are a diff alignment artefact: the added region is the
+contiguous block of new-seal lines 10296-10305, and diff anchored the
+shared `#err` line at the far end of it.  Second, and exactly:
+dropping new-seal lines 10296-10305 gives a file whose md5 is
+2da162428641f61008255d2c3d366b39, HEAD's seal byte for byte.  The 99
+old blocks did not move, so the elab change altered no existing
+behaviour.
+
+PASS-M6E-TRANSCRIPT-RESEALED holds: blocks 101 equals the live glob
+count 101 (99 old files plus the two new fixtures).
+
+### 6.  Conflicts
+
+None.  Both rulings applied as written.  Three notes are recorded in
+section 2 (the `None` fallback wording, the untouched non-hole route,
+and the stale `spine` doc comment);  none of them is a conflict, and
+no gate, count or pin was tuned.
+
+### 7.  Docs and porcelain
+
+SPEC.md: the MIGRATION NOTE for C-G1 sits INSIDE the Stage C `_`
+reservation entry, appended after its last sentence as one
+continuation of the same bullet, exactly as ruling R3's note sits
+inside the Stage B entry.  It carries R3's four parts: who is
+affected, what changes from this version on, that no flag restores
+the old meaning and no new opt-in flag exists, and how to
+discriminate by matching the stderr LINE and not the code.  The holes
+entry gains the pointer "(narrowed at M6 Stage H, see the Stage H
+entry below)".  A new dated entry "2026-09-03 (M6, Stage H):
+conflicts C-G1 and C-G2 resolved by ruling" records the fence-arm
+wording change and its `None` fallback, the two fixtures,
+PASS-M6H-HOLE-FENCE-DOMAIN, the reseal (blocks 99 -> 101, new md5),
+the TIERS bump 167 -> 169, and that the fence still refuses.  No
+other SPEC sentence moved, and SPEC.md gained no new spelling of the
+anchors literal, so PASS-M5D-MEASURE-LOG still reads the same last
+one (dev/gates.sh:3015 takes SPEC.md's LAST occurrence).
+
+Porcelain after this stage: 7 paths, 5 ` M` and 2 `??`, nothing
+staged.  Stage H's own paths: surface/elab.ml, dev/gates.sh, SPEC.md,
+dev/M6-BUILD-LOG.md, dev/m5e-default-transcript.txt,
+test/fixtures/m6h-hole-n-fence-proof.tot and
+test/fixtures/m6h-hole-n-fence-class.tot.  Evidence outside the repo:
+~/Documents/tot-m6-probes/stage-h-build/ and
+~/Documents/tot-m6-stageH-gate.log.
+
+### 8.  Main-loop addendum (2026-09-03, after verification)
+
+The main loop tried a doc-comment edit at surface/elab.ml:474-476 (the
+`spine` comment still says a fenced slot goes through `term`, which now
+holds for non-hole arguments only).  The battery after that edit stopped
+at `FAIL-CACHE-EXEID-CONTENT (exit=0/137 ...)`, a watchdog kill (137) on
+a timed leg (~/Documents/tot-m6-stageH-gate-final.log);  a comment does
+not change the binary, so this is timing, not the edit.  The edit was
+reverted anyway (surface/elab.ml md5 6739186f467f550e7bb66813792a67ce,
+the verified value) and the battery re-run from the reverted tree: 371
+PASS, 0 FAIL, GATE-EXIT=0 (~/Documents/tot-m6-stageH-gate-final2.log).
+The comment stays as written;  its wording fix is M7 debt.

@@ -2268,6 +2268,10 @@ m5d_bin="$ROOT"/_build/default/bin/tot.exe
 # M6 Stage G (2026-09-03) raised it 166 -> 167: leg (d) of
 # PASS-M6E-REWRAP-SCRUB adds one FAST call and deletes none, measured
 # with the recipe above before (166) and after (167) the edit.
+# M6 Stage H (2026-09-03) raised it 167 -> 169: the two legs of
+# PASS-M6H-HOLE-FENCE-DOMAIN add two FAST calls and delete none,
+# measured with the recipe above before (167) and after (169) the
+# edit.
 # Do not soften -eq to -ge: -ge would stop the delete-one-leg
 # mutation from flipping, and that mutation is why the count exists.
 # MUTATION PROOFS (plan D9): (1) restore one numeric literal; nolit
@@ -2277,7 +2281,7 @@ m5d_bin="$ROOT"/_build/default/bin/tot.exe
 rg -q '"\$watchdog" [0-9]' "$ROOT/dev/gates.sh"; m5d_nolit=$?
 m5d_tiers=$(rg -c '"\$watchdog" "\$(FAST|MED|SLOW|SUITE)"' "$ROOT/dev/gates.sh")
 m5d_bites=$(rg -c '"\$watchdog" "\$BITE_S"' "$ROOT/dev/gates.sh")
-{ [ "$m5d_nolit" -eq 1 ] && [ "$m5d_tiers" -eq 167 ] && [ "$m5d_bites" -eq 2 ] \
+{ [ "$m5d_nolit" -eq 1 ] && [ "$m5d_tiers" -eq 169 ] && [ "$m5d_bites" -eq 2 ] \
   && [ -s "$ROOT/dev/gates.sh" ]; } \
   && echo PASS-M5D-TIERS \
   || { echo "FAIL-M5D-TIERS (nolit=$m5d_nolit tiers=$m5d_tiers bites=$m5d_bites)"; exit 1; }
@@ -2708,6 +2712,35 @@ codes=$?
   || {
     cat "$m6c_scratch"/r.err "$m6c_scratch"/s.err
     echo "FAIL-M6C-HOLE-NEVER-RUNS (exit=$coder/$codes)"
+    exit 1
+  }
+
+# Gate H, PASS-M6H-HOLE-FENCE-DOMAIN (conflict C-G2, ruling of
+# 2026-09-03).  A hole at a FENCED argument slot above the leading
+# type formals reports the INSTANTIATED declared domain of its slot,
+# not "no expected type at this position".  The fence still refuses
+# the hole: nothing is filled, both legs exit 1 with empty stdout.
+# Leg (a) is the proof-set trigger of the fence (`refl`, whose
+# declared type mentions `Eq`), leg (b) the class-former trigger
+# (`member`, fenced by `EqD`).  Both stderr files carry exactly one
+# whole-line-anchored pinned line.  MUT-H1 flips both legs from the
+# source; MUT-H2 flips leg (a) and MUT-H3 leg (b) from the fixtures.
+outfa=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/test/fixtures/m6h-hole-n-fence-proof.tot 2> "$m6c_scratch"/fa.err)
+codefa=$?
+outfb=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/test/fixtures/m6h-hole-n-fence-class.tot 2> "$m6c_scratch"/fb.err)
+codefb=$?
+{ [ "$codefa" -eq 1 ] && [ "$codefb" -eq 1 ] \
+    && [ -z "$outfa" ] && [ -z "$outfb" ] \
+    && [ "$(wc -l < "$m6c_scratch"/fa.err)" -eq 1 ] \
+    && [ "$(wc -l < "$m6c_scratch"/fb.err)" -eq 1 ] \
+    && rg -q '^\S*/m6h-hole-n-fence-proof\.tot:1:42: hole: expected Nat$' "$m6c_scratch"/fa.err \
+    && rg -q '^\S*/m6h-hole-n-fence-class\.tot:1:65: hole: expected \(List String\)$' "$m6c_scratch"/fb.err; } \
+  && echo PASS-M6H-HOLE-FENCE-DOMAIN \
+  || {
+    cat "$m6c_scratch"/fa.err "$m6c_scratch"/fb.err
+    echo "FAIL-M6H-HOLE-FENCE-DOMAIN (exit=$codefa/$codefb)"
     exit 1
   }
 

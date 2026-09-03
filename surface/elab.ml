@@ -508,7 +508,18 @@ and spine (globals : Global.t) (scope : string list) ~(expected : Term.t) (g : s
                      | Syntax.SStr _ | Syntax.SInt _ | Syntax.SLetStar _ | Syntax.SAuto _
                      | Syntax.SInst _ ->
                          term_at globals scope ~expected:dom arg)
-                 | () when fence -> term globals scope arg
+                 | () when fence -> (
+                     match arg with
+                     | Syntax.SHole loc ->
+                         inst_domain ~j ~k (List.rev settled) ~d:0 dom
+                         |> Option.map (fun dom' ->
+                                Error (Serror.Hole { loc; expected = Some (scope, dom') }))
+                         |> unwrap_or (fun () -> term globals scope arg)
+                     | Syntax.SVar _ | Syntax.SType _ | Syntax.SPi _ | Syntax.SLam _
+                     | Syntax.SApp _ | Syntax.SLet _ | Syntax.SAnn _ | Syntax.SMatch _
+                     | Syntax.SStr _ | Syntax.SInt _ | Syntax.SLetStar _ | Syntax.SAuto _
+                     | Syntax.SInst _ ->
+                         term globals scope arg)
                  | () ->
                      inst_domain ~j ~k (List.rev settled) ~d:0 dom
                      |> Option.map (fun dom' -> term_at globals scope ~expected:dom' arg)

@@ -70,6 +70,26 @@ plan.
   M8 debts list (section 8, item 8).  CLARIFIED on 2026-09-04, section
   1.1a: "no second traversal" takes the STRICT reading, so Stage C may
   not add a pass of any kind over parsed items or terms.
+
+  Ruled on 2026-09-04 (round 3):  (a) Pin 11's corpus literal is 69, not
+  67, because Stage B closes all four guard slots and
+  PASS-M6E-GUARD-HOLES moves from 22 to 26.  (b) Pin 5's reach at M7 exit
+  is nine of nine A-bucket anchors; the words "exactly seven" are
+  retired.  Fallback B7 still reverts examples/guard.tot:134 and
+  examples/guard-rewrap.tot:265, for exit 394 and literal 24.  (c) Part
+  A3b, the infer-path settle that reaches the inner liftIO hole at
+  stdlib/prelude.tot:173, stays in Stage A.  Rollback step 2, reverting
+  A3b alone for the D8 retreat literals 46 and 66, is a user decision,
+  never a builder decision.  (d) The Stage C prelude-arm carve-out moves
+  to M8; bin/tot.ml:171-173 keeps its one-line report on a cache hit in
+  M7 (section 8, item 10).  (e) Pin 7's position-only tail may name a
+  hole that elaboration would have filled had elaboration reached it;
+  that is the intended reading.  (f) The stale SPEC anchors at
+  dev/M6-PLAN.md:540-581 get their own doc-only fix, in their own
+  commit, outside this plan and outside Stage E.  (g) The PASS-M5D-TIERS
+  literal moves 200 to 204 across the stages by the count in the gate
+  paragraphs, not by a measurement; each stage builder re-derives the
+  value it writes.
 - **Q3 prelude re-spell timing: DEFAULT.**  The prelude is re-spelled in
   M7 as scoped.  Stage D flips the prelude-carries-zero-holes assertion
   and moves the two pinned gate literals.  The arithmetic in the verdict
@@ -955,6 +975,14 @@ this list into SPEC section 6.  None of it is M7 scope.
    test/surface.ml:110.  A future gate leg that wants it as a positive
    control must reach it the way the suite does, or the fixture must be
    re-spelled.
+10. **The prelude arm multi-hole tail.**  bin/tot.ml:171-173 keeps the M6
+    one-line report on a cache hit.  On a hit no parse walk runs:
+    surface/bootstrap.ml:384 parses the prelude only on a cache miss, so
+    no record exists to report a position from.  A re-parse on a hit is
+    exactly the second pass the amendment of 2026-09-04 bars, and a tail
+    that reports cold and vanishes warm would also break pin 18's
+    miss-then-hit leg.  M8 chooses between recording positions in the
+    prelude cache, or a re-parse limited to the error path only.
 
 The three grafted oracles are the tripwire half of this hand-off: G2 the
 renamed-Acc positive control, G3 the provenance negative, G6 the
@@ -3744,8 +3772,8 @@ On a cache hit no parse walk runs, so no record exists to report from,
 and a re-parse is exactly the second pass the amendment bars.  A tail
 that appeared on a cold cache and vanished on a warm one would also
 break pin 18's miss-then-hit leg.  A hand-broken prelude therefore
-keeps the M6 report, and the plan records this as the one place
-multi-hole reporting stops.
+keeps the M6 report.  M8 inherits it as debt 10 of section 8, by the
+ruling of 2026-09-04.
 
 ---
 
@@ -5323,7 +5351,8 @@ The subsection carries these entries.  Each address was re-read at HEAD.
 10. Multi-hole reporting.  PART CLOSED.  Stage C ships the position-only
     tail.  Per-hole expected types stay carried, because the strict
     reading of "no second traversal" at Q2 of the amendment forbids a
-    new pass and the `Serror` type does not change in M7.
+    new pass and the `Serror` type does not change in M7.  The prelude
+    arm's one-line report on a cache hit is CARRIED to M8 as debt 10.
 11. Cumulativity or an `Eq1` layer.  CARRIED.  No measured demand.
 12. The guard tokenizer duplication.  CLOSED by Stage D, at
     examples/guard-rewrap.tot:42-47, pinned by PASS-M7D-HELPERS-SHARED.

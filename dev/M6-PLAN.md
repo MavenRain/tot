@@ -547,7 +547,7 @@ scope.
 - The WF package, sized together as ONE unit: a sound admission rule
   whose side condition carries PROVENANCE (the pin-9 seed invariant,
   lib/totality.ml:184-186), the erased elimination form for `Acc`
-  plus `Frozen_rec` (SPEC.md:1111-1112 couples them), and the
+  plus `Frozen_rec` (SPEC.md:1113-1116 couples them), and the
   indexed-relation quantity story (SPEC.md:1092-1101), all against
   the pin-9 oracle fixtures.
 - Argument-driven holes: bidirectional application checking in
@@ -556,18 +556,19 @@ scope.
 - Prelude re-spelling: the 40 prelude E anchors (probe P4), after a
   milestone of hole soak.
 - Nested and mutual inductives over the UNPROVEN `Frozen` emptiness
-  claim (SPEC.md:851-853, 1615-1619), entered through the pin-10
+  claim (SPEC.md:851-853, 1157-1168), entered through the pin-10
   fence tripwires, which are DESIGNED to go red the day nesting
   lands.
 - The lib/ .mli sweep (17 modules, 2 done: `Level`, `Budget`;  probe
-  P10, SPEC.md:1351-1352) and then surface/.
+  P10;  M7-PLAN.md:5348-5350 measured 15 lib/ modules without .mli
+  and all 12 surface/ modules, no SPEC address) and then surface/.
 - Multi-hole reporting and elaborator error recovery beyond the M6
-  structured-error slice (SPEC.md:1356-1358 names the revisit
+  structured-error slice (SPEC.md:1823-1824 names the revisit
   trigger).
 - Cumulativity or an `Eq1` layer, on first measured demand
-  (SPEC.md:1603-1610).
+  (no SPEC address;  M7-PLAN.md:5356 records no measured demand).
 - The guard tokenizer duplication (examples/guard-rewrap.tot:24-29)
-  and vendoring the Apache license text (SPEC.md:1355).
+  and vendoring the Apache license text (SPEC.md:1817).
 - The instance-body dead threading: `define_instance` passes `~rule`
   but no `~rec_` (lib/check.ml:1762-1773), so the guard never runs on
   instance bodies;  M7 decides whether instances gain a real `rec_`

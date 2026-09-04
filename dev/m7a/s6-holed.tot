@@ -1,0 +1,2 @@
+def rec myAnyList : (0 A : Type 0) -> (A -> Bool) -> List A -> Bool :=
+  fun A p xs => match xs with | nil => false | cons h t => orb (p h) (myAnyList _ p t) end

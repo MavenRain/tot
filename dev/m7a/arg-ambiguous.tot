@@ -1,0 +1,2 @@
+def widen : (0 A : Type 0) -> List A -> List A -> Nat := fun A xs ys => zero
+def probeH : Nat := widen _ (nil Nat) (nil String)

@@ -9603,10 +9603,10 @@ test/fixtures/m5e-acc.tot:5:1: recursive definition accRec failed the structural
 #err
 test/fixtures/m5e-witness.tot:2:1: recursive definition bad failed the structural termination guard
 ### test/fixtures/m6c-hole-a.tot
-#exit 1
+#exit 0
 #out
+def main : (IO Verdict)
 #err
-test/fixtures/m6c-hole-a.tot:2:8: hole: expected Type 0
 ### test/fixtures/m6c-hole-e-explicit.tot
 #exit 0
 #out
@@ -9644,7 +9644,7 @@ test/fixtures/m6c-hole-n-proof.tot:1:38: hole: expected Type 0
 #exit 1
 #out
 #err
-test/fixtures/m6c-hole-run.tot:1:28: hole: expected Type 0
+test/fixtures/m6c-hole-run.tot:1:82: hole: expected Unit
 ### test/fixtures/m6c-underscore-binders.tot
 #exit 0
 #out

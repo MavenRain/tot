@@ -1,0 +1,2 @@
+def myEqList : (0 A : Type 0) -> EqD A -> EqD (List A) :=
+  fun A d => mkEqD (List A) (listEqBy A (eqf A d))

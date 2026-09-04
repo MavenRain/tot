@@ -1205,8 +1205,16 @@ and check_node (globals : Global.t) (ctx : ctx) (mode : Quantity.t) (tm : Term.t
       in
       let candidate = materialize st_end.entries ~top in
       check globals ctx mode candidate expected_v
-  | ( (Term.Var _ | Term.Univ _ | Term.Pi (_, _, _, _) | Term.App (_, _, _)
-      | Term.Ann (_, _) | Term.Global _ | Term.Lit _),
+  (* M7 Stage A (pin 1).  An application in CHECK position stays
+     infer-then-convert.  Solving a spine here would be new admission
+     power in lib/, which pin 1 forbids: argument-driven resolution is
+     an ELABORATOR abbreviation and every hole is gone before this arm
+     sees a [Term.t].  The arm is named so the M7 reader finds the
+     decision at the site instead of inside a seven-constructor
+     catch-all.  The body is the catch-all's body, unchanged. *)
+  | Term.App (_, _, _), expected_v -> check_via_infer globals ctx mode tm expected_v
+  | ( (Term.Var _ | Term.Univ _ | Term.Pi (_, _, _, _) | Term.Ann (_, _) | Term.Global _
+      | Term.Lit _),
       expected_v ) ->
       check_via_infer globals ctx mode tm expected_v
 

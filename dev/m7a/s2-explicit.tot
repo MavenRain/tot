@@ -1,0 +1,3 @@
+def probeRW : IO String :=
+  let* String String raw := readStdin in
+  pureIO String raw

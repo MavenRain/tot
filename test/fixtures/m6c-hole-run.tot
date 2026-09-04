@@ -1,1 +1,1 @@
-def main : IO Unit := let* _ Unit x := printLine "SIDE-EFFECT" in pureIO Unit x
+def main : IO Unit := let* Unit Unit x := printLine "SIDE-EFFECT" in pureIO Unit _

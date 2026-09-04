@@ -1,0 +1,3 @@
+def probeG : IO Verdict :=
+  let* _ Verdict parsed := liftIO _ _ in
+  pureIO Verdict allow

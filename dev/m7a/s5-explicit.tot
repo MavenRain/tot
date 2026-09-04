@@ -1,0 +1,2 @@
+def rec myMap : (0 A : Type 0) -> (0 B : Type 0) -> (A -> B) -> List A -> List B :=
+  fun A B f xs => match xs with | nil => nil B | cons h t => cons B (f h) (myMap A B f t) end

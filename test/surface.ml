@@ -859,6 +859,113 @@ let m6c_binders_src =
    def _foo : Nat := succ zero\n\
    def useIt : Nat := _foo\n"
 
+(* M7 Stage A (plan A10, A11): the argument-driven capture pass and the
+   infer-path settle.  Each source below is the byte content of the
+   matching fixture under dev/m7a/, so a case and its fixture cannot
+   drift apart.  A source string adds no transcript block. *)
+
+let m7a_global_holed =
+  "def main : IO Verdict :=\n\
+  \  let* _ Verdict raw := readStdin in\n\
+  \  pureIO Verdict allow\n"
+
+let m7a_global_explicit =
+  "def main : IO Verdict :=\n\
+  \  let* String Verdict raw := readStdin in\n\
+  \  pureIO Verdict allow\n"
+
+let m7a_global_str_holed =
+  "def probeRW : IO String :=\n\
+  \  let* _ String raw := readStdin in\n\
+  \  pureIO String raw\n"
+
+let m7a_global_str_explicit =
+  "def probeRW : IO String :=\n\
+  \  let* String String raw := readStdin in\n\
+  \  pureIO String raw\n"
+
+let m7a_lambda_binder_holed =
+  "def myMember : (0 A : Type 0) -> EqD A -> A -> List A -> Bool :=\n\
+  \  fun A d x xs => anyList _ (eqf A d x) xs\n"
+
+let m7a_lambda_binder_explicit =
+  "def myMember : (0 A : Type 0) -> EqD A -> A -> List A -> Bool :=\n\
+  \  fun A d x xs => anyList A (eqf A d x) xs\n"
+
+let m7a_match_binder_holed =
+  "def rec myMap : (0 A : Type 0) -> (0 B : Type 0) -> (A -> B) -> List A -> List B :=\n\
+  \  fun A B f xs => match xs with | nil => nil B | cons h t => cons B (f h) (myMap _ B f t) \
+   end\n"
+
+let m7a_match_binder_explicit =
+  "def rec myMap : (0 A : Type 0) -> (0 B : Type 0) -> (A -> B) -> List A -> List B :=\n\
+  \  fun A B f xs => match xs with | nil => nil B | cons h t => cons B (f h) (myMap A B f t) \
+   end\n"
+
+let m7a_match_binder_pred_holed =
+  "def rec myAnyList : (0 A : Type 0) -> (A -> Bool) -> List A -> Bool :=\n\
+  \  fun A p xs => match xs with | nil => false | cons h t => orb (p h) (myAnyList _ p t) end\n"
+
+let m7a_match_binder_pred_explicit =
+  "def rec myAnyList : (0 A : Type 0) -> (A -> Bool) -> List A -> Bool :=\n\
+  \  fun A p xs => match xs with | nil => false | cons h t => orb (p h) (myAnyList A p t) end\n"
+
+let m7a_motive_branch_holed =
+  "def rec myListEqBy : (0 A : Type 0) -> (A -> A -> Bool) -> List A -> List A -> Bool :=\n\
+  \  fun A f xs ys =>\n\
+  \    match xs as xx return Bool with\n\
+  \    | nil => match ys as yy return Bool with | nil => true | cons h2 t2 => false end\n\
+  \    | cons h1 t1 =>\n\
+  \        match ys as yy return Bool with\n\
+  \        | nil => false\n\
+  \        | cons h2 t2 => andb (f h1 h2) (myListEqBy _ f t1 t2)\n\
+  \        end\n\
+  \    end\n"
+
+let m7a_motive_branch_explicit =
+  "def rec myListEqBy : (0 A : Type 0) -> (A -> A -> Bool) -> List A -> List A -> Bool :=\n\
+  \  fun A f xs ys =>\n\
+  \    match xs as xx return Bool with\n\
+  \    | nil => match ys as yy return Bool with | nil => true | cons h2 t2 => false end\n\
+  \    | cons h1 t1 =>\n\
+  \        match ys as yy return Bool with\n\
+  \        | nil => false\n\
+  \        | cons h2 t2 => andb (f h1 h2) (myListEqBy A f t1 t2)\n\
+  \        end\n\
+  \    end\n"
+
+let m7a_fence_arg_holed =
+  "def myEqList : (0 A : Type 0) -> EqD A -> EqD (List A) :=\n\
+  \  fun A d => mkEqD (List A) (listEqBy _ (eqf A d))\n"
+
+let m7a_fence_arg_explicit =
+  "def myEqList : (0 A : Type 0) -> EqD A -> EqD (List A) :=\n\
+  \  fun A d => mkEqD (List A) (listEqBy A (eqf A d))\n"
+
+let m7a_lift_holed = "eval (liftIO _ (jsonParse \"{}\"))\n"
+let m7a_lift_explicit = "eval (liftIO (Option Json) (jsonParse \"{}\"))\n"
+let m7a_listeqby_holed = "eval (listEqBy _ boolEq)\n"
+let m7a_listeqby_explicit = "eval (listEqBy Bool boolEq)\n"
+
+let m7a_scrutinee_holed =
+  "def probeI : List Nat := match (map _ Nat (fun n => n) (nil Nat)) with | nil => nil Nat | \
+   cons h t => t end\n"
+
+let m7a_scrutinee_explicit =
+  "def probeI : List Nat := match (map Nat Nat (fun n => n) (nil Nat)) with | nil => nil Nat \
+   | cons h t => t end\n"
+
+let m7a_fenced_src = "eval (mkEqD _ boolEq)\n"
+let m7a_undetermined_src = "eval (liftIO _ _)\n"
+
+(* M7 Stage A (plan A7 item 3): the re-pointed M6C-5 source.  Every later
+   argument is a hole, so nothing determines the leading slot and the
+   file keeps the M6 message and the M6 column. *)
+let m7a_exhausted_src =
+  "def probeG : IO Verdict :=\n\
+  \  let* _ Verdict parsed := liftIO _ _ in\n\
+  \  pureIO Verdict allow\n"
+
 let cases (bst : Tot_surface.Run.state) : (string * (unit -> (unit, string) result)) list =
   [
     ( "cadd two two runs to church four",
@@ -1844,11 +1951,13 @@ let cases (bst : Tot_surface.Run.state) : (string * (unit -> (unit, string) resu
        the HEAD spelling byte-exact",
       expect_lines_check ~st:bst "check (cons _ \"x\" (nil _) : List String)\n"
         [ "(((cons String) \"x\") (nil String)) : (List String)" ] );
+    (* M7 Stage A (plan A7 item 3) re-points this case.  The M6 source is
+       now green, because `readStdin` determines the slot.  The new
+       source holds every later argument as a hole, so the slot stays
+       undetermined.  The name, the helper and the pinned line stay. *)
     ( "M6C-5 m6c_refuse_a: the let* A slot is argument-driven, so its hole reports the \
        slot's declared universe on one line",
-      m6c_expect_err_line bst
-        "def main : IO Verdict :=\n  let* _ Verdict raw := readStdin in\n  pureIO Verdict allow\n"
-        "2:8: hole: expected Type 0" );
+      m6c_expect_err_line bst m7a_exhausted_src "2:8: hole: expected Type 0" );
     ( "M6C-6 m6c_refuse_infer: an eval hole and a let-annotation hole both report no \
        expected type",
       fun () ->
@@ -1889,6 +1998,44 @@ let cases (bst : Tot_surface.Run.state) : (string * (unit -> (unit, string) resu
         expect_lines_check ~st:bst
           "def m : IO Unit := let* Unit Unit _ := printLine \"x\" in pureIO Unit unit\n"
           [ "def m : (IO Unit)" ] () );
+    (* M7 Stage A (plan A10, A11): argument-driven holes (pins 1, 3, 5)
+       and the infer-path settle (pins 2, 3, 5).  Ten twins pin the
+       holed output against the explicit output.  Two negatives pin the
+       whole rendered error line. *)
+    ( "M7A-1 m7a_arg_global: the let* A slot fills from readStdin; lines equal the explicit \
+       twin's",
+      m6c_twins bst ~holed:m7a_global_holed ~explicit:m7a_global_explicit );
+    ( "M7A-2 m7a_arg_global_str: the same shape at IO String; lines equal the explicit \
+       twin's",
+      m6c_twins bst ~holed:m7a_global_str_holed ~explicit:m7a_global_str_explicit );
+    ( "M7A-3 m7a_arg_lambda_binder: the slot fills from a lambda binder xs (pin 5 anchor 4)",
+      m6c_twins bst ~holed:m7a_lambda_binder_holed ~explicit:m7a_lambda_binder_explicit );
+    ( "M7A-4 m7a_arg_match_binder: the slot fills from a match binder t (pin 5 anchor 5)",
+      m6c_twins bst ~holed:m7a_match_binder_holed ~explicit:m7a_match_binder_explicit );
+    ( "M7A-5 m7a_arg_match_binder_pred: the same shape under a predicate argument (pin 5 \
+       anchor 6)",
+      m6c_twins bst ~holed:m7a_match_binder_pred_holed
+        ~explicit:m7a_match_binder_pred_explicit );
+    ( "M7A-6 m7a_arg_motive_branch: a constant-motive branch body descends in check \
+       position, so the slot fills from t1 (pin 5 anchor 7)",
+      m6c_twins bst ~holed:m7a_motive_branch_holed ~explicit:m7a_motive_branch_explicit );
+    ( "M7A-7 m7a_infer_fence_arg: a nested argument under a class former settles on the \
+       infer path (pin 5 anchor 3)",
+      m6c_twins bst ~holed:m7a_fence_arg_holed ~explicit:m7a_fence_arg_explicit );
+    ( "M7A-8 m7a_infer_lift: an eval spine settles liftIO's type slot from jsonParse",
+      m6c_twins bst ~holed:m7a_lift_holed ~explicit:m7a_lift_explicit );
+    ( "M7A-9 m7a_infer_listeqby: an eval spine settles listEqBy's type slot from boolEq",
+      m6c_twins bst ~holed:m7a_listeqby_holed ~explicit:m7a_listeqby_explicit );
+    ( "M7A-10 m7a_infer_scrutinee: a hole in a match SCRUTINEE settles, which A4 does not \
+       reach",
+      m6c_twins bst ~holed:m7a_scrutinee_holed ~explicit:m7a_scrutinee_explicit );
+    ( "M7A-11 m7a_refuse_fence: a spine whose head is a class former keeps the settle off \
+       (pin 4)",
+      m6c_expect_err_line bst m7a_fenced_src "1:13: hole: no expected type at this position" );
+    ( "M7A-12 m7a_refuse_undetermined: every later argument is a hole, so the unsettled hole \
+       keeps its infer-position error value",
+      m6c_expect_err_line bst m7a_undetermined_src
+        "1:14: hole: no expected type at this position" );
   ]
 
 (** The ordinary in-process suite: bootstrap once, run every [cases]

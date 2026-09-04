@@ -1,0 +1,7 @@
+def main : IO Verdict :=
+  let* String _ raw := readStdin in
+  let* _ _ parsed := liftIO _ (jsonParse raw) in
+  match parsed with
+  | none => pureIO _ allow
+  | some payload => pureIO _ allow
+  end

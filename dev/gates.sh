@@ -431,7 +431,7 @@ tot_scratch=$(mktemp -d "${TMPDIR:-/tmp}/tot-gate-d-bin.XXXXXX")
 # M5 Stage C: the M5C scratch (generated chains/classes fixtures)
 # rides the same trap; $m5c_scratch resolves at exit time, empty and
 # harmless on any exit before its own mktemp below.
-trap 'rm -rf "$tot_scratch" "$cache_scratch" "$m5c_scratch" "$m5d_scratch" "$m5e_scratch" "$m6c_scratch" "$m6d_scratch"' EXIT
+trap 'rm -rf "$tot_scratch" "$cache_scratch" "$m5c_scratch" "$m5d_scratch" "$m5e_scratch" "$m6c_scratch" "$m6d_scratch" "$m7a_scratch"' EXIT
 cp "$ROOT"/_build/default/bin/tot.exe "$tot_scratch/tot"
 # M3 fixes, C4' (C0, 2026-09-01): chmod ONLY the scratch copy; the
 # tracked examples/guard.tot carries its own executable bit in the
@@ -2281,7 +2281,18 @@ m5d_bin="$ROOT"/_build/default/bin/tot.exe
 rg -q '"\$watchdog" [0-9]' "$ROOT/dev/gates.sh"; m5d_nolit=$?
 m5d_tiers=$(rg -c '"\$watchdog" "\$(FAST|MED|SLOW|SUITE)"' "$ROOT/dev/gates.sh")
 m5d_bites=$(rg -c '"\$watchdog" "\$BITE_S"' "$ROOT/dev/gates.sh")
-{ [ "$m5d_nolit" -eq 1 ] && [ "$m5d_tiers" -eq 169 ] && [ "$m5d_bites" -eq 2 ] \
+# M7 Stage A (plan section 7): the tier literal is RE-DERIVED, not
+# guessed.  After the Stage A block landed,
+# `rg -c '"\$watchdog" "\$(FAST|MED|SLOW|SUITE)"' dev/gates.sh` printed
+# 202 (169 at HEAD, plus 33 tier-call lines in the seven new legs).
+# The plan predicted 180 from an 11-line estimate that assumed the
+# `for` loops of its own probe commands; the build ground rule keeps
+# every new leg loop-free, so each fixture run is its own tier line.
+# M7 Stage A review round (2026-09-04) raised it 202 -> 205: leg (vii)
+# gained three FAST calls, the error-value legs of conflict note C-A13,
+# and deleted none.  Measured with the recipe above before (202) and
+# after (205) the edit.
+{ [ "$m5d_nolit" -eq 1 ] && [ "$m5d_tiers" -eq 205 ] && [ "$m5d_bites" -eq 2 ] \
   && [ -s "$ROOT/dev/gates.sh" ]; } \
   && echo PASS-M5D-TIERS \
   || { echo "FAIL-M5D-TIERS (nolit=$m5d_nolit tiers=$m5d_tiers bites=$m5d_bites)"; exit 1; }
@@ -2665,8 +2676,17 @@ codee=$?
 # Gate C (ii), PASS-M6C-HOLE-REPORTS.  One A-shaped and three
 # N-shaped refusals, each exit 1, stdout EMPTY, stderr exactly one
 # pinned pin-3 line.  MUT-C2 flips legs (c)/(d); MUT-C3 flips (a).
+#
+# M7 Stage A (plan A7 item 1) RE-POINTS leg (a).  The M6 fixture
+# test/fixtures/m6c-hole-a.tot binds `readStdin`, which determines the
+# slot under the argument-driven rule, so that file is green now and
+# PASS-M7A-ARGHOLE-RESOLVES owns it.  Leg (a) moves to
+# dev/m7a/arg-exhausted.tot, whose every later argument is a hole, so
+# nothing determines the slot in either position.  The leg keeps its
+# name, its four sub-legs, its column and its message.  Nothing is
+# deleted: the M6 rule is to re-open a tripwire's design.
 outa=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
-  "$ROOT"/test/fixtures/m6c-hole-a.tot 2> "$m6c_scratch"/a.err)
+  "$ROOT"/dev/m7a/arg-exhausted.tot 2> "$m6c_scratch"/a.err)
 codea=$?
 outb=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
   "$ROOT"/test/fixtures/m6c-hole-n-infer.tot 2> "$m6c_scratch"/b.err)
@@ -2683,7 +2703,7 @@ coded=$?
     && [ "$(wc -l < "$m6c_scratch"/b.err)" -eq 1 ] \
     && [ "$(wc -l < "$m6c_scratch"/c.err)" -eq 1 ] \
     && [ "$(wc -l < "$m6c_scratch"/d.err)" -eq 1 ] \
-    && rg -q '^\S*/m6c-hole-a\.tot:2:8: hole: expected Type 0$' "$m6c_scratch"/a.err \
+    && rg -q '^\S*/arg-exhausted\.tot:2:8: hole: expected Type 0$' "$m6c_scratch"/a.err \
     && rg -q '^\S*/m6c-hole-n-infer\.tot:1:6: hole: no expected type at this position$' "$m6c_scratch"/b.err \
     && rg -q '^\S*/m6c-hole-n-proof\.tot:1:38: hole: expected Type 0$' "$m6c_scratch"/c.err \
     && rg -q '^\S*/m6c-hole-n-class\.tot:1:51: hole: expected Type 0$' "$m6c_scratch"/d.err; } \
@@ -2697,6 +2717,14 @@ coded=$?
 # Gate C (iii), PASS-M6C-HOLE-NEVER-RUNS.  A holed file never
 # reaches eval: run refuses BEFORE main, stdout stays empty, and the
 # serror mapping moves only the exit code, never the effects.
+#
+# M7 Stage A (plan A7 item 2) RE-SPELLS the fixture, in place.  Its M6
+# spelling holed the let* A slot, which `printLine "SIDE-EFFECT"` now
+# determines, so the file would check and then RUN and this leg would
+# watch a file that no longer refuses.  The hole moves to the pureIO
+# payload, which nothing determines.  The side effect stays where it
+# was.  The leg keeps every assertion and changes one pinned string,
+# from `1:28: hole: expected Type 0` to `1:82: hole: expected Unit`.
 outr=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe run \
   "$ROOT"/test/fixtures/m6c-hole-run.tot 2> "$m6c_scratch"/r.err)
 coder=$?
@@ -2705,8 +2733,8 @@ outs=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe run \
 codes=$?
 { [ "$coder" -eq 1 ] && [ "$codes" -eq 0 ] \
     && [ -z "$outr" ] && [ -z "$outs" ] \
-    && rg -q 'm6c-hole-run\.tot:1:28: hole: expected Type 0' "$m6c_scratch"/r.err \
-    && rg -q 'm6c-hole-run\.tot:1:28: hole: expected Type 0' "$m6c_scratch"/s.err \
+    && rg -q 'm6c-hole-run\.tot:1:82: hole: expected Unit' "$m6c_scratch"/r.err \
+    && rg -q 'm6c-hole-run\.tot:1:82: hole: expected Unit' "$m6c_scratch"/s.err \
     && { rg -q 'SIDE-EFFECT' "$m6c_scratch"/r.err; [ $? -eq 1 ]; }; } \
   && echo PASS-M6C-HOLE-NEVER-RUNS \
   || {
@@ -3137,6 +3165,350 @@ m6e_srub=$(rg -c '^def scrubLines : ' "$ROOT"/dev/m5e-default-transcript.txt)
        printf '%s\n' "$m6e_wantg" > "$m5d_scratch/m6e-wantg.txt"; \
        printf '%s\n' "$m6e_gblock" > "$m5d_scratch/m6e-gblock.txt"; \
        diff "$m5d_scratch/m6e-wantg.txt" "$m5d_scratch/m6e-gblock.txt" | head -20; exit 1; }
+
+# ---------------------------------------------------------------------
+# M7 Stage A (pins 1, 2, 3, 4, 5 and debt item j): the argument-driven
+# capture pass and the infer-path settle.  A hole in a leading erased
+# slot may now take its type from a LATER argument.  The same capture
+# pass runs where there is no expected type at all, so an `eval` spine
+# and a nested argument under a fence settle too.  Seven markers.
+# Every new fixture lives under dev/m7a/, which no corpus glob reads,
+# so this stage adds no transcript block and moves no budget digest.
+# Two committed M6C legs are RE-POINTED above, never deleted: their
+# old fixtures are green under the new rule (plan A7).  Mutation
+# proofs and every measured literal in dev/M7-BUILD-LOG.md.
+# ---------------------------------------------------------------------
+m7a_scratch=$(mktemp -d "${TMPDIR:-/tmp}/tot-gate-m7a.XXXXXX")
+
+# Gate M7A (i), PASS-M7A-KERNEL-UNCHANGED (pin 1).  The kernel keeps
+# its shape while the elaborator changes: the one totality rule stays
+# Structural, `define` still takes ~rule, and the seven frozen kernel
+# files keep their concatenated md5.  The fourth leg is behavioural and
+# MUST flip: dev/m7a/arg-map.tot exits 1 at HEAD with
+# `1:30: hole: expected Type 0` and exits 0 after the stage with the
+# line its explicit twin prints.  The existence test runs first, so a
+# deleted fixture cannot stand in for a refusal.  MUTATION: buy the
+# resolution inside lib/eval.ml; the frozen digest moves and this leg
+# fails.
+[ -f "$ROOT"/dev/m7a/arg-map.tot ] \
+  || { echo "FAIL-M7A-KERNEL-UNCHANGED (MISSING-FIXTURE dev/m7a/arg-map.tot)"; exit 1; }
+m7a_rule=$(rg -c '^type rule = Structural$' "$ROOT"/lib/totality.ml)
+m7a_define=$(rg -c '~\(rule : Totality\.rule\)' "$ROOT"/lib/check.ml)
+m7a_frozen=$(cat "$ROOT"/lib/totality.ml "$ROOT"/lib/term.ml "$ROOT"/lib/eval.ml \
+  "$ROOT"/lib/value.ml "$ROOT"/lib/erase.ml "$ROOT"/lib/interp.ml "$ROOT"/lib/error.ml | md5 -q)
+m7a_map=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/dev/m7a/arg-map.tot 2>&1)
+m7a_mapcode=$?
+{ [ "$m7a_rule" -eq 1 ] && [ "$m7a_define" -eq 1 ] \
+    && [ "$m7a_frozen" = f446f043e1ad6c7b85ddedb7736bd8a1 ] \
+    && [ "$m7a_mapcode" -eq 0 ] \
+    && printf '%s\n' "$m7a_map" | rg -qx 'def probeF : \(List Nat\)'; } \
+  && echo PASS-M7A-KERNEL-UNCHANGED \
+  || {
+    printf '%s\n' "$m7a_map"
+    echo "FAIL-M7A-KERNEL-UNCHANGED (rule=$m7a_rule define=$m7a_define frozen=$m7a_frozen exit=$m7a_mapcode)"
+    exit 1
+  }
+
+# Gate M7A (ii), PASS-M7A-ARGHOLE-RESOLVES (pin 3, and pin 5 by shape).
+# Six holed shapes, one per pin 5 anchor family, each compared against
+# its explicit twin: same exit code 0, byte-identical stdout, and the
+# shared stdout non-empty, which is the anti-vacuity sentinel
+# PASS-M6C-HOLE-RESOLVES uses.  All six exit 1 at HEAD.  Two shapes
+# must NOT resolve: dev/m7a/arg-exhausted.tot holds every later
+# argument as a hole and keeps `2:8: hole: expected Type 0`, and
+# dev/m7a/arg-ambiguous.tot reports the kernel mismatch its explicit
+# twin already reports, which proves the pass takes the FIRST fit and
+# never widens a slot.  MUTATION: drop the arg_caps call; the six
+# twins go red.
+[ -f "$ROOT"/dev/m7a/s2-holed.tot ] && [ -f "$ROOT"/dev/m7a/s4-holed.tot ] \
+  && [ -f "$ROOT"/dev/m7a/s5-holed.tot ] && [ -f "$ROOT"/dev/m7a/s6-holed.tot ] \
+  && [ -f "$ROOT"/dev/m7a/s7-holed.tot ] && [ -f "$ROOT"/dev/m7a/arg-exhausted.tot ] \
+  && [ -f "$ROOT"/dev/m7a/arg-ambiguous.tot ] \
+  || { echo "FAIL-M7A-ARGHOLE-RESOLVES (MISSING-FIXTURE under dev/m7a)"; exit 1; }
+m7a_h1=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/test/fixtures/m6c-hole-a.tot 2>&1)
+m7a_c1=$?
+m7a_e1=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/dev/m7a/s1-explicit.tot 2>&1)
+m7a_d1=$?
+m7a_h2=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/dev/m7a/s2-holed.tot 2>&1)
+m7a_c2=$?
+m7a_e2=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/dev/m7a/s2-explicit.tot 2>&1)
+m7a_d2=$?
+m7a_h3=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/dev/m7a/s4-holed.tot 2>&1)
+m7a_c3=$?
+m7a_e3=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/dev/m7a/s4-explicit.tot 2>&1)
+m7a_d3=$?
+m7a_h4=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/dev/m7a/s5-holed.tot 2>&1)
+m7a_c4=$?
+m7a_e4=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/dev/m7a/s5-explicit.tot 2>&1)
+m7a_d4=$?
+m7a_h5=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/dev/m7a/s6-holed.tot 2>&1)
+m7a_c5=$?
+m7a_e5=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/dev/m7a/s6-explicit.tot 2>&1)
+m7a_d5=$?
+m7a_h6=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/dev/m7a/s7-holed.tot 2>&1)
+m7a_c6=$?
+m7a_e6=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/dev/m7a/s7-explicit.tot 2>&1)
+m7a_d6=$?
+m7a_ex=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/dev/m7a/arg-exhausted.tot 2>&1)
+m7a_excode=$?
+m7a_amb=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/dev/m7a/arg-ambiguous.tot 2>&1)
+m7a_ambcode=$?
+{ [ "$m7a_c1" -eq 0 ] && [ "$m7a_d1" -eq 0 ] && [ "$m7a_h1" = "$m7a_e1" ] && [ -n "$m7a_h1" ] \
+    && [ "$m7a_c2" -eq 0 ] && [ "$m7a_d2" -eq 0 ] && [ "$m7a_h2" = "$m7a_e2" ] && [ -n "$m7a_h2" ] \
+    && [ "$m7a_c3" -eq 0 ] && [ "$m7a_d3" -eq 0 ] && [ "$m7a_h3" = "$m7a_e3" ] && [ -n "$m7a_h3" ] \
+    && [ "$m7a_c4" -eq 0 ] && [ "$m7a_d4" -eq 0 ] && [ "$m7a_h4" = "$m7a_e4" ] && [ -n "$m7a_h4" ] \
+    && [ "$m7a_c5" -eq 0 ] && [ "$m7a_d5" -eq 0 ] && [ "$m7a_h5" = "$m7a_e5" ] && [ -n "$m7a_h5" ] \
+    && [ "$m7a_c6" -eq 0 ] && [ "$m7a_d6" -eq 0 ] && [ "$m7a_h6" = "$m7a_e6" ] && [ -n "$m7a_h6" ] \
+    && printf '%s\n' "$m7a_h1" | rg -qx 'def main : \(IO Verdict\)' \
+    && printf '%s\n' "$m7a_h6" | rg -qx 'def myListEqBy : \(0 A : Type 0\) -> \(w _ : \(w _ : A\) -> \(w _ : A\) -> Bool\) -> \(w _ : \(List A\)\) -> \(w _ : \(List A\)\) -> Bool' \
+    && [ "$m7a_excode" -eq 1 ] \
+    && printf '%s\n' "$m7a_ex" | rg -q '^\S*/arg-exhausted\.tot:2:8: hole: expected Type 0$' \
+    && [ "$m7a_ambcode" -eq 1 ] \
+    && printf '%s\n' "$m7a_amb" \
+       | rg -q 'type mismatch: expected \(List Nat\), found \(List String\)'; } \
+  && echo PASS-M7A-ARGHOLE-RESOLVES \
+  || {
+    printf '%s\n---\n%s\n---\n%s\n---\n%s\n' "$m7a_h1" "$m7a_e1" "$m7a_ex" "$m7a_amb"
+    echo "FAIL-M7A-ARGHOLE-RESOLVES (exit=$m7a_c1/$m7a_d1 $m7a_c2/$m7a_d2 $m7a_c3/$m7a_d3 $m7a_c4/$m7a_d4 $m7a_c5/$m7a_d5 $m7a_c6/$m7a_d6 ex=$m7a_excode amb=$m7a_ambcode)"
+    exit 1
+  }
+
+# Gate M7A (iii), PASS-M7A-ARGHOLE-REFUSES-NONINFERABLE (pin 2).  Three
+# refusals that must NOT move, each for a different reason, paired with
+# a control that must move.  `m6c-hole-n-infer.tot` is a bare `eval _`,
+# which is no argument of any spine.  `infer-fenced.tot` has a class
+# former at the head, so the fence keeps the settle off; its explicit
+# twin exits 0, which proves the fence and not a missing capture is the
+# reason.  `infer-undetermined.tot` holds every later argument as a
+# hole.  Each stderr line is pinned whole, so a new column or a new
+# message is a FAIL.  MUTATION: relax the fence; leg (b) moves.
+[ -f "$ROOT"/dev/m7a/infer-fenced.tot ] && [ -f "$ROOT"/dev/m7a/infer-fenced-explicit.tot ] \
+  && [ -f "$ROOT"/dev/m7a/infer-undetermined.tot ] \
+  || { echo "FAIL-M7A-ARGHOLE-REFUSES-NONINFERABLE (MISSING-FIXTURE under dev/m7a)"; exit 1; }
+m7a_na=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/test/fixtures/m6c-hole-n-infer.tot 2> "$m7a_scratch"/na.err)
+m7a_nacode=$?
+m7a_nb=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/dev/m7a/infer-fenced.tot 2> "$m7a_scratch"/nb.err)
+m7a_nbcode=$?
+m7a_nc=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/dev/m7a/infer-undetermined.tot 2> "$m7a_scratch"/nc.err)
+m7a_nccode=$?
+m7a_nd=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/dev/m7a/infer-fenced-explicit.tot 2>&1)
+m7a_ndcode=$?
+{ [ "$m7a_nacode" -eq 1 ] && [ "$m7a_nbcode" -eq 1 ] && [ "$m7a_nccode" -eq 1 ] \
+    && [ -z "$m7a_na" ] && [ -z "$m7a_nb" ] && [ -z "$m7a_nc" ] \
+    && [ "$(wc -l < "$m7a_scratch"/na.err)" -eq 1 ] \
+    && [ "$(wc -l < "$m7a_scratch"/nb.err)" -eq 1 ] \
+    && [ "$(wc -l < "$m7a_scratch"/nc.err)" -eq 1 ] \
+    && rg -q '^\S*/m6c-hole-n-infer\.tot:1:6: hole: no expected type at this position$' \
+       "$m7a_scratch"/na.err \
+    && rg -q '^\S*/infer-fenced\.tot:1:13: hole: no expected type at this position$' \
+       "$m7a_scratch"/nb.err \
+    && rg -q '^\S*/infer-undetermined\.tot:1:14: hole: no expected type at this position$' \
+       "$m7a_scratch"/nc.err \
+    && [ "$m7a_ndcode" -eq 0 ] \
+    && printf '%s\n' "$m7a_nd" | rg -qx 'eval : \(EqD Bool\)'; } \
+  && echo PASS-M7A-ARGHOLE-REFUSES-NONINFERABLE \
+  || {
+    cat "$m7a_scratch"/na.err "$m7a_scratch"/nb.err "$m7a_scratch"/nc.err
+    printf '%s\n' "$m7a_nd"
+    echo "FAIL-M7A-ARGHOLE-REFUSES-NONINFERABLE (exit=$m7a_nacode/$m7a_nbcode/$m7a_nccode/$m7a_ndcode)"
+    exit 1
+  }
+
+# Gate M7A (iv), PASS-M7A-CONSERVATIVITY (pin 4).  The five green
+# example files keep byte-identical stdout, which is the whole
+# conservativity claim, and every one of them keeps an EMPTY stderr, so
+# a file that starts failing cannot pass by printing nothing.
+# MEASUREMENT RECIPE: concatenate the five stdout captures in the order
+# below and take `md5 -q`; the line count is `wc -l` over the same
+# concatenation.  The transcript leg is the one number that MUST move:
+# 9 `hole:` lines at HEAD, 8 after the stage, because m6c-hole-a.tot
+# stops reporting a hole (plan A7, A8).  Stage D owns the next
+# re-derivation of the md5 and the 55, because it deletes twelve helper
+# defs from the two guards.
+"$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check "$ROOT"/examples/church.tot \
+  > "$m7a_scratch"/e1.out 2> "$m7a_scratch"/e1.err
+"$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check "$ROOT"/examples/guard-classes.tot \
+  > "$m7a_scratch"/e2.out 2> "$m7a_scratch"/e2.err
+"$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check "$ROOT"/examples/guard-rewrap.tot \
+  > "$m7a_scratch"/e3.out 2> "$m7a_scratch"/e3.err
+"$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check "$ROOT"/examples/guard.tot \
+  > "$m7a_scratch"/e4.out 2> "$m7a_scratch"/e4.err
+"$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check "$ROOT"/examples/literals.tot \
+  > "$m7a_scratch"/e5.out 2> "$m7a_scratch"/e5.err
+m7a_cons=$(cat "$m7a_scratch"/e1.out "$m7a_scratch"/e2.out "$m7a_scratch"/e3.out \
+  "$m7a_scratch"/e4.out "$m7a_scratch"/e5.out | md5 -q)
+m7a_conslines=$(cat "$m7a_scratch"/e1.out "$m7a_scratch"/e2.out "$m7a_scratch"/e3.out \
+  "$m7a_scratch"/e4.out "$m7a_scratch"/e5.out | wc -l | tr -d ' ')
+m7a_conserr=$(cat "$m7a_scratch"/e1.err "$m7a_scratch"/e2.err "$m7a_scratch"/e3.err \
+  "$m7a_scratch"/e4.err "$m7a_scratch"/e5.err | wc -c | tr -d ' ')
+m7a_holes=$(rg -c 'hole:' "$ROOT"/dev/m5e-default-transcript.txt)
+{ [ "$m7a_cons" = 99c23b4b74c722735d17e1dc49524e58 ] && [ "$m7a_conslines" -eq 55 ] \
+    && [ "$m7a_conserr" -eq 0 ] && [ "$m7a_holes" -eq 8 ]; } \
+  && echo PASS-M7A-CONSERVATIVITY \
+  || {
+    cat "$m7a_scratch"/e1.err "$m7a_scratch"/e2.err "$m7a_scratch"/e3.err \
+      "$m7a_scratch"/e4.err "$m7a_scratch"/e5.err
+    echo "FAIL-M7A-CONSERVATIVITY (md5=$m7a_cons lines=$m7a_conslines errbytes=$m7a_conserr holes=$m7a_holes)"
+    exit 1
+  }
+
+# Gate M7A (v), PASS-M7A-SPINE-COMMENT (debt item j).  The `spine` doc
+# comment states the new rule.  The M6 sentence is gone, the word
+# `argument-driven` is present (it occurs nowhere in surface/elab.ml at
+# HEAD), and the descent sentence is still there, so a comment that was
+# deleted instead of rewritten fails.  The fourth leg holds the side
+# effect inside the re-spelled test/fixtures/m6c-hole-run.tot, so the
+# plan A7 repair cannot pass by removing the effect that
+# PASS-M6C-HOLE-NEVER-RUNS exists to watch.
+rg -q -F 'a hole takes its capture or reports the' "$ROOT"/surface/elab.ml
+m7a_stale=$?
+m7a_descent=$(rg -c -F 'then argument descent through' "$ROOT"/surface/elab.ml)
+m7a_m7=$(rg -c -F 'argument-driven' "$ROOT"/surface/elab.ml)
+m7a_side=$(rg -c -F 'SIDE-EFFECT' "$ROOT"/test/fixtures/m6c-hole-run.tot)
+{ [ "$m7a_stale" -eq 1 ] && [ "$m7a_descent" -eq 1 ] && [ "$m7a_m7" -eq 1 ] \
+    && [ "$m7a_side" -eq 1 ]; } \
+  && echo PASS-M7A-SPINE-COMMENT \
+  || {
+    echo "FAIL-M7A-SPINE-COMMENT (stale=$m7a_stale descent=$m7a_descent m7=$m7a_m7 run=$m7a_side)"
+    exit 1
+  }
+
+# Gate M7A (vi), PASS-M7A-INFER-SETTLE (pins 2, 3, 5).  The infer path
+# settles four shapes that HEAD refuses with
+# `hole: no expected type at this position`, and each one is compared
+# against its explicit twin, byte for byte and non-empty.  s3-holed is
+# pin 5 anchor 3, the anchor the 2026-09-04 amendment exists for: it
+# sits under a class former, so the fence branch hands it to `term` and
+# only the infer settle reaches it.  The two negatives repeat here with
+# their whole HEAD lines, so a settle that fires too often fails on the
+# same leg that a settle that never fires fails on.
+[ -f "$ROOT"/dev/m7a/s3-holed.tot ] && [ -f "$ROOT"/dev/m7a/infer-lift-holed.tot ] \
+  && [ -f "$ROOT"/dev/m7a/infer-listeqby-holed.tot ] \
+  && [ -f "$ROOT"/dev/m7a/arg-infer-holed.tot ] \
+  || { echo "FAIL-M7A-INFER-SETTLE (MISSING-FIXTURE under dev/m7a)"; exit 1; }
+m7a_i1=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/dev/m7a/s3-holed.tot 2>&1)
+m7a_j1=$?
+m7a_k1=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/dev/m7a/s3-explicit.tot 2>&1)
+m7a_l1=$?
+m7a_i2=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/dev/m7a/infer-lift-holed.tot 2>&1)
+m7a_j2=$?
+m7a_k2=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/dev/m7a/infer-lift-explicit.tot 2>&1)
+m7a_l2=$?
+m7a_i3=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/dev/m7a/infer-listeqby-holed.tot 2>&1)
+m7a_j3=$?
+m7a_k3=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/dev/m7a/infer-listeqby-explicit.tot 2>&1)
+m7a_l3=$?
+m7a_i4=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/dev/m7a/arg-infer-holed.tot 2>&1)
+m7a_j4=$?
+m7a_k4=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/dev/m7a/arg-infer-explicit.tot 2>&1)
+m7a_l4=$?
+{ [ "$m7a_j1" -eq 0 ] && [ "$m7a_l1" -eq 0 ] && [ "$m7a_i1" = "$m7a_k1" ] && [ -n "$m7a_i1" ] \
+    && [ "$m7a_j2" -eq 0 ] && [ "$m7a_l2" -eq 0 ] && [ "$m7a_i2" = "$m7a_k2" ] && [ -n "$m7a_i2" ] \
+    && [ "$m7a_j3" -eq 0 ] && [ "$m7a_l3" -eq 0 ] && [ "$m7a_i3" = "$m7a_k3" ] && [ -n "$m7a_i3" ] \
+    && [ "$m7a_j4" -eq 0 ] && [ "$m7a_l4" -eq 0 ] && [ "$m7a_i4" = "$m7a_k4" ] && [ -n "$m7a_i4" ] \
+    && printf '%s\n' "$m7a_i1" \
+       | rg -qx 'def myEqList : \(0 A : Type 0\) -> \(w _ : \(EqD A\)\) -> \(EqD \(List A\)\)' \
+    && printf '%s\n' "$m7a_i2" | rg -qx 'eval : \(IO \(Option Json\)\)' \
+    && printf '%s\n' "$m7a_i4" | rg -qx 'def probeI : \(List Nat\)' \
+    && rg -q '^\S*/infer-fenced\.tot:1:13: hole: no expected type at this position$' \
+       "$m7a_scratch"/nb.err \
+    && rg -q '^\S*/infer-undetermined\.tot:1:14: hole: no expected type at this position$' \
+       "$m7a_scratch"/nc.err; } \
+  && echo PASS-M7A-INFER-SETTLE \
+  || {
+    printf '%s\n---\n%s\n' "$m7a_i1" "$m7a_k1"
+    printf '%s\n---\n%s\n' "$m7a_i2" "$m7a_k2"
+    echo "FAIL-M7A-INFER-SETTLE (exit=$m7a_j1/$m7a_l1 $m7a_j2/$m7a_l2 $m7a_j3/$m7a_l3 $m7a_j4/$m7a_l4)"
+    exit 1
+  }
+
+# Gate M7A (vii), PASS-M7A-INFER-SETTLE-BUDGET (pin 2).  The
+# conservativity BUDGET: one record per corpus file, `name|exit|md5 of
+# the whole output`, over stdlib, examples and test/fixtures at depth
+# 1, minus the two files plan A7 licenses to move.  61 green records
+# must keep their stdout and 39 red records must keep their error text,
+# including m6c-hole-n-infer.tot, the one corpus file that reports
+# `hole: no expected type at this position` at HEAD.  MEASUREMENT
+# RECIPE: the command below, whose three fields are pinned as the
+# literals `100`, `61` and the md5.  `--max-depth 1` holds the corpus
+# to the set dev/gen-m5e-transcript.sh walks, so a later stage that
+# adds test/fixtures/m7/*.tot does not break this literal.  The
+# `files` field refuses a digest that shrank because `fd` matched
+# nothing; the `green` field refuses a digest that stayed stable
+# because every file started failing.  Stage D and Stage E each own a
+# re-derivation of all three literals.
+m7a_exe="$ROOT"/_build/default/bin/tot.exe
+export m7a_exe
+m7a_recs=$(fd -e tot --max-depth 1 . "$ROOT"/stdlib "$ROOT"/examples "$ROOT"/test/fixtures \
+  | rg -v '/(m6c-hole-a|m6c-hole-run)\.tot$' | sort \
+  | xargs -n 1 "$watchdog" "$MED" zsh -c 'o=$("$m7a_exe" check "$0" 2>&1); e=$?; printf "%s|%d|%s\n" "${0##*/}" "$e" "$(printf %s "$o" | md5 -q)"')
+m7a_files=$(printf '%s\n' "$m7a_recs" | wc -l | tr -d ' ')
+m7a_green=$(printf '%s\n' "$m7a_recs" | rg -c '\|0\|')
+m7a_digest=$(printf '%s\n' "$m7a_recs" | md5 -q)
+# Review round 2026-09-04, conflict note C-A13.  Rule 3 of the five the
+# plan lists at PLAN:1535-1549 says an unsettled hole keeps HEAD's error
+# VALUE.  The 100-file digest alone cannot watch that rule.  No corpus
+# file holds an infer-position SPINE with a holed LEADING slot, so a
+# settle that stamps the slot universe on such a hole leaves all three
+# digest fields at rest.  Measured: the mutation
+# `expected = None` to `expected = Some (scope, dom)` at the settle site
+# kept files=100 green=61 md5=9b416b949964a50c4f7633eab478b5c2.  The
+# three legs below close that gap.  They re-run the three pin-2
+# negatives of PLAN:1501-1506 and pin the whole line of each.  `eval _`
+# is the corpus hole with no spine.  `eval (mkEqD _ boolEq)` is a spine
+# under the family fence, which is rule 2.  `eval (liftIO _ _)` is a
+# spine that reaches the settle fold, which is rule 3, and its line
+# moves under the mutation above.
+m7a_b1=$("$watchdog" "$FAST" "$m7a_exe" check \
+  "$ROOT"/test/fixtures/m6c-hole-n-infer.tot 2>&1)
+m7a_c1=$?
+m7a_b2=$("$watchdog" "$FAST" "$m7a_exe" check "$ROOT"/dev/m7a/infer-fenced.tot 2>&1)
+m7a_c2=$?
+m7a_b3=$("$watchdog" "$FAST" "$m7a_exe" check "$ROOT"/dev/m7a/infer-undetermined.tot 2>&1)
+m7a_c3=$?
+{ [ "$m7a_files" -eq 100 ] && [ "$m7a_green" -eq 61 ] \
+    && [ "$m7a_digest" = 9b416b949964a50c4f7633eab478b5c2 ] \
+    && [ "$m7a_c1" -eq 1 ] && [ "$m7a_c2" -eq 1 ] && [ "$m7a_c3" -eq 1 ] \
+    && printf '%s\n' "$m7a_b1" \
+       | rg -qx '\S*/m6c-hole-n-infer\.tot:1:6: hole: no expected type at this position' \
+    && printf '%s\n' "$m7a_b2" \
+       | rg -qx '\S*/infer-fenced\.tot:1:13: hole: no expected type at this position' \
+    && printf '%s\n' "$m7a_b3" \
+       | rg -qx '\S*/infer-undetermined\.tot:1:14: hole: no expected type at this position'; } \
+  && echo PASS-M7A-INFER-SETTLE-BUDGET \
+  || {
+    printf '%s\n' "$m7a_recs" | head -10
+    printf '%s\n%s\n%s\n' "$m7a_b1" "$m7a_b2" "$m7a_b3"
+    echo "FAIL-M7A-INFER-SETTLE-BUDGET (files=$m7a_files green=$m7a_green md5=$m7a_digest neg=$m7a_c1$m7a_c2$m7a_c3)"
+    exit 1
+  }
 
 # ctxcat id 5: an instance with TWO dictionary binders on the SAME type
 # variable. Round 1's fuel bounded the depth of one resolution PATH,

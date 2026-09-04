@@ -1,0 +1,10 @@
+def rec myListEqBy : (0 A : Type 0) -> (A -> A -> Bool) -> List A -> List A -> Bool :=
+  fun A f xs ys =>
+    match xs as xx return Bool with
+    | nil => match ys as yy return Bool with | nil => true | cons h2 t2 => false end
+    | cons h1 t1 =>
+        match ys as yy return Bool with
+        | nil => false
+        | cons h2 t2 => andb (f h1 h2) (myListEqBy A f t1 t2)
+        end
+    end

@@ -1,0 +1,2 @@
+def myMember : (0 A : Type 0) -> EqD A -> A -> List A -> Bool :=
+  fun A d x xs => anyList A (eqf A d x) xs

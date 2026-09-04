@@ -1,0 +1,1 @@
+def probeI : List Nat := match (map _ Nat (fun n => n) (nil Nat)) with | nil => nil Nat | cons h t => t end

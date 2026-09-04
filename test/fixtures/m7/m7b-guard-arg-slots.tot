@@ -1,0 +1,14 @@
+-- M7 Stage B (pins 5, 6, 11): the POSITIVE control for the corpus
+-- shape this stage lands.  Both let-star A slots are holes.  The
+-- first reads its type from readStdin.  The second reads its type
+-- from liftIO _ (jsonParse raw), which the Stage A infer settle
+-- fills from jsonParse : String -> Div (Option Json)
+-- (surface/bootstrap.ml:147).  This file exits 1 at 66b444f, before
+-- Stage A, and exits 0 at 37c0bb2, the commit this stage lands on.
+def main : IO Verdict :=
+  let* _ _ raw := readStdin in
+  let* _ _ parsed := liftIO _ (jsonParse raw) in
+  match parsed with
+  | none => pureIO _ allow
+  | some payload => pureIO _ allow
+  end

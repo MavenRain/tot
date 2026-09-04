@@ -130,8 +130,8 @@ def decide : Json -> Verdict :=
 -- is reached only under the default fail-open posture.  This file
 -- itself is unchanged: the flag lives in the driver, not here.
 def main : IO Verdict :=
-  let* String _ raw := readStdin in
-  let* (Option Json) _ parsed := liftIO _ (jsonParse raw) in
+  let* _ _ raw := readStdin in
+  let* _ _ parsed := liftIO _ (jsonParse raw) in
   match parsed with
   | none => pureIO _ allow
   | some payload => pureIO _ (decide payload)

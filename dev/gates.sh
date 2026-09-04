@@ -2292,7 +2292,10 @@ m5d_bites=$(rg -c '"\$watchdog" "\$BITE_S"' "$ROOT/dev/gates.sh")
 # gained three FAST calls, the error-value legs of conflict note C-A13,
 # and deleted none.  Measured with the recipe above before (202) and
 # after (205) the edit.
-{ [ "$m5d_nolit" -eq 1 ] && [ "$m5d_tiers" -eq 205 ] && [ "$m5d_bites" -eq 2 ] \
+# M7 Stage B (2026-09-04) raised it 205 -> 211: the two new legs add
+# six direct FAST calls (three per leg), measured with the recipe
+# above before (205) and after (211) the edit.
+{ [ "$m5d_nolit" -eq 1 ] && [ "$m5d_tiers" -eq 211 ] && [ "$m5d_bites" -eq 2 ] \
   && [ -s "$ROOT/dev/gates.sh" ]; } \
   && echo PASS-M5D-TIERS \
   || { echo "FAIL-M5D-TIERS (nolit=$m5d_nolit tiers=$m5d_tiers bites=$m5d_bites)"; exit 1; }
@@ -3110,6 +3113,11 @@ m6e_oo=$("$watchdog" "$FAST" "$m5d_bin" run "$ROOT"/examples/guard-rewrap.tot \
 # anchors (scope-out 5 enforced); and guard.tot's deny envelope on the
 # M3 payload is byte-identical to the pre-respell envelope (probe
 # P16), so holes changed no behaviour.
+# M7 Stage B (2026-09-04): the literal walks 22 to 26.  The four A
+# slots of examples/guard.tot:133-134 and examples/guard-rewrap.tot:
+# 264-265 close under Stage A's argument-driven rule and infer settle,
+# so they re-spell to holes: 19 re-spelled M6 sites, plus the
+# scrubber's three, plus these four Stage B A slots, is 26.
 m6e_g1=$("$watchdog" "$FAST" "$m5d_bin" check "$ROOT"/examples/guard.tot 2>&1); m6e_c6=$?
 m6e_g2=$("$watchdog" "$FAST" "$m5d_bin" check "$ROOT"/examples/guard-rewrap.tot 2>&1); m6e_c7=$?
 m6e_g3=$("$watchdog" "$FAST" "$m5d_bin" check "$ROOT"/examples/guard-classes.tot 2>&1); m6e_c8=$?
@@ -3119,7 +3127,7 @@ m6e_env=$("$watchdog" "$FAST" "$m5d_bin" run "$ROOT"/examples/guard.tot \
   < "$ROOT"/test/fixtures/deny.json); m6e_c9=$?
 m6e_wantenv='{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"house rule: use rg instead of grep and sd instead of sed (command: grep foo /tmp/x)"}}'
 { [ "$m6e_c6" -eq 0 ] && [ "$m6e_c7" -eq 0 ] && [ "$m6e_c8" -eq 0 ] \
-  && [ "$m6e_holes" -eq 22 ] && [ "$m6e_pz" -eq 1 ] \
+  && [ "$m6e_holes" -eq 26 ] && [ "$m6e_pz" -eq 1 ] \
   && [ "$m6e_c9" -eq 2 ] && [ "$m6e_env" = "$m6e_wantenv" ]; } \
   && echo PASS-M6E-GUARD-HOLES \
   || { printf '%s\n%s\n%s\n%s\n' "$m6e_g1" "$m6e_g2" "$m6e_g3" "$m6e_env"; \
@@ -3509,6 +3517,68 @@ m7a_c3=$?
     echo "FAIL-M7A-INFER-SETTLE-BUDGET (files=$m7a_files green=$m7a_green md5=$m7a_digest neg=$m7a_c1$m7a_c2$m7a_c3)"
     exit 1
   }
+
+# ---------------------------------------------------------------------
+# M7 Stage B (verdict pins 5, 6, 11): all FOUR guard A slots are
+# re-spelled as holes.  Pin 6 pinned two of them as explicit-forever
+# negatives, on the recorded reason that the informative later
+# argument is itself the holed `liftIO _ (...)` which
+# surface/elab.ml:287-291 refuses at the infer entry.  Stage A's
+# infer settle elaborates that argument, so the recorded reason is no
+# longer true and the two negatives are RETIRED (Ratification
+# amendment 2026-09-04: a slot stays a negative only with a true
+# reason).  Measured at 66b444f, before Stage A: each slot alone,
+# re-spelled in its own file, exits 1 at `134:8` and `265:8` with
+# `hole: expected Type 0` (plan B2 P4, P6).  At 37c0bb2, the commit
+# this stage lands on, the settle closes all four slots.  The refusal
+# obligation moves to m7b-arg-slot-undetermined.tot, whose every
+# later argument is a hole, so nothing determines the slot.  Deleting
+# that negative leg is forbidden; re-opening its design is the M6
+# rule.  Mutation proofs in dev/M7-BUILD-LOG.md.
+# ---------------------------------------------------------------------
+
+# PASS-M7B-GUARD-ARG-HOLES (pins 5, 11).  Five assertions: both
+# guards still check at exit 0; the classifier's site list shows all
+# FOUR A slots HOLED (guard.tot:133-134 and guard-rewrap.tot:264-265,
+# bucket A, which an un-respelled tree cannot show); the corpus
+# holed-anchor literal is 26 (22 at HEAD, plan B2 P7/P8); and the deny
+# envelope on the M3 payload is byte-identical to the pre-respell
+# envelope, so the re-spell changed no behaviour.
+m7b_g1=$("$watchdog" "$FAST" "$m5d_bin" check "$ROOT"/examples/guard.tot 2>&1); m7b_c1=$?
+m7b_g2=$("$watchdog" "$FAST" "$m5d_bin" check "$ROOT"/examples/guard-rewrap.tot 2>&1); m7b_c2=$?
+m7b_slots=$(rg -c 'SITE examples/guard(-rewrap)?\.tot:(133|134|264|265) head=bindIO arg=0 anchor=\[_\] pos=check bucket=A' "$m5d_scratch/hole-sites.txt")
+m7b_holed=$(rg -c 'anchor=\[_\]' "$m5d_scratch/hole-sites.txt")
+m7b_env=$("$watchdog" "$FAST" "$m5d_bin" run "$ROOT"/examples/guard.tot \
+  < "$fx"/deny.json); m7b_c3=$?
+m7b_wantenv='{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"house rule: use rg instead of grep and sd instead of sed (command: grep foo /tmp/x)"}}'
+{ [ "$m7b_c1" -eq 0 ] && [ "$m7b_c2" -eq 0 ] \
+  && [ "$m7b_slots" -eq 4 ] && [ "$m7b_holed" -eq 26 ] \
+  && [ "$m7b_c3" -eq 2 ] && [ "$m7b_env" = "$m7b_wantenv" ]; } \
+  && echo PASS-M7B-GUARD-ARG-HOLES \
+  || { printf '%s\n%s\n%s\n' "$m7b_g1" "$m7b_g2" "$m7b_env"; \
+       echo "FAIL-M7B-GUARD-ARG-HOLES (c=$m7b_c1/$m7b_c2 slots=$m7b_slots holed=$m7b_holed env=$m7b_c3)"; exit 1; }
+
+# PASS-M7B-LIFTIO-SLOT-CLOSES (pin 6, amended).  The retired negative
+# and its replacement.  The two positives pin the WHOLE stdout line,
+# and the negative pins the WHOLE message line, so a fixture that goes
+# missing (exit 1 with `no such file`) reads as red here instead of
+# green.  m7b-liftio-slot.tot is the pin 6 shape with the FIRST slot
+# left explicit: it isolates the slot the verdict called unreachable,
+# which is what makes the retirement executable rather than an
+# opinion.
+m7b_p1=$("$watchdog" "$FAST" "$m5d_bin" check \
+  "$ROOT"/test/fixtures/m7/m7b-guard-arg-slots.tot 2>&1); m7b_c4=$?
+m7b_p2=$("$watchdog" "$FAST" "$m5d_bin" check \
+  "$ROOT"/test/fixtures/m7/m7b-liftio-slot.tot 2>&1); m7b_c5=$?
+m7b_n1=$("$watchdog" "$FAST" "$m5d_bin" check \
+  "$ROOT"/test/fixtures/m7/m7b-arg-slot-undetermined.tot 2>&1); m7b_c6=$?
+m7b_wn="$ROOT/test/fixtures/m7/m7b-arg-slot-undetermined.tot:7:8: hole: expected Type 0"
+{ [ "$m7b_c4" -eq 0 ] && [ "$m7b_p1" = 'def main : (IO Verdict)' ] \
+  && [ "$m7b_c5" -eq 0 ] && [ "$m7b_p2" = 'def main : (IO Verdict)' ] \
+  && [ "$m7b_c6" -eq 1 ] && [ "$m7b_n1" = "$m7b_wn" ]; } \
+  && echo PASS-M7B-LIFTIO-SLOT-CLOSES \
+  || { printf '%s\n%s\n%s\n' "$m7b_p1" "$m7b_p2" "$m7b_n1"; \
+       echo "FAIL-M7B-LIFTIO-SLOT-CLOSES (c=$m7b_c4/$m7b_c5/$m7b_c6)"; exit 1; }
 
 # ctxcat id 5: an instance with TWO dictionary binders on the SAME type
 # variable. Round 1's fuel bounded the depth of one resolution PATH,

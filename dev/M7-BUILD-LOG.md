@@ -762,7 +762,7 @@ take a path it did not take before.  The guard also fires before the
 negative shift, so `Term.shift ~by:(-depth)` cannot underflow.  The
 reason is the reason PLAN:1593-1597 gives for the `as` binder: a motive
 that mentions an index binder needs the dependent instantiation at the
-branch pattern, which is kernel work and is out of M7 scope.
+branch pattern, which is kernel work and sits outside M7 scope.
 
 **Conflict note C-A12 (2026-09-04): the A6 witness count was wrong, and
 the witness matched the wrong comment.**  Observed before: this log
@@ -879,3 +879,524 @@ the other two oracles of that marker hold.
 - Files this round touched: `surface/elab.ml` (two comment lines),
   `dev/gates.sh` (three legs in the M7A (vii) block, one comment block,
   the `PASS-M5D-TIERS` literal and its dated sentence) and this log.
+
+## Stage B (2026-09-04): the four guard A slots close, pin 6 negatives retired (pins 5, 6, 11)
+
+Plan: `dev/M7-PLAN.md` B0-B7 (lines 2536-3269, verified with `rg -n` on
+2026-09-04 against the tree at HEAD `37c0bb2`).  Chain: 390 -> 395
+(+3 surface tests, +2 markers).  Corpus, fixtures, suite cases, gate
+legs, one SPEC entry and this log only; no file under `lib/`,
+`surface/` or `bin/` touched.
+
+### 1. Entry state
+
+- `git log -1 --oneline`: `37c0bb2` (Stage A committed); tree clean,
+  `git status --porcelain -uall` empty at entry.
+- Entry battery
+  (`/Users/oobi/Documents/tot-m7-stageB-entry-gate.log`): `GATE-EXIT=0`;
+  the wrapper's own `PASS=394` line counts the `dune exec ... | tail -3`
+  preview twice for four already-printed lines (2 kernel + 2 surface),
+  so the true suite total is `PASS=394 - 4 = 390`, verified directly:
+  105 kernel PASS lines (offset 15-158 of the log) + 131 surface PASS
+  lines (offset 159-311) + 154 `PASS-` marker lines = 390.  `FAIL=`
+  (empty, i.e. 0).  `M7A-MARKERS=7`.  No `LOAD-RED` (the wrapper never
+  entered its retry branch).
+- Entry measurements, before any edit:
+  - Tiers: `rg -c '"\$watchdog" "\$(FAST|MED|SLOW|SUITE)"' dev/gates.sh`
+    = 205.
+  - Holed anchors: `python3 dev/hole-anchors.py | rg -c 'anchor=\[_\]'`
+    = 22.
+  - `python3 dev/hole-anchors.py | tail -1` =
+    `ANCHORS total=101 expected-type-only=62 argument-driven=9 neither=30`.
+  - `ls examples/*.tot test/fixtures/*.tot | wc -l` = 101;
+    `rg -c '^### ' dev/m5e-default-transcript.txt` = 101.
+  - `md5 -q dev/m5e-default-transcript.txt` =
+    `e0943042fd0ef721b54e26f975fa2f03`.
+
+### 2. What changed
+
+- `examples/guard.tot` lines 133-134: `let* String _ raw := readStdin
+  in` -> `let* _ _ raw := readStdin in`; `let* (Option Json) _ parsed
+  := liftIO _ (jsonParse raw) in` -> `let* _ _ parsed := liftIO _
+  (jsonParse raw) in`.
+- `examples/guard-rewrap.tot` lines 264-265: the same two edits.
+  Verified: `awk 'NR==133 || NR==134'` and `NR==264 || NR==265` print
+  the re-spelled pair for both files.  `tot.exe check` on both edited
+  files exits 0 and prints the same line sets as scratch copies of the
+  HEAD bytes (`git show 37c0bb2:<path>`), confirmed by direct
+  side-by-side comparison (the sandbox refuses `/dev/fd` process
+  substitution for `diff`, the same limit `dev/gates.sh`'s
+  `PASS-M6E-TRANSCRIPT-RESEALED` conflict note C-E4 records, so the two
+  outputs were compared by eye and are byte-identical).
+  `tot.exe run examples/guard.tot < test/fixtures/deny.json` exits 2
+  and prints the deny envelope pinned at `dev/gates.sh:3120`
+  (`m6e_wantenv`), byte-identical to the pre-edit envelope.
+- `test/fixtures/m7/` (new directory): three fixtures landed byte for
+  byte from plan B4.3 (`m7b-guard-arg-slots.tot`, `m7b-liftio-slot.tot`,
+  `m7b-arg-slot-undetermined.tot`), with the amendment fix of conflict
+  note C-B1 below.  Observed with the HEAD-plus-Stage-A binary:
+  - `m7b-guard-arg-slots.tot`: exit 0, stdout `def main : (IO
+    Verdict)`.
+  - `m7b-liftio-slot.tot`: exit 0, stdout `def main : (IO Verdict)`.
+  - `m7b-arg-slot-undetermined.tot`: exit 1, stderr
+    `/Users/oobi/Documents/tot/test/fixtures/m7/m7b-arg-slot-undetermined.tot:7:8: hole: expected Type 0`.
+  All three match the plan's pinned lines and columns.  The B7 risk
+  fallback was NOT needed: every slot closed on the first try.
+- `test/surface.ml`: three source strings (`m7b_both_src`,
+  `m7b_lift_src`, `m7b_none_src`) added after `m7a_exhausted_src`, and
+  three `cases` entries (M7B-1, M7B-2, M7B-3) appended after M7A-12,
+  before the closing `]` of the case list, plan B4.4 verbatim.
+- `dev/gates.sh`: the plan B5.1 block landed VERBATIM (diffed by eye
+  against the plan's own fenced block) between the closing `}` of the
+  `PASS-M7A-INFER-SETTLE-BUDGET` fail arm (line 3511 at entry) and the
+  `# ctxcat id 5:` comment (line 3513 at entry), one blank line on each
+  side, per the placement ruling.  `PASS-M6E-GUARD-HOLES`'s literal
+  moved 22 -> 26 with a dated sentence above it (19 re-spelled M6 sites
+  + the scrubber's three + these four Stage B A slots = 26).
+  `PASS-M5D-TIERS`'s literal moved 205 -> 211 (measured: the block adds
+  six direct `"$watchdog" "$FAST"` calls, three per leg) with a dated
+  sentence above it giving both numbers.  `PASS-M5D-MEASURE-LOG`'s
+  literal (22) and pinned name set did not move: no leg in the new
+  block uses `gate_timed`.  `zsh -n dev/gates.sh` exits 0 after every
+  edit.
+- `SPEC.md`: one dated decision-log entry appended at the end of
+  section 2 (after line 1576, before the `## 3.` heading at line
+  1578), in the shape of the M6 Stage H entry.  It carries no
+  `ANCHORS` line and does not spell `expected-type-only=` (verified:
+  `rg` over the new entry's span finds neither), names
+  `surface/elab.ml:287-291` and `lib/check.ml:958-959`, the
+  Ratification amendment of 2026-09-04, the 22 to 26 move, and states
+  that `SPEC.md:2127-2130` is superseded without editing it (Stage E's
+  citation repair owns that passage).
+- `Error.t` / `Serror.t` variants added or removed: none.  No file
+  under `lib/`, `surface/` or `bin/` touched (`git status --porcelain`
+  confirms: `SPEC.md`, `dev/gates.sh`, `examples/guard-rewrap.tot`,
+  `examples/guard.tot`, `test/surface.ml` all ` M`, and
+  `test/fixtures/m7/` the only `??`).
+
+Build: `dune build` 0 errors, 0 warnings after every edit.
+
+### 3. Tests added (surface suite 131 -> 134)
+
+`test/surface.ml`: `M7B-1 m7b_guard_arg_slots`, `M7B-2
+m7b_liftio_slot`, `M7B-3 m7b_arg_slot_undetermined`, plan B4.4
+verbatim.  `dune exec test/surface.exe | rg -c '^PASS'` = 134; all
+three M7B names print `PASS M7B-<n> ...`.  Kernel `test/main.exe` PASS
+count stays 105, unchanged.
+
+### 4. Gate markers added (154 -> 156)
+
+`PASS-M7B-GUARD-ARG-HOLES` (pins 5, 11) and `PASS-M7B-LIFTIO-SLOT-CLOSES`
+(pin 6, amended; the plan's originally allocated name
+`PASS-M7B-ARG-SLOT-EXPLICIT` lands nowhere in the tree, confirmed:
+`rg -c 'PASS-M7B-ARG-SLOT-EXPLICIT' dev/gates.sh` exits 1).
+`rg -c 'PASS-M7B' dev/gates.sh` = 4 (the two `echo` lines plus their
+two comment mentions).  `zsh -n dev/gates.sh` exits 0.
+`rg -c '"\$watchdog" "\$(FAST|MED|SLOW|SUITE)"' dev/gates.sh` = 211
+(was 205: six FAST calls added, three per leg, none deleted).
+
+### 5. Conflicts (section 5 protocol)
+
+- Conflict note C-B1 (2026-09-04): plan B4.3 gives the
+  `m7b-liftio-slot.tot` header verbatim, and that verbatim text does
+  not name the Ratification amendment of 2026-09-04.  Plan B4.2 and
+  the B6 checklist item 11 both require the retirement sentence to
+  name the amendment in all three places: the fixture header, the
+  `dev/gates.sh` block comment, and the SPEC.md entry.  The repo
+  proves the verbatim fixture text insufficient for item 11 by
+  inspection, not by opinion: `rg -n 'Ratification' <the three files>`
+  found the phrase only in `dev/gates.sh` and would have found it
+  nowhere in the fixture, had the header stayed as given.  Resolution:
+  the fixture header's second sentence gained the parenthetical
+  `(Ratification amendment of 2026-09-04)`, which does not change the
+  fixture's exit code, its single stdout line, or its line count in a
+  way that affects any pinned column (the file is a positive control
+  that exits 0, so no error line or column depends on the header's
+  byte count).  The `dev/gates.sh` block comment stays byte-identical
+  to the plan's B5.1 verbatim text (that block's bytes win per the
+  build brief), so its wording reads "Ratification amendment
+  2026-09-04" without "of", split across two comment lines; the
+  fixture header and the SPEC.md entry both read "Ratification
+  amendment of 2026-09-04".  All three name the amendment and the
+  Stage A measurement, and none of them says that the settle falls
+  outside M7 (a sweep for that claim over all three finds nothing),
+  which is the substantive property item 11 pins.  Full byte identity
+  across all three was not attempted, because the plan pins the
+  `dev/gates.sh` block's bytes verbatim and the fixture header and the
+  SPEC.md entry serve different prose shapes (a file header, a script
+  comment, a decision-log entry).
+
+  SUPERSEDED by conflict note C-B3 (2026-09-04) in the review-round
+  subsection below.  The review round holds the three retirement
+  sentences to the literal reading of item 11, and they now read the
+  same.
+
+### 6. Mutation proofs
+
+Six mutation proofs run, each restored, each `md5 -q` identical before
+and after.  Full rows in
+`/Users/oobi/Documents/tot-m7-stageB-mutations.log`.
+
+(a) `examples/guard.tot:134` reverted to HEAD's own spelling,
+`  let* (Option Json) _ parsed := liftIO _ (jsonParse raw) in`.  Both
+`PASS-M6E-GUARD-HOLES` and `PASS-M7B-GUARD-ARG-HOLES` flip red, each
+with `holed=25`, not 26 (the fourth A slot is explicit again, so the
+corpus count drops by one).  The two observed lines are
+`FAIL-M6E-GUARD-HOLES (c=0/0/0 holes=25 pz=1 env=2)` and
+`FAIL-M7B-GUARD-ARG-HOLES (c=0/0 slots=3 holed=25 env=2)`.  That is
+the plan B6 item 10(a) prediction of `slots=3 holed=25`.  Both guards
+still check at exit 0, so this leg bites on the SITE count alone,
+which is what the row exists to prove.  `md5 -q` before and after:
+`876d62cb35ae31e8650e3b1cf732de79`.  The first pass of this row
+applied a different edit and is corrected by conflict note C-B2 in the
+review-round subsection below.
+
+(b) `examples/guard.tot:133` reverted to `String`.  Both
+`PASS-M7B-GUARD-ARG-HOLES` (`slots=3 holed=25`) and
+`PASS-M6E-GUARD-HOLES` (`holes=25`) flip red.  Both `guard.tot` checks
+still exit 0 (`c=0/0`); the deny-payload env probe reads exit 2, which
+does not match the `wantenv` comparison, so both markers still read
+FAIL on the same AND chain.  M7-PLAN.md:3222-3224's older text says
+"every other leg green" for this mutation; this run's own task text
+already predicted `PASS-M6E-GUARD-HOLES` red as well, and that is what
+happened.  The difference from the older plan text is confined to
+this one leg (`PASS-M6E-GUARD-HOLES`); recorded here as a note, not a
+defect.  `md5 -q` before and after:
+`876d62cb35ae31e8650e3b1cf732de79`.
+
+(c) `test/fixtures/m7/m7b-arg-slot-undetermined.tot`'s value re-spelled
+to `liftIO _ (jsonParse "{}")`.  `PASS-M7B-LIFTIO-SLOT-CLOSES` flips
+red with `c=0/0/0`: the settle now fills the slot, so the retired
+negative checks at exit 0 like the two positives, and the leg's third
+AND-chain assertion (the negative's exit code and message) fails.
+`md5 -q` before and after: `9cc6feaaaa7a18e6d6bb3c21ba2d5bd3`.
+
+(d) One row per suite case, each mutated by changing the expected line
+inside the case in `test/surface.ml`, never the source string, then
+restored:
+
+- M7B-1 (`m7b_guard_arg_slots`): expected line changed to
+  `def probeGuardBoth : WRONG`.  Observed: `FAIL M7B-1
+  m7b_guard_arg_slots: ...` / `got  [def probeGuardBoth : (IO
+  Verdict)]` / `want [def probeGuardBoth : WRONG]`.
+- M7B-2 (`m7b_liftio_slot`): expected line changed to
+  `def probeGuardLift : WRONG`.  Observed: `FAIL M7B-2
+  m7b_liftio_slot: ...` / `got  [def probeGuardLift : (IO Verdict)]` /
+  `want [def probeGuardLift : WRONG]`.
+- M7B-3 (`m7b_arg_slot_undetermined`): expected line changed to
+  `2:8: hole: WRONG`.  Observed: `FAIL M7B-3
+  m7b_arg_slot_undetermined: ...` / `expected [2:8: hole: WRONG], got
+  [2:8: hole: expected Type 0]`.
+
+`md5 -q` on `test/surface.ml` before and after each of the three:
+`f14e5f89e969478a6cc7127eb1e61b07`.
+
+(e) The `PASS-M5D-TIERS` literal.  `dev/gates.sh`'s assertion changed
+from `-eq 211` to `-eq 210`.  Observed: `FAIL-M5D-TIERS (nolit=1
+tiers=211 bites=2)` (the true corpus count stays 211; the assertion no
+longer matches it).  `md5 -q` on `dev/gates.sh` before and after:
+`18a11122f03ebecb985a8c1a4b7d2d47`.
+
+No unkilled leg.  Every mutation flipped its own marker by the
+predicted route.
+
+A full battery run after every mutation was reverted: `GATE-EXIT=0`,
+true `FAIL=0` (the wrapper's own `PASS=399` line double-counts the
+tail-3 preview and the M7B suite preview lines the same way earlier
+Stage B runs did; true totals: markers 156, kernel 105, surface 134,
+total PASS 395).  `git status --porcelain -uall` read the same nine
+paths before the mutation stage and after it.
+
+### 7. Exit criteria (plan B6 checklist) walked
+
+1. `dune build` green; full battery
+   (`/Users/oobi/Documents/tot-m7-stageB-gate.log`): `GATE-EXIT=0`; the
+   wrapper's own `PASS=399` line again double-counts the `tail -3`
+   preview (four lines) plus, this run, the two preview-included M7B
+   suite lines, so the true totals are: markers 156 (`rg -c '^PASS-'`
+   on the gate log), kernel 105, surface 134, total PASS 395; true
+   `FAIL` 0 (the log's lone `^FAIL` hit is the `FAIL=` summary line
+   itself, printed empty).  Green.
+2. `git status --porcelain` (post-edit) shows exactly the nine B3
+   paths: six ` M` (`SPEC.md`, `dev/M7-BUILD-LOG.md`, `dev/gates.sh`,
+   `examples/guard-rewrap.tot`, `examples/guard.tot`, `test/surface.ml`)
+   and one `??` (`test/fixtures/m7/`, the directory that holds the
+   three new fixtures; `-uall` lists them one per line).  No path under
+   `lib/`, `surface/` or `bin/` appears.  Section 8 below carries the
+   same six-plus-one shape.
+3. `awk 'NR==133 || NR==134' examples/guard.tot` and `awk 'NR==264 ||
+   NR==265' examples/guard-rewrap.tot` both print `  let* _ _ raw :=
+   readStdin in` and `  let* _ _ parsed := liftIO _ (jsonParse raw)
+   in`.  Green.
+4. `python3 dev/hole-anchors.py | rg -c 'anchor=\[_\]'` = 26.
+   `python3 dev/hole-anchors.py | tail -1` =
+   `ANCHORS total=101 expected-type-only=62 argument-driven=9
+   neither=30`, unchanged.  Green.
+5. `ls examples/*.tot test/fixtures/*.tot | wc -l` = 101 still (the
+   three new fixtures sit under `test/fixtures/m7/`, a subdirectory the
+   glob does not enter).  `rg -c '^### ' dev/m5e-default-transcript.txt`
+   = 101 still.  `md5 -q dev/m5e-default-transcript.txt` unchanged at
+   `e0943042fd0ef721b54e26f975fa2f03`; no reseal.  Green.
+6. `tot.exe check examples/guard.tot | wc -l` = 10; last line `def
+   main : (IO Verdict)`, unchanged from HEAD.  Green.
+7. Both new markers appear exactly once as an `echo PASS-...` line;
+   `rg -c 'PASS-M7B' dev/gates.sh` = 4 (two echoes, two comment
+   mentions).  `rg -c 'PASS-M7B-ARG-SLOT-EXPLICIT' dev/gates.sh` finds
+   nothing. Green.
+8. The surface suite grew by exactly three PASS lines (M7B-1, M7B-2,
+   M7B-3); kernel suite count (105) did not move. Green.
+9. `PASS-M5D-TIERS` is green in the exit battery (present in the gate
+   log); both measured tier numbers (205, 211) are recorded above in
+   section 2. `PASS-M5D-MEASURE-LOG` is green with no literal change.
+   Green.
+11. The retirement sentence for pin 6 reads the same in all three
+    places (fixture header, `dev/gates.sh` block comment, SPEC.md
+    entry), names the Ratification amendment, and none of the three
+    says that the settle falls outside M7.  The review round replaced
+    the two divergent prose forms with the plan-pinned `dev/gates.sh`
+    sentence; see conflict notes C-B1 (superseded) and C-B3. Green.
+
+Item 10 (mutation proofs) is the mutation stage's; item 12 (the user
+commits) is the user's.
+
+### 8. Porcelain and gate tails
+
+`git -C /Users/oobi/Documents/tot status --porcelain` with this log
+saved.  The log is one of the nine B3 paths, so it carries its own
+` M` line:
+
+```
+ M SPEC.md
+ M dev/M7-BUILD-LOG.md
+ M dev/gates.sh
+ M examples/guard-rewrap.tot
+ M examples/guard.tot
+ M test/surface.ml
+?? test/fixtures/m7/
+```
+
+`-uall` expands the one `??` directory line into the three fixture
+paths: `test/fixtures/m7/m7b-arg-slot-undetermined.tot`,
+`test/fixtures/m7/m7b-guard-arg-slots.tot` and
+`test/fixtures/m7/m7b-liftio-slot.tot`.
+
+Final battery tail (`/Users/oobi/Documents/tot-m7-stageB-gate.log`):
+
+```
+PASS-M7A-INFER-SETTLE-BUDGET
+PASS-M7B-GUARD-ARG-HOLES
+PASS-M7B-LIFTIO-SLOT-CLOSES
+PASS-M4FIX-INST-BRANCHING
+PASS-M5B-BRANCHING-20
+GATE-LOG=/tmp/claude-501/tot-gate-measure.log
+GATE-EXIT=0
+PASS=399
+FAIL=
+DONE Fri  4 Sep 2026 11:01:58 PDT
+```
+
+Handoff to the mutation stage: chain stands at 395 (105 kernel + 134
+surface + 156 markers); tiers literal 211; holed-anchor literal 26.
+Three mutation proofs remain, per plan B6 item 10 and B4's mutation
+list (revert `guard.tot:134` to `(Option Json)`; revert
+`guard.tot:133` to `String`; re-spell
+`m7b-arg-slot-undetermined.tot`'s value to `liftIO _ (jsonParse
+"{}")`), each logged with source md5 before/after and the predicted
+FAIL route.
+
+### Review-round fixes (2026-09-04)
+
+The Stage B review round raised five findings.  Each fix repairs the
+cause.  No expectation was lowered.  Each note gives the observed text
+or measurement before the fix and after it.
+
+**Conflict note C-B2 (2026-09-04): mutation row (a) applied a
+different edit from the one plan B6 item 10(a) names.**  Observed
+before: `/Users/oobi/Documents/tot-m7-stageB-mutations.log` row (a)
+recorded the mutation as
+`  let* _ (Option Json) parsed := liftIO _ (jsonParse raw) in` and the
+result as
+`FAIL-M7B-GUARD-ARG-HOLES (c=1/0 slots=4 holed=25 env=1)`.  That
+spelling holes the FIRST slot and makes the SECOND explicit, the
+mirror image of HEAD's line 134,
+`  let* (Option Json) _ parsed := liftIO _ (jsonParse raw) in`
+(`git show 37c0bb2:examples/guard.tot`).  Because slot `arg=0` stayed
+a hole, the SITE count stayed at 4 and never dropped to the 3 that
+plan M7-PLAN.md:3218-3221 predicts, so the row did not exercise the
+assertion it exists to prove.  The edit also drove `guard.tot` to a
+type mismatch (`c=1`), not to a count flip.  Cause: the mutation
+script wrote the two slot positions in the wrong order.  Fix: row (a)
+was re-run with HEAD's own spelling.  The runner is
+`/Users/oobi/Documents/tot-m7-probes/stageB/rowa-rerun.sh`.  Observed
+after, on 2026-09-04:
+
+```
+--- BEFORE (unmutated Stage B tree) ---
+PASS-M6E-GUARD-HOLES
+PASS-M7B-GUARD-ARG-HOLES
+--- MUTATION (a): guard.tot:134 back to the true HEAD spelling ---
+  let* _ _ raw := readStdin in
+  let* (Option Json) _ parsed := liftIO _ (jsonParse raw) in
+FAIL-M6E-GUARD-HOLES (c=0/0/0 holes=25 pz=1 env=2)
+FAIL-M7B-GUARD-ARG-HOLES (c=0/0 slots=3 holed=25 env=2)
+--- RESTORE ---
+ROWA-MD5-BEFORE=876d62cb35ae31e8650e3b1cf732de79
+ROWA-MD5-AFTER=876d62cb35ae31e8650e3b1cf732de79
+RESTORE-IDENTICAL
+```
+
+`slots=3 holed=25` is the plan's prediction exactly.  Both guards
+still check at exit 0, so the leg bites on the site count and not on a
+build error.  Section 6 (a) above now carries this run.  The
+mutations log row (a) and its NOTE a were replaced with the same
+text.  The gate leg itself was never at fault: only the recorded proof
+was.
+
+**Conflict note C-B3 (2026-09-04): the three retirement sentences did
+not read the same, which plan B6 item 11 requires.**  Observed before:
+three prose forms of one claim, no two alike.  The fixture header read
+"Stage A's infer settle reaches it (Ratification amendment of
+2026-09-04), so the negative is RETIRED".  The `dev/gates.sh` block
+comment read "Stage A's infer settle elaborates that argument, so the
+recorded reason is no longer true and the two negatives are RETIRED
+(Ratification amendment 2026-09-04: a slot stays a negative only with
+a true reason)".  The SPEC.md entry read "Under the Ratification
+amendment of 2026-09-04, a slot stays a negative only with a true
+reason, so both halves of pin 6's negative retire."  C-B1 declined
+byte identity and read item 11 for its substance.  The review round
+holds item 11 to its literal words.  Cause: two of the three places
+were written in their own voice instead of the plan's.  Fix: the
+`dev/gates.sh` sentence is the plan-pinned one (plan B5.1, verbatim),
+so it stays and the other two adopt it.  Observed after, the same
+sentence in all three places, modulo the line wrapping and the comment
+marker each file needs:
+
+```
+Stage A's infer settle elaborates that argument, so the recorded
+reason is no longer true and the two negatives are RETIRED
+(Ratification amendment 2026-09-04: a slot stays a negative only with
+a true reason).
+```
+
+Each of the three now carries the antecedent sentence too, so "that
+argument" resolves in place: the informative later argument is itself
+the holed `liftIO _ (...)` which `surface/elab.ml:287-291` refuses at
+the infer entry.  The check is
+`/Users/oobi/Documents/tot-m7-probes/stageB/item11.sh`, which strips
+the comment markers and collapses the runs of blanks, then compares
+the three.  The amendment keeps the plan's own spelling, "Ratification
+amendment 2026-09-04" without "of", in all three places.  Item 11 asks
+the sentence to name the amendment, and this spelling names it.  The
+fixture header grew by four lines.  No assertion depends on that
+file's line numbers: `m7b-liftio-slot.tot` exits 0 and the gate pins
+only its one stdout line, `def main : (IO Verdict)`.  The surface
+suite case M7B-2 uses its own inline source, not the file.
+`dev/hole-anchors.py` excludes test fixtures (its lines 13-15), so no
+anchor count moves.
+
+**Conflict note C-B4 (2026-09-04): a blunt sweep for the banned
+M7-scope phrase over the nine B3 paths returned three hits.**  Plan B6
+item 11 bans one claim: that the settle falls outside M7.  A reviewer
+ran the blunt form of that sweep, four words with no subject, over the
+nine paths.  Observed before: three hits, all in this log, at lines
+765, 1022 and 1144.  None of the three made the banned claim.  Line
+765 was about a dependent instantiation at a branch pattern, line 1022
+quoted the narrow sweep itself inside C-B1, and line 1144 said that no
+file makes the claim.  The narrow sweep, the one with the subject,
+matched only the C-B1 self-quote.  Cause: the log used the banned
+words to talk about the ban, so the blunt sweep read its own prose as
+a hit.  Fix: the three places were reworded, so the blunt sweep and
+the narrow one now agree.  Observed after: line 765 reads "which is
+kernel work and sits outside M7 scope", the C-B1 sentence reads "none
+of them says that the settle falls outside M7 (a sweep for that claim
+over all three finds nothing)", and the item 11 line reads "none of
+the three says that the settle falls outside M7".  Both sweeps over
+the nine B3 paths now find nothing outside this note, which names the
+phrase only by description.
+
+**Conflict note C-B5 (2026-09-04): the section 8 porcelain block
+omitted this log and undercounted the modified paths.**  Observed
+before: the fenced block listed five ` M` lines plus one `??` line,
+and `dev/M7-BUILD-LOG.md` was absent, while the live
+`git status --porcelain` returned six ` M` entries.  Section 7 item 2
+said "five ` M`" and hedged the gap in prose with "plus this log
+itself once saved".  The pasted block is the artifact a reviewer
+diffs, and it carried no such hedge.  Cause: the block was pasted
+before the log was saved.  Fix: the block was re-pasted from a run
+that counts this log, and the block now says so.  Section 7 item 2
+now reads "six ` M`" and names `dev/M7-BUILD-LOG.md`.  Observed after:
+the six ` M` lines are `SPEC.md`, `dev/M7-BUILD-LOG.md`,
+`dev/gates.sh`, `examples/guard-rewrap.tot`, `examples/guard.tot` and
+`test/surface.ml`, and the one `??` line is `test/fixtures/m7/`, which
+`-uall` expands to the three fixture paths.
+
+**Conflict note C-B6 (2026-09-04): "exits 1 at HEAD" named the wrong
+commit.**  Observed before: `dev/gates.sh` read "Measured at HEAD
+before the stage: each slot alone, re-spelled in its own file, exits 1
+at `134:8` and `265:8`".  The fixture header of
+`m7b-guard-arg-slots.tot` read "This file exits 1 at HEAD", and the
+header of `m7b-liftio-slot.tot` read "exit 1 at HEAD, exit 0 after the
+stage".  Stage B lands on 37c0bb2, where Stage A is already built, and
+at 37c0bb2 those shapes exit 0.  The refusal belongs to 66b444f, which
+is the commit plan B2:2685 names for its own probe binary.  Cause: the
+plan wrote those bytes at 66b444f and this stage copied them onto a
+later tree.  This is a deviation from plan B4.3 and plan B5.1
+verbatim text, taken under the section 5 protocol, because the plan's
+own B2 attribution rules the sentence false on the tree it lands on.
+Fix: each place names its commit.  Observed after, `dev/gates.sh`:
+"Measured at 66b444f, before Stage A: each slot alone, re-spelled in
+its own file, exits 1 at `134:8` and `265:8` with `hole: expected
+Type 0` (plan B2 P4, P6).  At 37c0bb2, the commit this stage lands on,
+the settle closes all four slots."  `m7b-guard-arg-slots.tot`: "This
+file exits 1 at 66b444f, before Stage A, and exits 0 at 37c0bb2, the
+commit this stage lands on."  `m7b-liftio-slot.tot`: "This file
+records the flip: exit 1 at 66b444f, before Stage A, and exit 0 at
+37c0bb2."  `m7b-arg-slot-undetermined.tot` keeps "Exit 1 at HEAD and
+exit 1 after the stage": that file exits 1 at 37c0bb2 and exits 1
+after the stage, so its sentence is true as written.  The edits touch
+comment bytes only.  The two positives report no position now, because
+they exit 0, so plan B4.3's "the header lengths fix the reported
+positions" binds only the negative fixture, whose header is unchanged
+at five lines and whose pinned position stays `7:8`.
+
+**Review-round re-measures and the exit battery.**  Every fix above
+edits comment bytes, prose or fixture headers.  None adds or removes a
+watchdog tier line, so `PASS-M5D-TIERS` does not move:
+`rg -c '"\$watchdog" "\$(FAST|MED|SLOW|SUITE)"' dev/gates.sh` printed
+211 before the review round and 211 after it, and the assertion at
+`dev/gates.sh:2298` keeps its literal of 211.  `zsh -n dev/gates.sh`
+exits 0.  `rg -c` for the em-dash character finds none in any of the
+nine paths.  The B6 checklist was walked again after the fixes:
+`awk 'NR==133 || NR==134' examples/guard.tot` and the rewrap pair
+still print the two holed lines (item 3); holed anchors 26 and
+`ANCHORS total=101 expected-type-only=62 argument-driven=9 neither=30`
+(item 4); 101 and 101 (item 5); `tot.exe check examples/guard.tot`
+prints 10 lines ending `def main : (IO Verdict)` (item 6);
+`rg -c 'PASS-M7B' dev/gates.sh` = 4 and the retired name lands nowhere
+(item 7); surface 134 and kernel 105 (item 8);
+`/Users/oobi/Documents/tot-m7-probes/stageB/item11.py` prints
+`ITEM11-SAME=yes` (item 11).  The three fixtures still read exit 0,
+exit 0 and exit 1 with `:7:8: hole: expected Type 0`.
+
+Exit battery after the review round
+(`/Users/oobi/Documents/tot-m7-stageB-review-gate.log`):
+
+```
+PASS-M7A-INFER-SETTLE-BUDGET
+PASS-M7B-GUARD-ARG-HOLES
+PASS-M7B-LIFTIO-SLOT-CLOSES
+PASS-M4FIX-INST-BRANCHING
+PASS-M5B-BRANCHING-20
+GATE-LOG=/tmp/claude-501/tot-gate-measure.log
+GATE-EXIT=0
+PASS=399
+FAIL=
+DONE Fri  4 Sep 2026 11:52:58 PDT
+```
+
+The wrapper's `PASS=399` line double-counts the preview lines, as
+conflict note C-A14 records.  The true totals are unchanged: markers
+156 (`rg -c '^PASS-'` on the gate log), kernel 105, surface 134, total
+PASS 395.  The log's one `^FAIL` hit is the empty `FAIL=` summary
+line, so the true FAIL count is 0.  No load artefact: the wrapper
+printed no `LOAD-RED` line.

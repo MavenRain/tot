@@ -1,0 +1,17 @@
+-- M7 Stage B (pin 6, amended): the slot the verdict pinned as an
+-- explicit-forever negative, on the recorded reason that the
+-- informative later argument is itself the holed `liftIO _ (...)`
+-- which surface/elab.ml:287-291 refuses at the infer entry.  Stage
+-- A's infer settle elaborates that argument, so the recorded reason
+-- is no longer true and the two negatives are RETIRED (Ratification
+-- amendment 2026-09-04: a slot stays a negative only with a true
+-- reason).  This file records the flip: exit 1 at 66b444f, before
+-- Stage A, and exit 0 at 37c0bb2.  The first slot stays explicit, so
+-- this file isolates the second slot alone.
+def main : IO Verdict :=
+  let* String _ raw := readStdin in
+  let* _ _ parsed := liftIO _ (jsonParse raw) in
+  match parsed with
+  | none => pureIO _ allow
+  | some payload => pureIO _ allow
+  end

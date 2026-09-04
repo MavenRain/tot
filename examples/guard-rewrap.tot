@@ -261,8 +261,8 @@ def decideRewrap : Json -> Verdict :=
 -- keep (an installation that wants fail-closed spells the hook
 -- command `tot run --strict-json <this file>`).
 def main : IO Verdict :=
-  let* String _ raw := readStdin in
-  let* (Option Json) _ parsed := liftIO _ (jsonParse raw) in
+  let* _ _ raw := readStdin in
+  let* _ _ parsed := liftIO _ (jsonParse raw) in
   match parsed with
   | none => pureIO _ allow
   | some payload => pureIO _ (decideRewrap payload)

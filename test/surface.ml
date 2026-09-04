@@ -966,6 +966,35 @@ let m7a_exhausted_src =
   \  let* _ Verdict parsed := liftIO _ _ in\n\
   \  pureIO Verdict allow\n"
 
+(* M7 Stage B (plan B4.4): the guard let-star A slots, the three
+   shapes the milestone separates.  [m7b_both_src] is
+   examples/guard.tot:133-134 after the re-spell.  [m7b_lift_src] is
+   the slot pin 6 called explicit-forever, alone;  the Stage A infer
+   settle reaches it (Ratification amendment 2026-09-04), so it
+   resolves.  [m7b_none_src] is the shape the rule must NOT fill. *)
+let m7b_both_src : string =
+  "def probeGuardBoth : IO Verdict :=\n\
+  \  let* _ _ raw := readStdin in\n\
+  \  let* _ _ parsed := liftIO _ (jsonParse raw) in\n\
+  \  match parsed with\n\
+  \  | none => pureIO _ allow\n\
+  \  | some payload => pureIO _ allow\n\
+  \  end\n"
+
+let m7b_lift_src : string =
+  "def probeGuardLift : IO Verdict :=\n\
+  \  let* String _ raw := readStdin in\n\
+  \  let* _ _ parsed := liftIO _ (jsonParse raw) in\n\
+  \  match parsed with\n\
+  \  | none => pureIO _ allow\n\
+  \  | some payload => pureIO _ allow\n\
+  \  end\n"
+
+let m7b_none_src : string =
+  "def probeGuardNone : IO Verdict :=\n\
+  \  let* _ Verdict parsed := liftIO _ _ in\n\
+  \  pureIO Verdict allow\n"
+
 let cases (bst : Tot_surface.Run.state) : (string * (unit -> (unit, string) result)) list =
   [
     ( "cadd two two runs to church four",
@@ -2036,6 +2065,18 @@ let cases (bst : Tot_surface.Run.state) : (string * (unit -> (unit, string) resu
        keeps its infer-position error value",
       m6c_expect_err_line bst m7a_undetermined_src
         "1:14: hole: no expected type at this position" );
+    (* M7 Stage B (plan B4.4): pins 5 and 6, the guard slot posture
+       after the 2026-09-04 amendment, in the suite that runs in
+       process. *)
+    ( "M7B-1 m7b_guard_arg_slots: both guard let* A slots read their types from the later \
+       argument, so the re-spelled pair checks and prints the guard's own line",
+      expect_lines_check ~st:bst m7b_both_src [ "def probeGuardBoth : (IO Verdict)" ] );
+    ( "M7B-2 m7b_liftio_slot: the second guard slot, which pin 6 pinned as explicit-forever, \
+       closes under the infer settle and prints its line",
+      expect_lines_check ~st:bst m7b_lift_src [ "def probeGuardLift : (IO Verdict)" ] );
+    ( "M7B-3 m7b_arg_slot_undetermined: every later argument is itself a hole, so the leading \
+       slot keeps the HEAD message and the rule fills nothing",
+      m6c_expect_err_line bst m7b_none_src "2:8: hole: expected Type 0" );
   ]
 
 (** The ordinary in-process suite: bootstrap once, run every [cases]

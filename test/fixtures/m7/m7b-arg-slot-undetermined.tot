@@ -1,0 +1,8 @@
+-- M7 Stage B (pin 6, amended): the tripwire that replaces the two
+-- retired negatives.  Every later argument of the bind is itself a
+-- hole, so no later argument determines the leading slot and the
+-- Stage A rule must leave it alone.  Exit 1 at HEAD and exit 1 after
+-- the stage, with the same message.
+def probeG : IO Verdict :=
+  let* _ Verdict parsed := liftIO _ _ in
+  pureIO Verdict allow

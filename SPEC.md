@@ -1574,6 +1574,41 @@ verdict CLIs, small tools.  The house rules are the semantics:
   before (167) and after (169) the edit.  The battery count goes
   370 -> 371 PASS.  The hole-anchor classes do not move:
   `dev/hole-anchors.py` excludes test fixtures (its lines 13-15).
+- 2026-09-04 (M7, Stage B): the four guard A slots close, and pin 6's
+  two negatives retire (pins 5, 6, 11).  `examples/guard.tot:133-134`
+  and `examples/guard-rewrap.tot:264-265` lose their explicit spelling
+  and become holes.  Each file's first `let*` slot fills from the
+  bind's third argument, `readStdin`.  Each file's second `let*` slot
+  fills too: Stage A's infer settle elaborates the inner `liftIO _
+  (jsonParse raw)` argument, so the chain that determines the slot
+  closes.
+  Pin 6 pinned the second slot of each file as an explicit-forever
+  negative, on the recorded reason that the informative later argument
+  is itself the holed `liftIO _ (...)` which `surface/elab.ml:287-291`
+  refuses at the infer entry.  Stage A's infer settle elaborates that
+  argument, so the recorded reason is no longer true and the two
+  negatives are RETIRED (Ratification amendment 2026-09-04: a slot
+  stays a negative only with a true reason).  The pin is not deleted:
+  its two slots move into the new marker
+  `PASS-M7B-LIFTIO-SLOT-CLOSES`, and the refusal obligation moves to a
+  new fixture, `test/fixtures/m7/m7b-arg-slot-undetermined.tot`, whose
+  bind has every later argument itself a hole, so no rigid match fires
+  and the leading slot keeps HEAD's error.
+  A second wall stands apart from this move and is unchanged: the bare
+  lambda `lib/check.ml:958-959` refuses with `Cannot_infer`.  It does
+  not hold either of these two slots, because the pinned slot is the
+  first `let*` type, and Stage B's measurements cover it with the
+  continuation in place.
+  The corpus holed-anchor literal walks 22 to 26 (`PASS-M6E-GUARD-HOLES`,
+  `PASS-M7B-GUARD-ARG-HOLES`).  Three new fixtures land under
+  `test/fixtures/m7/`: the both-slots positive, the retired-slot
+  positive, and the undetermined negative.  Three new surface suite
+  cases pin them, M7B-1, M7B-2 and M7B-3, and the surface suite grows
+  131 to 134.  Two new gate markers pin the corpus and fixture shapes,
+  `PASS-M7B-GUARD-ARG-HOLES` and `PASS-M7B-LIFTIO-SLOT-CLOSES`.
+  SPEC.md:2127-2130 says the four guard A anchors are "kept explicit".
+  This entry supersedes that clause: the sentence is now false.  Stage
+  E owns its citation repair; this entry does not edit that passage.
 
 ## 3.  Core calculus (M0 core, M2 inductives, M3 literals and effects)
 

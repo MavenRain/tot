@@ -13,8 +13,8 @@ reducible def rec add : Nat -> Nat -> Nat := fun m n => match m with | zero => n
 reducible def rec mul : Nat -> Nat -> Nat := fun m n => match m with | zero => zero | succ p => add n (mul p n) end
 def isZero : Nat -> Bool := fun n => match n with | zero => true | succ p => false end
 def fromOption : (0 A : Type 0) -> A -> Option A -> A := fun A d o => match o with | none => d | some x => x end
-def rec append : (0 A : Type 0) -> List A -> List A -> List A := fun A xs ys => match xs with | nil => ys | cons h t => cons A h (append A t ys) end
-def rec map : (0 A : Type 0) -> (0 B : Type 0) -> (A -> B) -> List A -> List B := fun A B f xs => match xs with | nil => nil B | cons h t => cons B (f h) (map A B f t) end
+def rec append : (0 A : Type 0) -> List A -> List A -> List A := fun A xs ys => match xs with | nil => ys | cons h t => cons _ h (append _ t ys) end
+def rec map : (0 A : Type 0) -> (0 B : Type 0) -> (A -> B) -> List A -> List B := fun A B f xs => match xs with | nil => nil _ | cons h t => cons _ (f h) (map _ _ f t) end
 def rec foldNat : (0 A : Type 0) -> A -> (A -> A) -> Nat -> A := fun A z s n => match n with | zero => z | succ p => s (foldNat A z s p) end
 -- M3 Stage C: stdlib breadth (full prim catalog, self-recursive Json).
 data Ordering : Type 0 := | lt : Ordering | eq : Ordering | gt : Ordering
@@ -39,14 +39,14 @@ data Json : Type 0 :=
 def headOr : (0 A : Type 0) -> A -> List A -> A := fun A d xs => match xs with | nil => d | cons h t => h end
 -- walks the jobjCons spine; rec_arg = 0 (the tail binder t, bound by
 -- matching j, is structurally smaller)
-def rec jsonGet : Json -> String -> Option Json := fun j k => match j with | jnull => none Json | jbool b => none Json | jnum n => none Json | jstr s => none Json | jarrNil => none Json | jarrCons h t => none Json | jobjNil => none Json | jobjCons k2 v tail => match stringEq k2 k with | true => some Json v | false => jsonGet tail k end end
-def jsonAsString : Json -> Option String := fun j => match j with | jnull => none String | jbool b => none String | jnum n => none String | jstr s => some String s | jarrNil => none String | jarrCons h t => none String | jobjNil => none String | jobjCons k v t => none String end
-def jsonAsInt : Json -> Option Int := fun j => match j with | jnull => none Int | jbool b => none Int | jnum n => some Int n | jstr s => none Int | jarrNil => none Int | jarrCons h t => none Int | jobjNil => none Int | jobjCons k v t => none Int end
-def jsonGetString : Json -> String -> Option String := fun j k => match jsonGet j k with | none => none String | some v => jsonAsString v end
+def rec jsonGet : Json -> String -> Option Json := fun j k => match j with | jnull => none _ | jbool b => none _ | jnum n => none _ | jstr s => none _ | jarrNil => none _ | jarrCons h t => none _ | jobjNil => none _ | jobjCons k2 v tail => match stringEq k2 k with | true => some _ v | false => jsonGet tail k end end
+def jsonAsString : Json -> Option String := fun j => match j with | jnull => none _ | jbool b => none _ | jnum n => none _ | jstr s => some _ s | jarrNil => none _ | jarrCons h t => none _ | jobjNil => none _ | jobjCons k v t => none _ end
+def jsonAsInt : Json -> Option Int := fun j => match j with | jnull => none _ | jbool b => none _ | jnum n => some _ n | jstr s => none _ | jarrNil => none _ | jarrCons h t => none _ | jobjNil => none _ | jobjCons k v t => none _ end
+def jsonGetString : Json -> String -> Option String := fun j k => match jsonGet j k with | none => none _ | some v => jsonAsString v end
 def jsonGetStringOr : Json -> String -> String -> String := fun j k d => match jsonGetString j k with | none => d | some s => s end
 -- walks the jarrCons spine; rec_arg = 0 (the tail binder t, bound by
 -- matching j, is structurally smaller)
-def rec jsonToList : Json -> List Json := fun j => match j with | jnull => nil Json | jbool b => nil Json | jnum n => nil Json | jstr s => nil Json | jarrNil => nil Json | jarrCons h t => cons Json h (jsonToList t) | jobjNil => nil Json | jobjCons k v t => nil Json end
+def rec jsonToList : Json -> List Json := fun j => match j with | jnull => nil _ | jbool b => nil _ | jnum n => nil _ | jstr s => nil _ | jarrNil => nil _ | jarrCons h t => cons _ h (jsonToList t) | jobjNil => nil _ | jobjCons k v t => nil _ end
 -- M4 Stage B: propositional equality.  Homogeneous Paulin-Mohring:
 -- parameters are the type and the LEFT endpoint, the right endpoint is
 -- the single index, and refl is the sole constructor.  Type 0 only;  a
@@ -71,7 +71,7 @@ reducible def J0 : (0 A : Type 0) -> (0 a : A) ->
 
 reducible def sym0 : (0 A : Type 0) -> (0 a : A) -> (0 b : A) ->
     (0 h : Eq A a b) -> Eq A b a :=
-  fun A a b h => subst0 A a b (fun z => Eq A z a) h (refl A a)
+  fun A a b h => subst0 A a b (fun z => Eq _ z a) h (refl A a)
 
 -- TRAP, do NOT "simplify" this to subst0 A b c (fun z => Eq A a z) h2 h1.
 -- A def body checks at quantity mode w, and subst0's last argument sits
@@ -142,7 +142,7 @@ axiom ioBindAssoc : (0 A : Type 0) -> (0 B : Type 0) -> (0 C : Type 0) ->
 -- instance is an ordinary global under a mangled name, and coherence is
 -- Duplicate_global on that name.  Daily call sites write "auto".
 def rec anyList : (0 A : Type 0) -> (A -> Bool) -> List A -> Bool :=
-  fun A p xs => match xs with | nil => false | cons h t => orb (p h) (anyList A p t) end
+  fun A p xs => match xs with | nil => false | cons h t => orb (p h) (anyList _ p t) end
 reducible def boolEq : Bool -> Bool -> Bool :=
   fun a b =>
     match a as x return Bool with
@@ -156,7 +156,7 @@ def rec listEqBy : (0 A : Type 0) -> (A -> A -> Bool) -> List A -> List A -> Boo
     | cons h1 t1 =>
         match ys as yy return Bool with
         | nil => false
-        | cons h2 t2 => andb (f h1 h2) (listEqBy A f t1 t2)
+        | cons h2 t2 => andb (f h1 h2) (listEqBy _ f t1 t2)
         end
     end
 
@@ -170,7 +170,61 @@ instance : EqD Bool := mkEqD Bool boolEq
 instance : OrdD Int := mkOrdD Int intCompare
 instance : ShowD Int := mkShowD Int intToString
 instance : (0 A : Type 0) -> EqD A -> EqD (List A) :=
-  fun A d => mkEqD (List A) (listEqBy A (eqf A d))
+  fun A d => mkEqD (List A) (listEqBy _ (eqf A d))
 
 def member : (0 A : Type 0) -> EqD A -> A -> List A -> Bool :=
-  fun A d x xs => anyList A (eqf A d x) xs
+  fun A d x xs => anyList _ (eqf A d x) xs
+
+-- M7 Stage D (2026-09-04): the six shared guard helpers.  They moved
+-- out of examples/guard.tot and examples/guard-rewrap.tot.  Each name
+-- is spelled once here.  The two guards use these prelude globals.
+def rec firstNonEmpty : List String -> String :=
+  fun ts =>
+    match ts with
+    | nil => ""
+    | cons h t => match stringEq h "" with | true => firstNonEmpty t | false => h end
+    end
+
+def rec lastOr : String -> List String -> String :=
+  fun d xs =>
+    match xs with
+    | nil => d
+    | cons h t => match t with | nil => h | cons h2 t2 => lastOr d t end
+    end
+
+-- Split every fragment again on one more separator, concatenating
+-- the piece lists in order (fold of stringSplit over the fragments).
+def rec splitEach : String -> List String -> List String :=
+  fun sep xs =>
+    match xs with
+    | nil => nil _
+    | cons h t => append _ (stringSplit h sep) (splitEach sep t)
+    end
+
+-- Tokenize on the four shell IFS whitespace characters: space, tab,
+-- newline, carriage return.
+def firstToken : String -> String :=
+  fun cmd =>
+    firstNonEmpty (splitEach "\r" (splitEach "\n" (splitEach "\t" (stringSplit cmd " "))))
+
+-- Unwrap a bounds-checked slice.  stringSlice is partial by type
+-- (Option String) and total by behaviour: it returns none for any
+-- out-of-range window (stringSlice "abc" 0 99 = none, and a negative
+-- start is none too), so this default is unreachable for the windows
+-- elideAt builds and is a backstop, not a fallback.
+def orEmpty : Option String -> String :=
+  fun o => match o with | none => "" | some s => s end
+
+-- Bound the echoed command at 2000 bytes, the house elision width
+-- (M4 fixes round 5).  intCompare returns Ordering, so all three
+-- arms are named and no arm is a wildcard.  Arm order is lt, eq, gt:
+-- tot pins match arms to declaration order (the plan's gt-first
+-- spelling is a parse-time reject; conflict note in
+-- dev/M5-BUILD-LOG.md).
+def elideAt : Int -> String -> String :=
+  fun n s =>
+    match intCompare (stringLength s) n with
+    | lt => s
+    | eq => s
+    | gt => stringConcat (orEmpty (stringSlice s 0 n)) "... (elided)"
+    end

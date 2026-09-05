@@ -2298,7 +2298,13 @@ m5d_bites=$(rg -c '"\$watchdog" "\$BITE_S"' "$ROOT/dev/gates.sh")
 # M7 Stage C (2026-09-04) raised it 211 -> 218: the two new legs add
 # seven direct FAST calls, measured with the recipe above before (211)
 # and after (218) the edit.
-{ [ "$m5d_nolit" -eq 1 ] && [ "$m5d_tiers" -eq 218 ] && [ "$m5d_bites" -eq 2 ] \
+# M7 Stage D (2026-09-04) raised it 218 -> 224: the four new legs add
+# six direct FAST calls (two in HELPERS-SHARED, one in PRELUDE-HOLES,
+# none in ANCHORS, three in CACHE-KEY), measured with the recipe above
+# before (218) and after (224) the edit.  Plan D3.4 predicted a delta
+# of 7 from a seven-call estimate;  the plan's own block bytes carry
+# six calls, and the recipe output is the authority (conflict C-D4).
+{ [ "$m5d_nolit" -eq 1 ] && [ "$m5d_tiers" -eq 224 ] && [ "$m5d_bites" -eq 2 ] \
   && [ -s "$ROOT/dev/gates.sh" ]; } \
   && echo PASS-M5D-TIERS \
   || { echo "FAIL-M5D-TIERS (nolit=$m5d_nolit tiers=$m5d_tiers bites=$m5d_bites)"; exit 1; }
@@ -3131,16 +3137,23 @@ m6e_oo=$("$watchdog" "$FAST" "$m5d_bin" run "$ROOT"/examples/guard-rewrap.tot \
 # 264-265 close under Stage A's argument-driven rule and infer settle,
 # so they re-spell to holes: 19 re-spelled M6 sites, plus the
 # scrubber's three, plus these four Stage B A slots, is 26.
+# M7 Stage D (2026-09-04): the literal walks 26 to 68.  The helper move
+# takes the four splitEach sites of the two guards down to the two the
+# prelude copy carries, which is 26 - 4 + 2 = 24, and the prelude
+# re-spell adds 44 more, which is 68.  The prelude assertion becomes a
+# FLOOR: m6e_pz now COUNTS the holed prelude sites and must be more
+# than 0.  The exact prelude number is pinned once, in
+# PASS-M7D-PRELUDE-HOLES, so no literal is pinned twice.
 m6e_g1=$("$watchdog" "$FAST" "$m5d_bin" check "$ROOT"/examples/guard.tot 2>&1); m6e_c6=$?
 m6e_g2=$("$watchdog" "$FAST" "$m5d_bin" check "$ROOT"/examples/guard-rewrap.tot 2>&1); m6e_c7=$?
 m6e_g3=$("$watchdog" "$FAST" "$m5d_bin" check "$ROOT"/examples/guard-classes.tot 2>&1); m6e_c8=$?
 m6e_holes=$(rg -c 'anchor=\[_\]' "$m5d_scratch/hole-sites.txt")
-rg -q 'SITE stdlib/prelude\.tot:.*anchor=\[_\]' "$m5d_scratch/hole-sites.txt"; m6e_pz=$?
+m6e_pz=$(rg -c 'SITE stdlib/prelude\.tot:.*anchor=\[_\]' "$m5d_scratch/hole-sites.txt" || echo 0)
 m6e_env=$("$watchdog" "$FAST" "$m5d_bin" run "$ROOT"/examples/guard.tot \
   < "$ROOT"/test/fixtures/deny.json); m6e_c9=$?
 m6e_wantenv='{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"house rule: use rg instead of grep and sd instead of sed (command: grep foo /tmp/x)"}}'
 { [ "$m6e_c6" -eq 0 ] && [ "$m6e_c7" -eq 0 ] && [ "$m6e_c8" -eq 0 ] \
-  && [ "$m6e_holes" -eq 26 ] && [ "$m6e_pz" -eq 1 ] \
+  && [ "$m6e_holes" -eq 68 ] && [ "$m6e_pz" -gt 0 ] \
   && [ "$m6e_c9" -eq 2 ] && [ "$m6e_env" = "$m6e_wantenv" ]; } \
   && echo PASS-M6E-GUARD-HOLES \
   || { printf '%s\n%s\n%s\n%s\n' "$m6e_g1" "$m6e_g2" "$m6e_g3" "$m6e_env"; \
@@ -3155,8 +3168,15 @@ m6e_wantenv='{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDeci
 # --count-sites recount stay owned by PASS-M5D-HOLE-ANCHORS upstream;
 # SPEC-vs-log stays owned by the spliced PASS-M5D-MEASURE-LOG (plan
 # E4).
+# M7 Stage D (2026-09-04): the literal walks
+# "ANCHORS total=101 expected-type-only=62 argument-driven=9 neither=30"
+# to "ANCHORS total=99 expected-type-only=60 argument-driven=9
+# neither=30".  The helper move deletes four anchor sites from the two
+# guards and re-adds two in the prelude, so total and
+# expected-type-only each drop by two.  The -gt 98 floor still holds at
+# 99.  PASS-M7D-ANCHORS pins the same line for pin 10.
 m6e_line=$(rg -o '^ANCHORS total=[0-9]+ expected-type-only=[0-9]+ argument-driven=[0-9]+ neither=[0-9]+$' "$GATE_LOG")
-m6e_want='ANCHORS total=101 expected-type-only=62 argument-driven=9 neither=30'
+m6e_want='ANCHORS total=99 expected-type-only=60 argument-driven=9 neither=30'
 m6e_tot=$(printf '%s' "$m6e_line" | rg -o 'total=[0-9]+' | rg -o '[0-9]+')
 { [ "$m6e_line" = "$m6e_want" ] && [ "$m6e_tot" -gt 98 ]; } \
   && echo PASS-M6E-ANCHORS \
@@ -3174,10 +3194,15 @@ m6e_tot=$(printf '%s' "$m6e_line" | rg -o 'total=[0-9]+' | rg -o '[0-9]+')
 # stays owned by PASS-M5E-DEFAULT-IDENTITY above.  The FAIL branch
 # diffs through two scratch files, not process substitution, which
 # the build sandbox refuses (Stage E conflict note C-E4).
+# M7 Stage D (2026-09-04): the guard.tot block loses the six def lines
+# of the moved helpers and keeps def baseName, def usesBanned, def
+# decide and def main, so the window shrinks from rg -A 13 to rg -A 7.
+# The literal is taken from the resealed transcript, not written by
+# hand.
 m6e_blocks=$(rg -c '^### ' "$ROOT"/dev/m5e-default-transcript.txt)
 m6e_files=$(ls "$ROOT"/examples/*.tot "$ROOT"/test/fixtures/*.tot | wc -l | tr -d ' ')
-m6e_gblock=$(rg -A 13 -x -F '### examples/guard.tot' "$ROOT"/dev/m5e-default-transcript.txt)
-m6e_wantg=$'### examples/guard.tot\n#exit 0\n#out\ndef firstNonEmpty : (w _ : (List String)) -> String\ndef lastOr : (w _ : String) -> (w _ : (List String)) -> String\ndef splitEach : (w _ : String) -> (w _ : (List String)) -> (List String)\ndef firstToken : (w _ : String) -> String\ndef baseName : (w _ : String) -> String\ndef usesBanned : (w _ : String) -> Bool\ndef orEmpty : (w _ : (Option String)) -> String\ndef elideAt : (w _ : Int) -> (w _ : String) -> String\ndef decide : (w _ : Json) -> Verdict\ndef main : (IO Verdict)\n#err'
+m6e_gblock=$(rg -A 7 -x -F '### examples/guard.tot' "$ROOT"/dev/m5e-default-transcript.txt)
+m6e_wantg=$'### examples/guard.tot\n#exit 0\n#out\ndef baseName : (w _ : String) -> String\ndef usesBanned : (w _ : String) -> Bool\ndef decide : (w _ : Json) -> Verdict\ndef main : (IO Verdict)\n#err'
 m6e_srub=$(rg -c '^def scrubLines : ' "$ROOT"/dev/m5e-default-transcript.txt)
 { [ "$m6e_blocks" -eq "$m6e_files" ] && [ "$m6e_gblock" = "$m6e_wantg" ] \
   && [ "$m6e_srub" -eq 1 ]; } \
@@ -3374,6 +3399,11 @@ m7a_ndcode=$?
 # stops reporting a hole (plan A7, A8).  Stage D owns the next
 # re-derivation of the md5 and the 55, because it deletes twelve helper
 # defs from the two guards.
+# M7 Stage D (2026-09-04): re-derived with the recipe above.  The md5
+# walks 99c23b4b74c722735d17e1dc49524e58 to
+# f1450de0006de4b7339b2f39ec2e2e50 and the line count walks 55 to 43,
+# because twelve helper def lines leave the two guards.  The stderr
+# byte count stays 0 and the transcript hole count stays 8.
 "$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check "$ROOT"/examples/church.tot \
   > "$m7a_scratch"/e1.out 2> "$m7a_scratch"/e1.err
 "$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check "$ROOT"/examples/guard-classes.tot \
@@ -3391,7 +3421,7 @@ m7a_conslines=$(cat "$m7a_scratch"/e1.out "$m7a_scratch"/e2.out "$m7a_scratch"/e
 m7a_conserr=$(cat "$m7a_scratch"/e1.err "$m7a_scratch"/e2.err "$m7a_scratch"/e3.err \
   "$m7a_scratch"/e4.err "$m7a_scratch"/e5.err | wc -c | tr -d ' ')
 m7a_holes=$(rg -c 'hole:' "$ROOT"/dev/m5e-default-transcript.txt)
-{ [ "$m7a_cons" = 99c23b4b74c722735d17e1dc49524e58 ] && [ "$m7a_conslines" -eq 55 ] \
+{ [ "$m7a_cons" = f1450de0006de4b7339b2f39ec2e2e50 ] && [ "$m7a_conslines" -eq 43 ] \
     && [ "$m7a_conserr" -eq 0 ] && [ "$m7a_holes" -eq 8 ]; } \
   && echo PASS-M7A-CONSERVATIVITY \
   || {
@@ -3494,6 +3524,12 @@ m7a_l4=$?
 # nothing; the `green` field refuses a digest that stayed stable
 # because every file started failing.  Stage D and Stage E each own a
 # re-derivation of all three literals.
+# M7 Stage D (2026-09-04): re-derived with the command below.  files
+# walks 100 to 101 and green walks 61 to 62, because
+# test/fixtures/m7d-prelude-splitEach.tot joins the depth-1 corpus and
+# checks at exit 0.  The digest walks
+# 9b416b949964a50c4f7633eab478b5c2 to 9cb630c7ccdc6c30b335b7355dc83a82,
+# which also carries the new stdout of the prelude and the two guards.
 m7a_exe="$ROOT"/_build/default/bin/tot.exe
 export m7a_exe
 m7a_recs=$(fd -e tot --max-depth 1 . "$ROOT"/stdlib "$ROOT"/examples "$ROOT"/test/fixtures \
@@ -3523,8 +3559,8 @@ m7a_b2=$("$watchdog" "$FAST" "$m7a_exe" check "$ROOT"/dev/m7a/infer-fenced.tot 2
 m7a_c2=$?
 m7a_b3=$("$watchdog" "$FAST" "$m7a_exe" check "$ROOT"/dev/m7a/infer-undetermined.tot 2>&1)
 m7a_c3=$?
-{ [ "$m7a_files" -eq 100 ] && [ "$m7a_green" -eq 61 ] \
-    && [ "$m7a_digest" = 9b416b949964a50c4f7633eab478b5c2 ] \
+{ [ "$m7a_files" -eq 101 ] && [ "$m7a_green" -eq 62 ] \
+    && [ "$m7a_digest" = 9cb630c7ccdc6c30b335b7355dc83a82 ] \
     && [ "$m7a_c1" -eq 1 ] && [ "$m7a_c2" -eq 1 ] && [ "$m7a_c3" -eq 1 ] \
     && printf '%s\n' "$m7a_b1" \
        | rg -qx '\S*/m6c-hole-n-infer\.tot:1:6: hole: no expected type at this position' \
@@ -3566,15 +3602,21 @@ m7a_c3=$?
 # holed-anchor literal is 26 (22 at HEAD, plan B2 P7/P8); and the deny
 # envelope on the M3 payload is byte-identical to the pre-respell
 # envelope, so the re-spell changed no behaviour.
+# M7 Stage D (2026-09-04), conflict C-D2 and the orchestrator ruling of
+# the same day: the helper move deletes lines above all four A slots,
+# so the pinned SITE line numbers walk 133, 134, 264 and 265 to 83, 84,
+# 218 and 219, and the corpus holed literal walks 26 to 68.  The leg
+# keeps its name, its marker and all five assertions;  the slot count
+# stays 4 and the holed count stays an exact number.
 m7b_g1=$("$watchdog" "$FAST" "$m5d_bin" check "$ROOT"/examples/guard.tot 2>&1); m7b_c1=$?
 m7b_g2=$("$watchdog" "$FAST" "$m5d_bin" check "$ROOT"/examples/guard-rewrap.tot 2>&1); m7b_c2=$?
-m7b_slots=$(rg -c 'SITE examples/guard(-rewrap)?\.tot:(133|134|264|265) head=bindIO arg=0 anchor=\[_\] pos=check bucket=A' "$m5d_scratch/hole-sites.txt")
+m7b_slots=$(rg -c 'SITE examples/guard(-rewrap)?\.tot:(83|84|218|219) head=bindIO arg=0 anchor=\[_\] pos=check bucket=A' "$m5d_scratch/hole-sites.txt")
 m7b_holed=$(rg -c 'anchor=\[_\]' "$m5d_scratch/hole-sites.txt")
 m7b_env=$("$watchdog" "$FAST" "$m5d_bin" run "$ROOT"/examples/guard.tot \
   < "$fx"/deny.json); m7b_c3=$?
 m7b_wantenv='{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"house rule: use rg instead of grep and sd instead of sed (command: grep foo /tmp/x)"}}'
 { [ "$m7b_c1" -eq 0 ] && [ "$m7b_c2" -eq 0 ] \
-  && [ "$m7b_slots" -eq 4 ] && [ "$m7b_holed" -eq 26 ] \
+  && [ "$m7b_slots" -eq 4 ] && [ "$m7b_holed" -eq 68 ] \
   && [ "$m7b_c3" -eq 2 ] && [ "$m7b_env" = "$m7b_wantenv" ]; } \
   && echo PASS-M7B-GUARD-ARG-HOLES \
   || { printf '%s\n%s\n%s\n' "$m7b_g1" "$m7b_g2" "$m7b_env"; \
@@ -3684,6 +3726,101 @@ m7c_p=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
     echo "FAIL-M7C-SINGLE-HOLE-UNCHANGED (exit=$m7c_c6/$m7c_c7)"
     exit 1
   }
+
+# ---------------------------------------------------------------------
+# M7 Stage D (pins 9, 10, 11 and 18): the six shared list helpers move
+# out of the two guard examples into stdlib/prelude.tot, and 44 prelude
+# anchors take the `_` spelling.  Four markers.  The block declares no
+# scratch dir: it reuses $m5d_bin, $m5d_scratch/hole-sites.txt,
+# $GATE_LOG and the FAST tier, the way the M6E block does, so the trap
+# at the top of this file does not move and no leg uses gate_timed.
+# Every measured literal and every mutation proof is in
+# dev/M7-BUILD-LOG.md.
+# ---------------------------------------------------------------------
+
+# PASS-M7D-HELPERS-SHARED (pin 9).  Four assertions: neither guard
+# defines a shared helper any more, both guards still check at exit 0,
+# and stdlib/prelude.tot defines each of the six exactly once.  The
+# six-lines-per-guard count is the HEAD picture (plan D1 probe P5).
+# Review round of 2026-09-04 (C-D6): the duplicate clause counts the
+# helper def lines in the two guard SOURCE files, not in the checker
+# stdout. A guard that keeps a helper copy makes `check` stop at
+# "duplicate global", so no def line reaches stdout and the old stdout
+# count could never rise above zero. The source count reads 12 at
+# 4a2fa75 and 0 after the move, and MUT-D1 drives it to 1.
+m7d_g1=$("$watchdog" "$FAST" "$m5d_bin" check "$ROOT"/examples/guard.tot 2>&1); m7d_c1=$?
+m7d_g2=$("$watchdog" "$FAST" "$m5d_bin" check "$ROOT"/examples/guard-rewrap.tot 2>&1); m7d_c2=$?
+m7d_hre='^def (rec )?(firstNonEmpty|lastOr|splitEach|firstToken|orEmpty|elideAt) '
+m7d_dup=$(cat "$ROOT"/examples/guard.tot "$ROOT"/examples/guard-rewrap.tot | rg -c "$m7d_hre" || echo 0)
+m7d_pre=$(rg -c "$m7d_hre" "$ROOT"/stdlib/prelude.tot || echo 0)
+{ [ "$m7d_c1" -eq 0 ] && [ "$m7d_c2" -eq 0 ] \
+  && [ "$m7d_dup" -eq 0 ] && [ "$m7d_pre" -eq 6 ]; } \
+  && echo PASS-M7D-HELPERS-SHARED \
+  || { printf '%s\n%s\n' "$m7d_g1" "$m7d_g2"; \
+       echo "FAIL-M7D-HELPERS-SHARED (c=$m7d_c1/$m7d_c2 dup=$m7d_dup pre=$m7d_pre)"; exit 1; }
+
+# PASS-M7D-PRELUDE-HOLES (pin 11, and pin 5's prelude half).  Three
+# assertions: the prelude carries exactly 46 holed anchors (44
+# re-spelled plus the two the migrated splitEach body brings), the five
+# argument-driven prelude sites are among them, and a prelude consumer
+# still checks at exit 0.  46 = 2 + 39 + 5.  The plan predicted 47 from
+# 45 re-spells;  stdlib/prelude.tot:94 refuses the `_` spelling and
+# keeps its explicit one, which is conflict C-D3 and the orchestrator
+# ruling of 2026-09-04.  The two migrated sites are
+# bucket=E, so pin 10's "the A and N buckets do not move" holds and the
+# A count below stays 5.  The walk is in dev/M7-BUILD-LOG.md.
+m7d_ph=$(rg -c 'SITE stdlib/prelude\.tot:.*anchor=\[_\]' "$m5d_scratch/hole-sites.txt" || echo 0)
+m7d_pa=$(rg -c 'SITE stdlib/prelude\.tot:.*anchor=\[_\].*bucket=A' "$m5d_scratch/hole-sites.txt" || echo 0)
+m7d_cls=$("$watchdog" "$FAST" "$m5d_bin" check "$ROOT"/examples/guard-classes.tot 2>&1); m7d_c3=$?
+{ [ "$m7d_ph" -eq 46 ] && [ "$m7d_pa" -eq 5 ] && [ "$m7d_c3" -eq 0 ]; } \
+  && echo PASS-M7D-PRELUDE-HOLES \
+  || { printf '%s\n' "$m7d_cls"; \
+       echo "FAIL-M7D-PRELUDE-HOLES (holed=$m7d_ph argdriven=$m7d_pa check=$m7d_c3)"; exit 1; }
+
+# PASS-M7D-ANCHORS (pin 10).  The classifier line this run wrote into
+# $GATE_LOG equals pin 10's exact literal.  Derivation:
+# 101 - 4 + 2 = 99 and 62 - 4 + 2 = 60 (the four splitEach sites in the
+# two guards become two in the prelude);  A and N do not move.  Schema
+# and bucket-sum stay owned by PASS-M5D-HOLE-ANCHORS upstream.
+m7d_line=$(rg -o '^ANCHORS total=[0-9]+ expected-type-only=[0-9]+ argument-driven=[0-9]+ neither=[0-9]+$' "$GATE_LOG")
+m7d_want='ANCHORS total=99 expected-type-only=60 argument-driven=9 neither=30'
+{ [ "$m7d_line" = "$m7d_want" ]; } \
+  && echo PASS-M7D-ANCHORS \
+  || { printf '%s\n' "$m7d_line"; echo "FAIL-M7D-ANCHORS (line=$m7d_line)"; exit 1; }
+
+# PASS-M7D-CACHE-KEY (pin 18).  Five assertions in one private cache
+# dir: (a) a cold run stores exactly one prelude entry; (b) the warm
+# re-run is a hit with byte-identical stdout and still one entry;
+# (c) the fixture that USES the moved helper checks at exit 0, which is
+# the observable that flips in this stage; (d) a run with the old
+# prelude source in the SAME dir stores a SECOND entry, so the key
+# folds the prelude source (surface/cache.ml:343-346); (e)
+# format_version is still 10 (surface/cache.ml:118).  Mutation proof in
+# dev/M7-BUILD-LOG.md: delete the six helpers from the prelude copy and
+# (c) goes red at "unknown name splitEach".
+m7d_ck="$m5d_scratch/ck"
+m7d_alt="$m5d_scratch/prelude-alt.tot"
+cp "$ROOT"/stdlib/prelude.tot "$m7d_alt"
+printf -- '-- M7 Stage D cache leg: one added comment line, one new key.\n' >> "$m7d_alt"
+m7d_cold=$("$watchdog" "$FAST" env TOT_CACHE_DIR="$m7d_ck" TOT_PRELUDE="$ROOT"/stdlib/prelude.tot \
+  "$m5d_bin" check "$ROOT"/test/fixtures/m7d-prelude-splitEach.tot 2>&1); m7d_c4=$?
+m7d_n1=$(command ls "$m7d_ck"/prelude-*.bin 2> /dev/null | wc -l | tr -d ' ')
+m7d_warm=$("$watchdog" "$FAST" env TOT_CACHE_DIR="$m7d_ck" TOT_PRELUDE="$ROOT"/stdlib/prelude.tot \
+  "$m5d_bin" check "$ROOT"/test/fixtures/m7d-prelude-splitEach.tot 2>&1); m7d_c5=$?
+m7d_n2=$(command ls "$m7d_ck"/prelude-*.bin 2> /dev/null | wc -l | tr -d ' ')
+m7d_re=$("$watchdog" "$FAST" env TOT_CACHE_DIR="$m7d_ck" TOT_PRELUDE="$m7d_alt" \
+  "$m5d_bin" check "$ROOT"/test/fixtures/m7d-prelude-splitEach.tot 2>&1); m7d_c6=$?
+m7d_n3=$(command ls "$m7d_ck"/prelude-*.bin 2> /dev/null | wc -l | tr -d ' ')
+m7d_fv=$(rg -c 'let format_version : int = 10' "$ROOT"/surface/cache.ml)
+m7d_wantsig='def probeSplit : (w _ : String) -> (w _ : (List String)) -> (List String)'
+{ [ "$m7d_c4" -eq 0 ] && [ "$m7d_c5" -eq 0 ] && [ "$m7d_c6" -eq 0 ] \
+  && [ "$m7d_cold" = "$m7d_wantsig" ] && [ "$m7d_warm" = "$m7d_wantsig" ] \
+  && [ "$m7d_re" = "$m7d_wantsig" ] \
+  && [ "$m7d_n1" -eq 1 ] && [ "$m7d_n2" -eq 1 ] && [ "$m7d_n3" -eq 2 ] \
+  && [ "$m7d_fv" -eq 1 ]; } \
+  && echo PASS-M7D-CACHE-KEY \
+  || { printf '%s\n%s\n%s\n' "$m7d_cold" "$m7d_warm" "$m7d_re"; \
+       echo "FAIL-M7D-CACHE-KEY (exits=$m7d_c4/$m7d_c5/$m7d_c6 entries=$m7d_n1/$m7d_n2/$m7d_n3 fv=$m7d_fv)"; exit 1; }
 
 # ctxcat id 5: an instance with TWO dictionary binders on the SAME type
 # variable. Round 1's fuel bounded the depth of one resolution PATH,

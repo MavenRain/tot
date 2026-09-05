@@ -25,17 +25,11 @@ eval : Bool
 ### examples/guard-rewrap.tot
 #exit 0
 #out
-def firstNonEmpty : (w _ : (List String)) -> String
-def lastOr : (w _ : String) -> (w _ : (List String)) -> String
-def splitEach : (w _ : String) -> (w _ : (List String)) -> (List String)
-def firstToken : (w _ : String) -> String
 def lastToken : (w _ : String) -> String
 def startsWith : (w _ : String) -> (w _ : String) -> Bool
 def endsWith : (w _ : String) -> (w _ : String) -> Bool
 def dropEmpty : (w _ : (List String)) -> (List String)
 def hasRewrapPair : (w _ : (List String)) -> Bool
-def orEmpty : (w _ : (Option String)) -> String
-def elideAt : (w _ : Int) -> (w _ : String) -> String
 data Scrub : Type 0
 ctor sCode : Scrub
 ctor sComment : Scrub
@@ -56,14 +50,8 @@ def main : (IO Verdict)
 ### examples/guard.tot
 #exit 0
 #out
-def firstNonEmpty : (w _ : (List String)) -> String
-def lastOr : (w _ : String) -> (w _ : (List String)) -> String
-def splitEach : (w _ : String) -> (w _ : (List String)) -> (List String)
-def firstToken : (w _ : String) -> String
 def baseName : (w _ : String) -> String
 def usesBanned : (w _ : String) -> Bool
-def orEmpty : (w _ : (Option String)) -> String
-def elideAt : (w _ : Int) -> (w _ : String) -> String
 def decide : (w _ : Json) -> Verdict
 def main : (IO Verdict)
 #err
@@ -10303,6 +10291,11 @@ test/fixtures/m6h-hole-n-fence-class.tot:1:65: hole: expected (List String)
 #out
 #err
 test/fixtures/m6h-hole-n-fence-proof.tot:1:42: hole: expected Nat
+### test/fixtures/m7d-prelude-splitEach.tot
+#exit 0
+#out
+def probeSplit : (w _ : String) -> (w _ : (List String)) -> (List String)
+#err
 ### test/fixtures/nested-neg.tot
 #exit 1
 #out

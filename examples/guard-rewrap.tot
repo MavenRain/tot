@@ -38,38 +38,6 @@
 -- single-line tail (both directions recorded in SPEC section 6).  It
 -- fails open on everything it does not recognise, matching the other
 -- two guards.
---
--- The tokenizer helpers (firstNonEmpty, lastOr, splitEach,
--- firstToken) are COPIED from examples/guard.tot on purpose: there
--- are no modules and the global namespace is flat, and moving them
--- into stdlib/prelude.tot would change the prelude, the bootstrap and
--- the cache (Stage A/B scope, not Stage D scope).  SPEC section 6
--- records the duplication as a debt.
-
-def rec firstNonEmpty : List String -> String :=
-  fun ts =>
-    match ts with
-    | nil => ""
-    | cons h t => match stringEq h "" with | true => firstNonEmpty t | false => h end
-    end
-
-def rec lastOr : String -> List String -> String :=
-  fun d xs =>
-    match xs with
-    | nil => d
-    | cons h t => match t with | nil => h | cons h2 t2 => lastOr d t end
-    end
-
-def rec splitEach : String -> List String -> List String :=
-  fun sep xs =>
-    match xs with
-    | nil => nil _
-    | cons h t => append _ (stringSplit h sep) (splitEach sep t)
-    end
-
-def firstToken : String -> String :=
-  fun cmd =>
-    firstNonEmpty (splitEach "\r" (splitEach "\n" (splitEach "\t" (stringSplit cmd " "))))
 
 -- The LAST token under the same four-way IFS tokenization.  A line
 -- with trailing whitespace yields a final empty token and lastOr
@@ -128,20 +96,6 @@ def rec hasRewrapPair : List String -> Bool :=
             | false => hasRewrapPair rest
             end
         end
-    end
-
--- Echo plumbing, the D3 shape: bound the attacker-controlled command
--- at 2000 bytes and let the Stage A JSON escaper quote it on the way
--- out.  Copied from examples/guard.tot (same flat-namespace reason).
-def orEmpty : Option String -> String :=
-  fun o => match o with | none => "" | some s => s end
-
-def elideAt : Int -> String -> String :=
-  fun n s =>
-    match intCompare (stringLength s) n with
-    | lt => s
-    | eq => s
-    | gt => stringConcat (orEmpty (stringSlice s 0 n)) "... (elided)"
     end
 
 -- M6 Stage E: criterion 3, the scrubber.  Line-based, narrow,

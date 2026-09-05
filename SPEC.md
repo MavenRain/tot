@@ -1643,6 +1643,49 @@ verdict CLIs, small tools.  The house rules are the semantics:
   legs now pin two stderr lines instead of one (conflict C-C1 and its
   resolution in `dev/M7-BUILD-LOG.md`).  The transcript itself stays
   byte-identical.
+- 2026-09-04 (M7, Stage D): the six shared list helpers move.
+  `firstNonEmpty`, `lastOr`, `splitEach`, `firstToken`, `orEmpty` and
+  `elideAt` were defined twice, once in `examples/guard.tot` and once
+  in `examples/guard-rewrap.tot`.  They now live once, in
+  `stdlib/prelude.tot`, with their comments.  Neither guard defines a
+  shared helper any more and both still check at exit 0.  In the same
+  stage 44 prelude anchors take the `_` spelling, which pays the first
+  half of scope-out 5.  The 45th, `stdlib/prelude.tot:94`, refuses it:
+  the congruence motive reaches the elaborator in infer position and
+  the bootstrap exits 1 at
+  `prelude: 94:48: hole: no expected type at this position`, so that
+  one anchor keeps its explicit spelling and M8 owns it (conflict
+  C-D3).  The anchors line walks from total 101 with 62 E sites to
+  total 99 with 60, and the A and N buckets stay 9 and 30.  Section 6
+  carries the new record verbatim, and pin 12 keeps the
+  `ANCHORS total=` literal out of this entry, because
+  `PASS-M5D-MEASURE-LOG` reads the last such spelling in this file.
+  That walk belongs to the move alone: four `splitEach` sites leave the
+  two guards and two return in the prelude copy.  The corpus holed-anchor
+  literal walks 26 to 24 by the move and then to 68 by the re-spell,
+  and `stdlib/prelude.tot` carries 46 holed anchors, five of them
+  argument-driven.  `dev/m5e-default-transcript.txt` is resealed in the
+  same commit: the two guard blocks each lose six `def` lines, one new
+  block joins for `test/fixtures/m7d-prelude-splitEach.tot`, and the
+  block count and the file count both walk 101 to 102.
+  `Cache.format_version` stays 10, because the cache key folds the
+  prelude source, so the edited prelude re-keys by itself
+  (`PASS-M7D-CACHE-KEY`, pin 18).  Four new gate markers land,
+  `PASS-M7D-HELPERS-SHARED`, `PASS-M7D-PRELUDE-HOLES`,
+  `PASS-M7D-ANCHORS` and `PASS-M7D-CACHE-KEY`, and four new surface
+  suite cases, M7D-1 to M7D-4, take the suite 139 -> 143.
+  `PASS-M5D-TIERS` went 218 -> 224: the four new legs add six direct
+  FAST uses, measured with
+  `rg -c '"\$watchdog" "\$(FAST|MED|SLOW|SUITE)"' dev/gates.sh`
+  before (218) and after (224) the edit.  The plan predicted a delta of
+  seven from a seven-call estimate;  its own block bytes carry six, and
+  the recipe output is the authority (conflict C-D4).  The battery
+  count goes 402 -> 410 PASS.  Conflict C-D2 and the orchestrator
+  ruling of 2026-09-04: `PASS-M7B-GUARD-ARG-HOLES` pins two literals
+  this stage invalidates, so its four pinned A-slot line numbers move
+  from 133, 134, 264 and 265 to 83, 84, 218 and 219 and its holed
+  literal moves from 26 to 68.  The leg keeps its name, its marker and
+  all five assertions.  The `:94` re-spell is handed to M8.
 
 ## 3.  Core calculus (M0 core, M2 inductives, M3 literals and effects)
 
@@ -2186,9 +2229,10 @@ Known debts entering M5 (M4, carried from `dev/M4-PLAN.md`'s own
   ANCHORS total=98 expected-type-only=59 argument-driven=9
   neither=30;  A = 9 and N = 30 are the refused buckets.
   Re-measured 2026-09-03 at M6 Stage E after the scrubber port and
-  the re-spell of the 19 example-file E anchors (the CURRENT line,
-  the one `PASS-M5D-MEASURE-LOG` reads through `| tail -n 1`, so it
-  must stay the LAST `expected-type-only=` spelling in this file):
+  the re-spell of the 19 example-file E anchors (superseded on
+  2026-09-04 by the M7 Stage D record below, which is now the CURRENT
+  line and the LAST `expected-type-only=` spelling in this file, the
+  one `PASS-M5D-MEASURE-LOG` reads through `| tail -n 1`):
   ANCHORS total=101 expected-type-only=62 argument-driven=9 neither=30
   (`PASS-M5D-HOLE-ANCHORS`, `PASS-M5D-MEASURE-LOG`,
   `PASS-M6C-HOLE-RESOLVES`, `PASS-M6C-HOLE-REPORTS`,
@@ -2203,6 +2247,24 @@ Known debts entering M5 (M4, carried from `dev/M4-PLAN.md`'s own
   position-only tail line naming the OTHER holes of the same item,
   recorded by the parse walk, so per-hole EXPECTED TYPES are still one
   at a time.
+  Re-measured 2026-09-04 at M7 Stage D, after the six shared list
+  helpers moved from the two guard examples into `stdlib/prelude.tot`
+  and 44 prelude anchors took the `_` spelling.  This record is the
+  CURRENT line, the one `PASS-M5D-MEASURE-LOG` reads through
+  `| tail -n 1`, so it must stay the LAST such record in this file:
+  ANCHORS total=99 expected-type-only=60 argument-driven=9 neither=30
+  (`PASS-M5D-MEASURE-LOG`, `PASS-M6E-ANCHORS`, `PASS-M7D-ANCHORS`).
+  The move deletes four `splitEach` anchor sites from the two guards
+  and re-adds two in the prelude copy, so the total and the
+  expected-type-only count each drop by two;  the A and N buckets do
+  not move.  Clause (2) above is now paid in part: 44 of the 45 prelude
+  anchors carry `_`, `PASS-M7D-PRELUDE-HOLES` pins 46 holed prelude
+  anchors with five of them argument-driven, and
+  `PASS-M6E-GUARD-HOLES` pins a floor of more than zero prelude holes
+  instead of zero.  The one anchor at `stdlib/prelude.tot:94` keeps its
+  explicit spelling and M8 owns it (conflict C-D3).  The four guard A
+  anchors named above sit at guard.tot:83-84 and
+  guard-rewrap.tot:218-219 after the move.
 - Frozen-guard fixtures (M4 Stage C: m4c-frozen.tot and friends) must be
   maintained as the erasure story evolves.
 - Nested inductives and the `Json` cons-cell migration to

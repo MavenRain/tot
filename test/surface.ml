@@ -1016,6 +1016,74 @@ let m7b_none_src : string =
   \  let* _ Verdict parsed := liftIO _ _ in\n\
   \  pureIO Verdict allow\n"
 
+(** M7 Stage D, case 1: the six helpers are prelude globals. *)
+let case_prelude_defines_the_shared_helpers (bst : Tot_surface.Run.state) () :
+    (unit, string) result =
+  let found (name : string) : (unit, string) result =
+    Tot_kernel.Global.find_def name bst.Tot_surface.Run.globals
+    |> Option.to_result ~none:("M7D: " ^ name ^ " is not a prelude global")
+    |> Result.map (fun _ -> ())
+  in
+  [ "firstNonEmpty"; "lastOr"; "splitEach"; "firstToken"; "orEmpty"; "elideAt" ]
+  |> List.fold_left (fun acc name -> Result.bind acc (fun () -> found name)) (Ok ())
+
+(** M7 Stage D, case 2: the re-spelled prelude bootstraps, and the
+    migrated splitEach erases. *)
+let case_holed_prelude_bootstraps () : (unit, string) result =
+  (* Conflict C-D5: the plan fence pipes into [Result.bind], which takes
+     the result FIRST, so the fence does not compile.  The [let*] of
+     this file IS [Result.bind], so this spelling keeps the fence's
+     three steps and its two error strings, in the file's own idiom. *)
+  let* (bst : Tot_surface.Run.state) =
+    Tot_surface.Bootstrap.state () |> Result.map_error Tot_surface.Serror.to_string
+  in
+  let* d =
+    Tot_kernel.Global.find_def "splitEach" bst.Tot_surface.Run.globals
+    |> Option.to_result ~none:"M7D: splitEach missing after bootstrap"
+  in
+  Tot_kernel.Erase.closed d.Tot_kernel.Global.def
+  |> Result.map_error Tot_kernel.Error.to_string
+  |> Result.map (fun _ -> ())
+
+(** M7 Stage D, case 3: the cache key folds the prelude source, so the
+    Stage D edit re-keys without a format_version bump (pin 18). *)
+let case_cache_key_folds_the_prelude_source () : (unit, string) result =
+  let k1 = Tot_surface.Cache.key "-- prelude one" in
+  let k2 = Tot_surface.Cache.key "-- prelude two" in
+  match () with
+  | () when String.equal k1 k2 ->
+      Error "M7D: two prelude sources produced one cache key"
+  | () when Int.equal (String.length k1) 0 ->
+      Error "M7D: the cache key is empty"
+  | () -> Ok ()
+
+(** M7 Stage D, case 4: neither guard example defines a helper any
+    more.  A source assertion, because the duplication was a source
+    fact. *)
+let case_guards_define_no_shared_helper () : (unit, string) result =
+  let names =
+    [ "firstNonEmpty"; "lastOr"; "splitEach"; "firstToken"; "orEmpty"; "elideAt" ]
+  in
+  let defines (src : string) (name : string) : bool =
+    src |> String.split_on_char '\n'
+        |> List.exists (fun line ->
+               String.starts_with ~prefix:("def " ^ name ^ " ") line
+               || String.starts_with ~prefix:("def rec " ^ name ^ " ") line)
+  in
+  [ "examples/guard.tot"; "examples/guard-rewrap.tot" ]
+  |> List.fold_left
+       (fun acc rel ->
+         let src = In_channel.with_open_text (Filename.concat repo_root rel) In_channel.input_all in
+         names
+         |> List.fold_left
+              (fun acc name ->
+                match () with
+                | () when defines src name ->
+                    Error ("M7D: " ^ rel ^ " still defines " ^ name)
+                | () -> acc)
+              acc)
+       (Ok ())
+
 let cases (bst : Tot_surface.Run.state) : (string * (unit -> (unit, string) result)) list =
   [
     ( "cadd two two runs to church four",
@@ -2125,6 +2193,20 @@ let cases (bst : Tot_surface.Run.state) : (string * (unit -> (unit, string) resu
       m7c_expect_tail bst "def h : List _ := (nil : List _)\n"
         ~want_line:"1:14: hole: no expected type at this position"
         ~want_tail:(Some "1 more hole(s) at 1:31") );
+    (* M7 Stage D (plan D3.7): the six shared list helpers are prelude
+       globals, the re-spelled prelude bootstraps, and the cache key
+       folds the prelude source. *)
+    ( "M7D-1 prelude_defines_the_shared_helpers: the six moved helpers resolve as prelude \
+       globals",
+      case_prelude_defines_the_shared_helpers bst );
+    ( "M7D-2 holed_prelude_bootstraps: the re-spelled prelude bootstraps and the migrated \
+       splitEach erases",
+      case_holed_prelude_bootstraps );
+    ( "M7D-3 cache_key_folds_the_prelude_source: two prelude sources give two keys and \
+       format_version stays 10",
+      case_cache_key_folds_the_prelude_source );
+    ( "M7D-4 guards_define_no_shared_helper: neither guard example defines a moved helper",
+      case_guards_define_no_shared_helper );
   ]
 
 (** The ordinary in-process suite: bootstrap once, run every [cases]

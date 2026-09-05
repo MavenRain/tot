@@ -2016,3 +2016,734 @@ same numbers.  This paragraph is the only edit after that run, and it
 adds prose to this log alone.  Nothing is staged and nothing is
 committed.  No `git checkout`, `git restore` or `git stash` ran on any
 path in this round.
+
+## Stage D (2026-09-04): the helper move, the prelude re-spell, the literal re-arithmetic and the transcript reseal (pins 9, 10, 11, 18)
+
+Plan: `dev/M7-PLAN.md` D0-D8 (lines 4200-5064).  Chain: 402 -> 410
+(+4 markers, +4 surface tests).  This section records BUILD-1, the
+corpus half: `stdlib/prelude.tot`, `examples/guard.tot`,
+`examples/guard-rewrap.tot`, `test/fixtures/m7d-prelude-splitEach.tot`
+and the regenerated `dev/m5e-default-transcript.txt`.  A second builder
+owns `dev/gates.sh`, `SPEC.md` and `test/surface.ml`.
+
+### 1.  Entry state
+
+- `git log -1 --oneline`: `4a2fa75` (Stage A, Stage B and Stage C
+  committed).  `git -C /Users/oobi/Documents/tot status --porcelain -uall`
+  printed nothing, so the entry tree is clean.  `git diff --stat` printed
+  nothing.
+- Entry battery:
+  `zsh /Users/oobi/Documents/tot-m7-probes/stageB/battery-wait.sh /Users/oobi/Documents/tot-m7-stageD-entry-gate.log`.
+  Wrapper header: `WAITED=0 LOAD=8.11`, `RUNNER-EXIT=0`,
+  `STATUS_LINES=0`, `BUILD-EXIT=0`, `M7A-MARKERS=7`, `M7B-MARKERS=2`,
+  `M7B-SUITE=3`.  Log tail: `GATE-EXIT=0`, `PASS=406`, `FAIL=` and
+  `DONE Fri  4 Sep 2026 18:02:13 PDT`.  The runner fills `FAIL=` with
+  `rg -c '^FAIL'`, which prints nothing on zero matches, so the fail
+  count is zero.  The gate slice is 402 and the wrapper line reads 406,
+  because the two suite tails add four `PASS` lines (conflict note
+  C-A14).
+- Marker counts on that log: `rg -c '^PASS-M7C-'` printed 2.
+  `rg -c 'LOAD-RED'` found nothing and exited 1, so this run is not a
+  load artefact.  `rg -c '^PASS-M7D-'` found nothing and exited 1, which
+  is the pin 13 namespace check for this stage.
+- D1 probes P1 to P11, re-measured on this tree with the commands of
+  plan 4345-4359.  Runner:
+  `/Users/oobi/Documents/tot-m7-probes/stageD/probes.sh`.
+  - P1 `python3 dev/hole-anchors.py | tail -1`:
+    `ANCHORS total=101 expected-type-only=62 argument-driven=9 neither=30`.
+  - P2 `python3 dev/hole-anchors.py | rg -c 'anchor=\[_\]'`: 26.  The
+    plan's own P2 row reads 22, which is the pre-Stage-B number at
+    66b444f.  Stage B holed the four guard A slots, so 26 is the live
+    value and the D3.3 contingency branch (plan 4559-4566) applies.
+  - P3 `python3 dev/hole-anchors.py | rg -c 'SITE stdlib/prelude\.tot:.*anchor=\[_\]'`:
+    no match, rg exit 1, so 0.
+  - P4 `python3 dev/hole-anchors.py | rg '^SITE stdlib/prelude\.tot:' | rg -o 'bucket=[A-Z]' | sort | uniq -c`:
+    5 `bucket=A`, 40 `bucket=E`, 26 `bucket=N`, 71 prelude sites.
+  - P5 `tot.exe check examples/guard.tot | rg -c '^def (firstNonEmpty|lastOr|splitEach|firstToken|orEmpty|elideAt) '`:
+    6, and 6 again for `examples/guard-rewrap.tot`.
+  - P6 `env TOT_PRELUDE=.../p-a145.tot tot.exe check examples/church.tot`:
+    exit 0, six `def` lines ending `eval : (0 a : Type 0) -> ...`.
+  - P6b the same with `p-a173.tot`: exit 0, the same output.
+  - P6c the same with `p-a159.tot`: exit 0, the same output.
+  - P7 the same with `p-e.tot`: exit 0, the same output.
+  - P6, P6b and P6c exited 1 at 66b444f.  They exit 0 here, so Stage A
+    parts A3, A3b and A4 are in the tree and the Stage D prelude
+    re-spell may land (plan 4361-4368).
+  - P8 `rg -c '"\$watchdog" "\$(FAST|MED|SLOW|SUITE)"' dev/gates.sh`: 218.
+  - P9 `rg -o 'expected-type-only=[0-9]+' SPEC.md | tail -n 1`:
+    `expected-type-only=62`.
+  - P10 `rg -c 'let format_version : int = 10' surface/cache.ml`: 1.
+  - P11 `ls examples/*.tot test/fixtures/*.tot | wc -l`: 101, and
+    `rg -c '^### ' dev/m5e-default-transcript.txt`: 101.
+- Output-move safety net.  The baseline picture at 4a2fa75 is
+  `/Users/oobi/Documents/tot-m7-probes/stageD/baseline/`, written by
+  `/Users/oobi/Documents/tot-m7-probes/stageD/baseline.sh`: `files=136`,
+  89 files at exit 0 and 47 at exit 1, transcript md5
+  `e0943042fd0ef721b54e26f975fa2f03`, 101 blocks.  The at-risk leg list
+  is `/Users/oobi/Documents/tot-m7-probes/stageD/inventory.md`.
+
+### 2.  What changed
+
+**The move (plan D3.1, 4455-4472).**  Runner:
+`/Users/oobi/Documents/tot-m7-probes/stageD/move.sh`.  Pre-edit copies
+sit under `/Users/oobi/Documents/tot-m7-probes/stageD/pre/` with these
+digests: `stdlib/prelude.tot` `6998340c85155b534dbc2ec091fae7bd`,
+`examples/guard.tot` `876d62cb35ae31e8650e3b1cf732de79`,
+`examples/guard-rewrap.tot` `0393a3515008f29270b71f56b9291c28`.
+
+- `stdlib/prelude.tot` gained 54 lines after `def member` and grew from
+  176 lines to 230.  The appended text is one blank line, a three-line
+  dated header comment, `examples/guard.tot:29-56` byte for byte, one
+  blank line, and `examples/guard.tot:75-95` byte for byte.  `splitEach`
+  keeps its two holed anchors, `nil _` and `append _`.  Bootstrap check
+  straight after the append:
+  `_build/default/bin/tot.exe check examples/church.tot` exit 0, no
+  stderr.
+- `examples/guard.tot` lost 50 lines and went from 138 to 88.  Deleted:
+  lines 29-56 (`firstNonEmpty`, `lastOr`, the `splitEach` comment and
+  body, the `firstToken` comment and body) and lines 74-95 (the blank,
+  the `orEmpty` comment and body, the `elideAt` comment and body).
+  `baseName` and `usesBanned` stay.  `tot.exe check examples/guard.tot`
+  exit 0, no stderr.  Bootstrap check after the edit: exit 0.
+- `examples/guard-rewrap.tot` lost 46 lines and went from 269 to 223.
+  Deleted: lines 41-72 (the duplication-debt comment paragraph plus
+  `firstNonEmpty`, `lastOr`, `splitEach` and `firstToken`) and lines
+  132-145 (the echo-plumbing comment plus `orEmpty` and `elideAt`).
+  `lastToken` and the scrubber stay, and so does the scrubber's own
+  comment.  `tot.exe check examples/guard-rewrap.tot` exit 0, no stderr.
+  Bootstrap check after the edit: exit 0.
+- `dune build` after the three edits: green, no output.
+
+**The re-spell (plan D3.2, 4474-4524).**  Runner:
+`/Users/oobi/Documents/tot-m7-probes/stageD/respell.sh`, which drives
+`/Users/oobi/Documents/tot-m7-probes/stageD/respell.py`.  The new
+spelling of each line is copied from the rehearsal tree
+`/Users/oobi/Documents/tot-m7-probes/amend/dsec/sim2/tree/stdlib/prelude.tot`,
+built by `/Users/oobi/Documents/tot-m7-probes/amend/dsec/respell.py`.
+The rehearsal changes 13 prelude lines: 16, 17, 42, 43, 44, 45, 49, 74,
+94, 145, 159, 173 and 176.  The driver applies them in three batches and
+runs the bootstrap check after each batch.
+
+    B1 list and json E sites lines=[16, 42, 43, 44, 45, 49] exit=0
+    B2 the two Eq motives lines=[74, 94] exit=1
+      batch RED, reverting and retrying one line at a time
+      error: prelude: 94:48: hole: no expected type at this position
+        line 74 KEPT exit=0
+        line 94 REVERTED exit=1 prelude: 94:48: hole: no expected type at this position
+    B3 map plus the five argument-driven sites lines=[17, 145, 159, 173, 176] exit=0
+    APPLIED LINES: [16, 17, 42, 43, 44, 45, 49, 74, 145, 159, 173, 176]
+    FINAL BOOTSTRAP exit=0
+
+Twelve of the thirteen lines carry the new spelling.  `stdlib/prelude.tot:94`
+keeps its explicit spelling, so 44 anchors became `_` and not 45.  See
+conflict note C-D3 below.  All five argument-driven sites landed, which
+is the prelude half of pin 5.
+
+**The fixture (plan D6, 4963-4978).**  `test/fixtures/m7d-prelude-splitEach.tot`
+carries the two plan lines byte for byte with one trailing newline.
+
+- Live prelude: `tot.exe check test/fixtures/m7d-prelude-splitEach.tot`
+  exit 0, one stdout line
+  `def probeSplit : (w _ : String) -> (w _ : (List String)) -> (List String)`.
+- Pre-move prelude, which is the 4a2fa75 picture:
+  `env TOT_PRELUDE=<pre>/prelude.tot tot.exe check test/fixtures/m7d-prelude-splitEach.tot`
+  exit 1, one stderr line
+  `.../m7d-prelude-splitEach.tot:2:17: unknown name splitEach`.
+
+**Corpus measurements after the edits (plan D7 items 2 to 5).**  Command
+and printed value, each re-runnable:
+
+- `python3 dev/hole-anchors.py | tail -1` prints
+  `ANCHORS total=99 expected-type-only=60 argument-driven=9 neither=30`.
+  This is pin 10's exact literal.
+- `python3 dev/hole-anchors.py | rg -c 'anchor=\[_\]'` prints 68.  The
+  prediction of the D3.3 contingency is 26 - 4 + 2 + 45 = 69.  The
+  measured value is 68, because the re-spell landed 44 anchors.
+- `python3 dev/hole-anchors.py | rg -c 'SITE stdlib/prelude\.tot:.*anchor=\[_\]'`
+  prints 46.  The prediction is 47, one higher for the same reason.
+- `python3 dev/hole-anchors.py | rg -c 'SITE stdlib/prelude\.tot:.*anchor=\[_\].*bucket=A'`
+  prints 5.  The five sites are `stdlib/prelude.tot:17` head=map,
+  `:145` head=anyList, `:159` head=listEqBy, `:173` head=listEqBy and
+  `:176` head=anyList, each `anchor=[_] pos=check bucket=A`.
+- `rg -c '^def (rec )?(firstNonEmpty|lastOr|splitEach|firstToken|orEmpty|elideAt) ' stdlib/prelude.tot`
+  prints 6, one definition per name.  The same command over `examples/`
+  finds nothing and exits 1.
+- Intermediate reading, taken between the move and the re-spell:
+  `ANCHORS total=99 expected-type-only=60 argument-driven=9 neither=30`,
+  holed 24, prelude holed 2, prelude sites 73 with 5 A, 42 E and 26 N.
+  This matches plan P13, P14, P15 and P16, and it shows that pin 10's
+  totals belong to the move alone.
+- New site list for the four guard A slots (plan D3.6, 4668-4676):
+  `SITE examples/guard.tot:83 head=bindIO arg=0 anchor=[_] pos=check bucket=A`,
+  `SITE examples/guard.tot:84 head=bindIO arg=0 anchor=[_] pos=check bucket=A`,
+  `SITE examples/guard-rewrap.tot:218 head=bindIO arg=0 anchor=[_] pos=check bucket=A`
+  and
+  `SITE examples/guard-rewrap.tot:219 head=bindIO arg=0 anchor=[_] pos=check bucket=A`.
+  The plan predicts 84, 85, 228 and 229.  See conflict note C-D1.
+
+**The baseline diff (the output-move safety net).**  Commands:
+`zsh /Users/oobi/Documents/tot-m7-probes/stageD/baseline.sh /Users/oobi/Documents/tot-m7-probes/stageD/after`
+then
+`diff -r /Users/oobi/Documents/tot-m7-probes/stageD/baseline /Users/oobi/Documents/tot-m7-probes/stageD/after`.
+The after run prints `files=137`, 90 files at exit 0 and 47 at exit 1.
+The baseline run printed `files=136`, 89 at exit 0 and 47 at exit 1.  The
+diff exits 1 with five entries and nothing else.  Each one is explained
+by this stage's own edit:
+
+1. `examples__guard.tot.out` loses six `def` lines, the six moved
+   helpers.  Nothing else in that file's stdout moves and its stderr is
+   unchanged.
+2. `examples__guard-rewrap.tot.out` loses the same six `def` lines.
+   Nothing else moves.
+3. `hole-anchors.txt` moves: 68 removed lines and 66 added lines.  Four
+   `splitEach` sites leave the two guards, two arrive in the prelude
+   copy, 44 anchors take the `_` spelling, and every guard site below a
+   deleted block takes a new line number.
+4. `tree.txt` gains the four porcelain lines of this stage.
+5. `test__fixtures__m7d-prelude-splitEach.tot.out`, `.err` and `.exit`
+   are new, which is the new fixture.
+
+No other `.tot` file changed its stdout, its stderr or its exit code.
+No error message names a prelude line, so the third expected category of
+plan D5 is empty here.
+
+**The transcript reseal (plan D5, 4941-4959).**  Runners:
+`/Users/oobi/Documents/tot-m7-probes/stageD/reseal.sh` and
+`reseal2.sh`.
+
+- Before: md5 `e0943042fd0ef721b54e26f975fa2f03`,
+  `rg -c '^### ' dev/m5e-default-transcript.txt` 101, and
+  `ls examples/*.tot test/fixtures/*.tot | wc -l` 101 at 4a2fa75.
+- `zsh dev/gen-m5e-transcript.sh > .../transcript-now.txt` exit 0.  The
+  diff of the sealed file against it exits 1 with exactly five hunks, of
+  the three kinds plan D5 allows: `examples/guard.tot`'s block loses six
+  `def` lines in two hunks, `examples/guard-rewrap.tot`'s block loses the
+  same six in two hunks, and one new block
+  `### test/fixtures/m7d-prelude-splitEach.tot` with `#exit 0`, `#out`,
+  `def probeSplit : (w _ : String) -> (w _ : (List String)) -> (List String)`
+  and `#err`.  No other hunk.
+- After the copy: md5 `eee1524c14f5fb963b11b0a07e6d499f`, 102 blocks and
+  102 files.  A second generator run and a second diff against the
+  sealed file exits 0, so the seal is stable.
+- `rg -c 'hole:' dev/m5e-default-transcript.txt` prints 8 after the
+  reseal, so `PASS-M7A-CONSERVATIVITY`'s fourth conjunct
+  (`m7a_holes -eq 8`, dev/gates.sh:3425) does not move.
+
+**The two Stage A literals this stage moves (plan D2, 4415-4438).**
+Re-derived with each leg's own command by
+`/Users/oobi/Documents/tot-m7-probes/stageD/rederive.sh`, after the
+corpus edits.  This build does NOT edit `dev/gates.sh`; the numbers are
+recorded here for the builder that owns that file.
+
+- `PASS-M7A-CONSERVATIVITY` (dev/gates.sh:3394).  Before:
+  md5 `99c23b4b74c722735d17e1dc49524e58`, 55 stdout lines.  After:
+  md5 `f1450de0006de4b7339b2f39ec2e2e50`, 43 stdout lines.  The plan
+  predicts 43, which is 55 minus the twelve `def` lines that leave the
+  two guards.  The third conjunct, `m7a_conserr -eq 0`, still reads 0
+  stderr bytes, and the fourth, `m7a_holes -eq 8`, still reads 8.
+- `PASS-M7A-INFER-SETTLE-BUDGET` (dev/gates.sh:3562-3563).  Before:
+  `files=100 green=61 md5=9b416b949964a50c4f7633eab478b5c2`.  After:
+  `files=101 green=62 md5=9cb630c7ccdc6c30b335b7355dc83a82`.  The new
+  fixture sits at depth 1 under `test/fixtures`, so both counts rise by
+  one and it checks green.
+
+**Digests after this build.**  `stdlib/prelude.tot`
+`98178e9fb909a88b5651ee4b99f57ecc`, `examples/guard.tot`
+`7da6431dbbe3c6c4bb22ed000e9973a6`, `examples/guard-rewrap.tot`
+`e298ba1a309a46f415f7a70165210c3c`,
+`test/fixtures/m7d-prelude-splitEach.tot`
+`e4390ea683d6ffe2421ccda6ea209098`, `dev/m5e-default-transcript.txt`
+`eee1524c14f5fb963b11b0a07e6d499f`.
+
+**Pin 18 re-check.**  `rg -c 'let format_version : int = 10' surface/cache.ml`
+prints 1, and `git diff --stat` shows no file under `surface/` or `lib/`.
+
+**Em-dash sweep.**  `rg -c '\x{2014}'` over `stdlib/prelude.tot`,
+`examples/guard.tot`, `examples/guard-rewrap.tot` and
+`test/fixtures/m7d-prelude-splitEach.tot` finds nothing and exits 1.
+
+**Conflict notes raised by this build.**  Section 5 below collects them
+when the later stages of this workflow fill it in.  The notes are dated
+and numbered here so no deviation is silent.
+
+**Conflict note C-D1 (2026-09-04): the guard line counts and the four A
+slot numbers differ from the rehearsal.**  Plan D3.6 (4668-4676) says the
+move deletes 49 lines from `examples/guard.tot` and 36 from
+`examples/guard-rewrap.tot`, and predicts the A slots at
+`examples/guard.tot:84`, `:85`, `examples/guard-rewrap.tot:228` and
+`:229`.  This build deletes 50 and 46, and the classifier prints the
+slots at `examples/guard.tot:83`, `:84`,
+`examples/guard-rewrap.tot:218` and `:219`.  Two causes, both from plan
+D2 (4391-4402), which says each definition leaves "with the comment
+block that introduces it".  First, `examples/guard-rewrap.tot:41-47` is
+the paragraph that introduces the four tokenizer helpers and it states
+that "moving them into stdlib/prelude.tot would change the prelude, the
+bootstrap and the cache (Stage A/B scope, not Stage D scope)".  This
+stage does that move, so the paragraph is false after the move and it
+goes with the helpers.  The rehearsal tree
+`/Users/oobi/Documents/tot-m7-probes/plan/sim/tree` keeps it.  Second,
+the same rehearsal tree deletes `examples/guard-rewrap.tot:147`, the
+first line of the scrubber's own comment, and keeps the echo-plumbing
+comment above `orEmpty`, which leaves a dangling half comment
+("-- fail-open; the recorded misses are listed above.") under the wrong
+heading.  This build does the opposite and keeps the scrubber comment
+whole.  Resolution: plan D3.6 states that "the exact shift depends on
+how many comment lines the builder keeps" and orders a re-run of the
+classifier, so the measured numbers stand and are recorded above.  Pin
+10's literal is unaffected, because the totals belong to the move and
+the classifier prints
+`ANCHORS total=99 expected-type-only=60 argument-driven=9 neither=30`.
+
+**Conflict note C-D2 (2026-09-04): PASS-M7B-GUARD-ARG-HOLES reads three
+literals that this stage moves, and plan D2 does not list it.**  The leg
+at dev/gates.sh:3562-3581 pins `m7b_slots` (dev/gates.sh:3571) with the
+four HEAD line numbers 133, 134, 264 and 265 written into its regex, and
+`m7b_holed` (dev/gates.sh:3572) against 26 (dev/gates.sh:3577).  The
+helper move deletes lines above all four slots, so the numbers become
+83, 84, 218 and 219, and the re-spell moves the holed count to 68.  Plan
+D2 (4384-4449) and plan D3.5 (4610-4666) list neither.  The leg belongs
+to Stage B and to pin 5.  Resolution: this build records the new values
+and edits no gate leg.  The literal move needs an orchestrator ruling,
+of the same shape as the Stage C ruling on C-C1, which moved the stale
+assertions to the new pinned shape without renaming a leg or dropping a
+marker.
+
+**Conflict note C-D3 (2026-09-04): stdlib/prelude.tot:94 refuses the
+re-spell, so 44 anchors take `_` and not 45.**  Plan D3.2 (4474-4524)
+and plan D3.3 (4526-4566) say all forty expected-type-only prelude
+anchors can be re-spelled, and probe P7 shows four of them holed at exit
+0.  The repo refuses one of them.  The rewrite is at
+`stdlib/prelude.tot:94`, the congruence motive:
+
+    before:  fun A B a b f h => subst0 A a b (fun z => Eq B (f a) (f z)) h (refl B (f a))
+    after:   fun A B a b f h => subst0 A a b (fun z => Eq _ (f a) (f z)) h (refl B (f a))
+
+With the `after` spelling the bootstrap check
+`_build/default/bin/tot.exe check examples/church.tot` exits 1 and
+prints exactly `prelude: 94:48: hole: no expected type at this position`.
+The classifier calls the site
+`SITE stdlib/prelude.tot:94 head=Eq arg=0 anchor=[B] pos=check bucket=E`,
+but the motive body reaches the elaborator in infer position, the same
+way `stdlib/prelude.tot:173` does, and no expected type arrives.  The
+neighbouring motive at `stdlib/prelude.tot:74`, `Eq A z a` inside
+`subst0`, takes the `_` spelling and the bootstrap stays green, so the
+refusal is specific to the congruence motive and not to `Eq`.  The
+rehearsal script
+`/Users/oobi/Documents/tot-m7-probes/amend/dsec/respell.py` never runs
+the bootstrap; it only re-runs the classifier, so the rehearsal could
+not see this.  Resolution, per the shell rule of this stage: the one
+anchor keeps its explicit spelling, every other anchor is re-spelled,
+and the derived numbers are recorded as measured.  The measured values
+are 44 re-spells, `m6e_holes` 68 and prelude holed 46, against the
+predicted 45, 69 and 47.  The prelude `bucket=A` count is 5 as predicted,
+because `:94` is a `bucket=E` site.  Pin 10's literal is unaffected.
+Plan D8 (5037-5047) makes any retreat from the re-spell a user ruling
+and not a builder decision, so this note stops at the record.
+
+### 3.  Tests added (surface suite 139 -> 143)
+
+Four cases join `test/surface.ml`, next to the M7C cases, and four
+entries join the `cases` list in the shape every entry there uses.  The
+suite prints 143 `PASS` lines and the kernel suite stays at 105.
+
+- `M7D-1 prelude_defines_the_shared_helpers`: the six moved helpers
+  resolve as prelude globals.  It reads the bootstrapped state the
+  `cases` list already threads and folds `Global.find_def` over the six
+  names.
+- `M7D-2 holed_prelude_bootstraps`: the re-spelled prelude bootstraps
+  and the migrated `splitEach` erases.  It calls `Bootstrap.state ()`
+  in process, so a prelude that stopped bootstrapping is red here and
+  not only in the gate.
+- `M7D-3 cache_key_folds_the_prelude_source`: two prelude sources give
+  two keys, and the key is not empty.  `format_version` stays 10, which
+  `PASS-M7D-CACHE-KEY` pins in the gate (pin 18).
+- `M7D-4 guards_define_no_shared_helper`: neither guard example defines
+  a moved helper.  A source assertion, because the duplication was a
+  source fact.
+
+The four case strings carry the tags `M7D-1`, `M7D-2`, `M7D-3` and
+`M7D-4`, which the gate counts.  The plan (D3.7, 4678-4757) gives the
+four OCaml fences;  case 2's fence does not compile, which is conflict
+C-D5 in subsection 5.
+
+### 4.  Gate markers added (158 -> 162)
+
+One new block in `dev/gates.sh`, four markers, in plan order:
+`PASS-M7D-HELPERS-SHARED` (pin 9), `PASS-M7D-PRELUDE-HOLES` (pin 11 and
+pin 5's prelude half), `PASS-M7D-ANCHORS` (pin 10) and
+`PASS-M7D-CACHE-KEY` (pin 18).
+
+Placement: after the last line of the M7C block, the closing brace of
+the `FAIL-M7C-SINGLE-HOLE-UNCHANGED` arm, and before the `ctxcat id 5`
+comment, one blank line on each side.  The M7 blocks stay in stage
+order and the two timing-sensitive branching legs stay the tail of the
+file.  The plan sentence at 4763-4767 cites HEAD 66b444f line numbers;
+both places were re-derived with `rg -n` before the edit.
+
+Block bytes: a dated header comment in the M7C block's shape, then plan
+4789-4802, one blank line, plan 4816-4829, one blank line, plan
+4840-4849, one blank line, plan 4893-4925.  The four ranges were
+extracted with `awk` into
+`/Users/oobi/Documents/tot-m7-probes/stageD/fences.txt` and diffed
+against the inserted text.  The diff carries exactly one hunk, the
+C-D3 literal `47` -> `46` and its comment, which subsection 5 records.
+
+The block declares no scratch dir of its own.  It reuses `$m5d_scratch`,
+`$m5d_bin`, `$m5d_scratch/hole-sites.txt`, `$GATE_LOG` and the `FAST`
+tier, the way the M6E block does.  The `trap` line at `dev/gates.sh:434`
+therefore does NOT change and was not touched.  No leg uses
+`gate_timed`, so `PASS-M5D-MEASURE-LOG`'s count of 22 does not move, and
+no leg spells a numeric watchdog literal, so `m5d_nolit` stays 1.
+
+`zsh -n dev/gates.sh` is green after the edit.
+
+### 5.  Conflicts (section 5 protocol)
+
+C-D1 (2026-09-04), BUILD-1, recorded in subsection 2: plan D3.6
+(4668-4676) predicts 49 and 36 deleted guard lines and A slots at
+guard.tot:84, :85 and guard-rewrap.tot:228, :229.  Observed before: the
+HEAD slots 133, 134, 264 and 265.  Observed after: 50 and 46 deleted
+lines and slots at guard.tot:83, :84 and guard-rewrap.tot:218, :219,
+because the build keeps the scrubber comment whole.  Plan D3.6 orders a
+re-run of the classifier, so the measured numbers stand.
+
+C-D2 (2026-09-04): `PASS-M7B-GUARD-ARG-HOLES` pins two literals this
+stage invalidates, and plan D2 (4384-4449) does not list the leg.
+Observed before: `m7b_slots` matched the line numbers 133, 134, 264 and
+265 and `m7b_holed` was pinned at 26.  Observed after: the four A slots
+sit at guard.tot:83, :84 and guard-rewrap.tot:218, :219 and the corpus
+holed count is 68.  The orchestrator ruling of 2026-09-04 is the C-C1
+shape: move the stale assertions to the new pinned shape.  The four
+line numbers were re-derived from the live classifier output and
+written into the `m7b_slots` regex at dev/gates.sh:3613, and
+`m7b_holed` was set to 68 at dev/gates.sh:3619.  The leg keeps its
+name, its marker and all five assertions;  the slot count stays 4 and
+the holed count stays an exact number.  The same sentence is in the
+SPEC Stage D entry.
+
+C-D3 (2026-09-04), BUILD-1, recorded in subsection 2: `stdlib/prelude.tot:94`
+refuses the `_` spelling.  Observed before: 45 anchors predicted to
+re-spell, prelude holed 47 with 5 bucket=A, corpus holed 69.  Observed
+after: 44 re-spells, prelude holed 46 with 5 bucket=A, corpus holed 68.
+The verbatim error text of the refused re-spell is
+`prelude: 94:48: hole: no expected type at this position`, at exit 1.
+The classifier calls the site
+`SITE stdlib/prelude.tot:94 head=Eq arg=0 anchor=[B] pos=check bucket=E`,
+but the congruence motive reaches the elaborator in infer position;
+that is a classifier fidelity gap and `dev/hole-anchors.py` stays
+untouched in this stage.  The orchestrator ruling of 2026-09-04 orders
+the MEASURED literals: `PASS-M7D-PRELUDE-HOLES` asserts 46 with 5
+bucket=A, `m6e_holes` asserts 68, and the `m6e_pz` floor is `-gt 0` as
+planned.  Pin 10's literal is unaffected, because the totals belong to
+the move.  The `:94` re-spell is handed to M8.  The same sentence is in
+the SPEC Stage D entry.
+
+C-D4 (2026-09-04): plan D3.4 (4573-4574) and plan D7 item 7 (4998-5001)
+predict that the Stage D block adds exactly seven direct tier calls.
+Observed before: `rg -c '"$watchdog" "$(FAST|MED|SLOW|SUITE)"' dev/gates.sh`
+printed 218.  Observed after: the same recipe printed 224, a delta of
+six.  The plan's own D4 block bytes carry six tier lines, two in
+HELPERS-SHARED, one in PRELUDE-HOLES, none in ANCHORS and three in
+CACHE-KEY.  The recipe output is the authority (plan 4584-4586), so 224
+is written into `dev/gates.sh:2307` and both numbers are in the dated
+comment above it.  No watchdog call was added to reach seven and the
+plan was not edited.
+
+C-D5 (2026-09-04): the OCaml fence of suite case 2 (plan 4695-4708)
+does not compile.  It pipes into `Result.bind`, which takes the result
+FIRST, so `x |> Result.bind f` is `Result.bind f x` and the compiler
+reports `This expression should not be a function, the expected type is
+"('a, 'b) result"` at test/surface.ml:1035-1041.  Observed before: the
+fence bytes, `dune build` red.  Observed after: the same three steps
+and the same two error strings, spelled with the `let*` of
+`test/surface.ml:5`, which IS `Result.bind`;  `dune build` green and
+`PASS M7D-2` printed.  Case 1's fence uses `Result.bind acc (fun () ->
+...)`, the correct order, and is byte for byte the plan's.  No other
+fence moved.
+
+### 6.  Mutation proofs
+
+Full rows, legs and md5s are in
+`/Users/oobi/Documents/tot-m7-stageD-mutations.log`.  Every row restores
+the source to its exact pre-mutation md5.  Summary:
+
+1. MUT-D1 (plan 5009-5011).  One copy of `splitEach` put back into
+   `examples/guard-rewrap.tot`.  The check step refuses first, with
+   "duplicate global splitEach", because a guard and the prelude
+   cannot both own the name;  `FAIL-M7D-HELPERS-SHARED (c=0/1 dup=0
+   pre=6)` still fires, by the c2 clause instead of the dup clause.
+   The marker matches the plan;  the sub-clause text does not, and
+   that gap is recorded, not hidden.  The review round of 2026-09-04
+   repaired the dup clause and re-ran this row;  see conflict note
+   C-D6 below, where the mutant prints
+   `FAIL-M7D-HELPERS-SHARED (c=0/1 dup=1 pre=6)`.
+2. MUT-D2 (5011-5012).  One prelude anchor
+   (`stdlib/prelude.tot:16`) restored from `_` to `A`.
+   `FAIL-M7D-PRELUDE-HOLES (holed=45 argdriven=5 check=0)`.  holed=45,
+   one less than the measured baseline of 46 (ruling C-D3), matching
+   the orchestrator's MUT-D2 ruling of 2026-09-04 exactly.
+3. MUT-D3 (5012-5013).  The move reverted only: the six defs deleted
+   from `stdlib/prelude.tot` and restored, byte for byte, to BOTH
+   `examples/guard.tot` and `examples/guard-rewrap.tot` (reverting only
+   one guard leaves the total unchanged at 99, because the deleted
+   prelude sites and the one guard's re-added sites cancel).
+   `FAIL-M7D-ANCHORS (line=ANCHORS total=101 expected-type-only=62
+   argument-driven=9 neither=30)`, the plan's own predicted line.
+4. MUT-D4 (5013-5015).  The six helper definitions deleted from
+   `stdlib/prelude.tot` with no replacement.
+   `FAIL-M7D-CACHE-KEY (exits=1/1/1 entries=1/1/2 fv=1)`, with
+   `unknown name splitEach` printed three times, the plan's predicted
+   route.
+5. The four suite cases (M7D-1 to M7D-4) each flip on one changed
+   literal or one inverted guard inside the case body, never the
+   corpus: `splitEach` -> `splitEachX`/`splitEachY`, the cache-key
+   equality guard inverted, and the guard-definition-check guard
+   inverted.  Each prints its own `FAIL M7D-n` line and restores clean.
+6. Seven moved gates.sh literals (`PASS-M5D-TIERS` 224->223,
+   `m6e_holes` 68->67, the `m6e_pz` floor 0->48, the `m6e_wantg` block
+   (`main`->`mainX`), the `PASS-M7A-CONSERVATIVITY` line-count half of
+   its pair (43->42), and the `PASS-M7A-INFER-SETTLE-BUDGET` files
+   field of its triple (101->100)) each flip their own leg and restore
+   clean.
+
+unkilled: none.  Every leg named in plan D7 item 11 and every literal
+this stage moved flipped under its own mutation; no leg needed a
+substitute mutation to prove it.
+
+C-D2 note: `PASS-M7B-GUARD-ARG-HOLES` is an orchestrator-ruling repair
+of a stale pin, not one of the four Stage D markers plan D7 item 11
+names, and the ruling carries no predicted mutation of its own; it is
+out of scope for this mutation pass and is not mutated here.
+
+Final full battery:
+`zsh /Users/oobi/Documents/tot-m7-probes/stageB/battery-wait.sh` (the
+fixed runner) read `GATE-EXIT=0`, `PASS=414`, `FAIL=` empty, no
+`LOAD-RED` line.  `rg -c '^PASS-M7D-'` printed 4;  `rg -c '^PASS M7D-'`
+printed 6.  `git status --porcelain -uall` before and after this
+mutation pass name the same eight tracked files and the same one
+untracked fixture.
+
+### 7.  Exit criteria (plan D7) walked
+
+1. `dune build` green (BUILD-EXIT=0) and the whole battery green from a
+   clean run: GATE-EXIT=0, PASS=414, FAIL empty, no `FAIL-` line.  Log:
+   `/Users/oobi/Documents/tot-m7-stageD-gate.log`.
+2. `python3 dev/hole-anchors.py | tail -1` prints
+   `ANCHORS total=99 expected-type-only=60 argument-driven=9 neither=30`.
+3. `python3 dev/hole-anchors.py | rg -c 'anchor=\[_\]'` prints 68, not
+   the 67 or 69 the item names, because of C-D3.  `dev/gates.sh:3156`
+   carries 68, the number this run printed.
+4. `python3 dev/hole-anchors.py | rg -c 'SITE stdlib/prelude\.tot:.*anchor=\[_\]'`
+   prints 46, of which five carry `bucket=A` (C-D3;  the item predicts
+   47).
+5. Each of the six helper names occurs exactly once as a definition in
+   `stdlib/prelude.tot` and zero times in `examples/`:
+   `rg -c '^def (rec )?(firstNonEmpty|lastOr|splitEach|firstToken|orEmpty|elideAt) '`
+   prints 6 for the prelude and matches nothing under `examples/`, and
+   the six names each appear once.
+6. `rg -o 'expected-type-only=[0-9]+' SPEC.md | tail -n 1` prints
+   `expected-type-only=60`, the count of the spelling is 4 (3 at HEAD
+   plus the one new record), and the new record sits below every older
+   one.
+7. `rg -c '"$watchdog" "$(FAST|MED|SLOW|SUITE)"' dev/gates.sh` printed
+   218 before the edit and 224 after it, a delta of six and not the
+   seven the item predicts (C-D4).  `dev/gates.sh:2307` carries 224 and
+   both numbers are in this log and in the dated comment above the
+   literal.
+8. `rg -c 'let format_version : int = 10' surface/cache.ml` prints 1,
+   and `git diff --stat -- surface lib bin` is empty.
+9. The transcript diff carries only the three hunks of D5, the block
+   count and the file count both read 102, and the guard block literal
+   at `dev/gates.sh:3205` matches the new block, which
+   `PASS-M6E-TRANSCRIPT-RESEALED` proves in the green run.
+10. `examples/guard.tot`'s deny envelope on `test/fixtures/deny.json`
+    is byte-identical to `m6e_wantenv`, at exit 2, measured by hand and
+    pinned by `PASS-M6E-GUARD-HOLES` and `PASS-M7B-GUARD-ARG-HOLES` in
+    the green run.
+11. Mutation proofs: owned by the mutation stage of this workflow.
+    Subsection 6 holds them.
+12. The four suite cases print four `PASS` lines and the suite count
+    rises 139 -> 143.  The kernel suite stays at 105.
+13. `_build/default/bin/tot.exe check examples/church.tot` exits 0 and
+    `env TOT_PRELUDE=stdlib/prelude.tot ... check examples/literals.tot`
+    exits 0, so the re-spelled prelude still bootstraps.  The new
+    fixture checks at exit 0 and prints
+    `def probeSplit : (w _ : String) -> (w _ : (List String)) -> (List String)`.
+14. The user commits.  No agent commits, no agent stages, and no
+    `git checkout`, `git restore` or `git stash` ran on any path in
+    this build.
+
+### 8.  Porcelain and gate tails
+
+Literals moved in this stage, each measured before it was written:
+
+| file | line | before | after |
+| --- | --- | --- | --- |
+| dev/gates.sh | 2307 | `[ "$m5d_tiers" -eq 218 ]` | `[ "$m5d_tiers" -eq 224 ]` |
+| dev/gates.sh | 3151 | `rg -q 'SITE stdlib/prelude\.tot:.*anchor=\[_\]' ...; m6e_pz=$?` | `m6e_pz=$(rg -c 'SITE stdlib/prelude\.tot:.*anchor=\[_\]' ... \|\| echo 0)` |
+| dev/gates.sh | 3156 | `[ "$m6e_holes" -eq 26 ] && [ "$m6e_pz" -eq 1 ]` | `[ "$m6e_holes" -eq 68 ] && [ "$m6e_pz" -gt 0 ]` |
+| dev/gates.sh | 3179 | `ANCHORS total=101 expected-type-only=62 argument-driven=9 neither=30` | `ANCHORS total=99 expected-type-only=60 argument-driven=9 neither=30` |
+| dev/gates.sh | 3204 | `rg -A 13 -x -F '### examples/guard.tot'` | `rg -A 7 -x -F '### examples/guard.tot'` |
+| dev/gates.sh | 3205 | the ten-`def` guard block | the four-`def` guard block, taken from the resealed transcript |
+| dev/gates.sh | 3424 | `99c23b4b74c722735d17e1dc49524e58` and 55 | `f1450de0006de4b7339b2f39ec2e2e50` and 43 |
+| dev/gates.sh | 3562-3563 | files 100, green 61, `9b416b949964a50c4f7633eab478b5c2` | files 101, green 62, `9cb630c7ccdc6c30b335b7355dc83a82` |
+| dev/gates.sh | 3613 | `(133\|134\|264\|265)` in the `m7b_slots` regex | `(83\|84\|218\|219)` (C-D2) |
+| dev/gates.sh | 3619 | `[ "$m7b_holed" -eq 26 ]` | `[ "$m7b_holed" -eq 68 ]` (C-D2) |
+| dev/gates.sh | 3775 | the plan's `[ "$m7d_ph" -eq 47 ]` | `[ "$m7d_ph" -eq 46 ]` (C-D3) |
+
+The `-gt 98` floor beside `m6e_want` still holds at 99 and did not
+change.  `m7a_holes` still reads 8 `hole:` lines in the transcript, so
+`PASS-M7A-CONSERVATIVITY`'s fourth conjunct did not move.
+`PASS-M5D-MEASURE-LOG` keeps its own literal 22;  only the VALUE it
+reads moved, from 62 to 60.
+
+Porcelain after BUILD-2,
+`git -C /Users/oobi/Documents/tot status --porcelain -uall`:
+
+     M SPEC.md
+     M dev/M7-BUILD-LOG.md
+     M dev/gates.sh
+     M dev/m5e-default-transcript.txt
+     M examples/guard-rewrap.tot
+     M examples/guard.tot
+     M stdlib/prelude.tot
+     M test/surface.ml
+    ?? test/fixtures/m7d-prelude-splitEach.tot
+
+Nothing is staged and nothing is committed.
+
+Gate tail, `/Users/oobi/Documents/tot-m7-stageD-gate.log`:
+
+    PASS-M7C-SINGLE-HOLE-UNCHANGED
+    PASS-M7D-HELPERS-SHARED
+    PASS-M7D-PRELUDE-HOLES
+    PASS-M7D-ANCHORS
+    PASS-M7D-CACHE-KEY
+    PASS-M4FIX-INST-BRANCHING
+    PASS-M5B-BRANCHING-20
+    GATE-LOG=/tmp/claude-501/tot-gate-measure.log
+    GATE-EXIT=0
+    PASS=414
+    FAIL=
+    DONE Fri  4 Sep 2026 19:02:09 PDT
+
+Counts of that run: 162 gate markers, 105 kernel `PASS` lines, 143
+surface `PASS` lines, which is the 410 of the stage arithmetic;  the
+wrapper's `PASS=` adds the four lines of its own `tail -3` captures and
+reads 414.  `rg -c '^PASS-M7D-'` prints 4 and names
+`PASS-M7D-HELPERS-SHARED`, `PASS-M7D-PRELUDE-HOLES`,
+`PASS-M7D-ANCHORS` and `PASS-M7D-CACHE-KEY`.  `rg -c '^PASS M7D-'`
+prints 6, which is the four case lines of the gate run plus the two the
+runner's `tail -3` capture repeats.  `M7A-MARKERS=7`, `M7B-MARKERS=2`,
+`rg -c '^PASS-M7C-'` prints 2.  The wrapper waited 0 seconds at load
+6.34 and ran once;  no `LOAD-RED` line appears.
+
+### Review-round fixes (2026-09-04)
+
+The Stage D review round raised four findings.  Two of them name the
+same defect, the `SPEC.md` spelling count in section 7 item 6, so the
+round fixes three defects.  None is skipped.  Each note gives the value
+observed before the fix and the value observed after it.  The round
+changed one command line and one comment in `dev/gates.sh`, and four
+places in this log: two line cites in subsection 2, one count in
+section 7 item 6, one line cite in the subsection 8 table, and one
+added sentence in the subsection 6 MUT-D1 row.  No corpus file, no
+fixture, no suite case, no
+`stdlib/prelude.tot` line and no `SPEC.md` line moved, so no literal
+that reads those files moved either.  `zsh -n dev/gates.sh` is green
+after the edit.  `rg -c '"$watchdog" "$(FAST|MED|SLOW|SUITE)"'
+dev/gates.sh` still prints 224, so `PASS-M5D-TIERS` keeps its literal
+at `dev/gates.sh:2307`.  No leg gained a `gate_timed` call, so
+`PASS-M5D-MEASURE-LOG` keeps its 22.  The `dev/gates.sh` edit adds
+seven comment lines above the leg, so the one subsection 8 table cite
+below it moved from 3769 to 3775;  it was re-derived with `rg -n` and
+rewritten, and every other cite in that table still resolves.
+
+**Conflict note C-D6 (2026-09-04): the `PASS-M7D-HELPERS-SHARED`
+duplicate clause can never fire, so it now reads the two guard SOURCE
+files.**  Observed before: the leg read
+`m7d_dup=$(printf '%s\n%s\n' "$m7d_g1" "$m7d_g2" | rg -c "$m7d_hre" || echo 0)`,
+which counts helper `def` lines in the two guards' `check` STDOUT.  A
+guard prints such a line only when it defines the helper, and a guard
+that defines one makes the guard and the prelude both own the name, so
+`check` stops at `duplicate global splitEach` and prints no `def` line
+at all.  `[ "$m7d_dup" -eq 0 ]` was true for every reachable tree
+state, and subsection 6 row MUT-D1 holds the proof: the mutation the
+plan names at 5009-5011 printed
+`FAIL-M7D-HELPERS-SHARED (c=0/1 dup=0 pre=6)`, red by the c2 clause
+with `dup` still 0.  That deviation was the one this stage left without
+a dated number;  it is this note.  Observed after:
+`m7d_dup=$(cat "$ROOT"/examples/guard.tot "$ROOT"/examples/guard-rewrap.tot | rg -c "$m7d_hre" || echo 0)`,
+plus a dated comment above the leg that states why.  The new clause
+counts the same `def` lines in the two guard SOURCE files, which is
+what the leg comment always claimed ("neither guard defines a shared
+helper any more") and what the duplication always was, a source fact.
+The source count reads 12 at `4a2fa75` and 0 in this tree.  Re-run of
+2026-09-04,
+`/Users/oobi/Documents/tot-m7-probes/stageD/mut-d1-recheck.sh`:
+baseline `PASS-M7D-HELPERS-SHARED (c=0/0 dup=0 pre=6)`, mutant
+`FAIL-M7D-HELPERS-SHARED (c=0/1 dup=1 pre=6)`, restored
+`PASS-M7D-HELPERS-SHARED (c=0/0 dup=0 pre=6)`.  The dup clause and the
+c2 clause both fire on MUT-D1 now, so all four assertions of the leg
+are falsifiable.  The mutation was reverted by copying back a copy
+taken before it, never with `git checkout`, `git restore` or
+`git stash`;  `md5 -q examples/guard-rewrap.tot` reads
+`e298ba1a309a46f415f7a70165210c3c` before and after, and the `diff`
+exits 0.  The leg keeps its name, its marker and its four assertions,
+and no number in it falls.  The plan fence at `dev/M7-PLAN.md:4796`
+carries the old line, and plan D7 item 11(a) at 5009-5011 expects this
+mutation to turn the leg red, which it did before and does now.  The
+plan file is committed at `37c0bb2` and this stage does not edit it, so
+the erratum lives here.
+
+**Conflict note C-D7 (2026-09-04): two `dev/gates.sh` line cites in
+subsection 2 went stale.**  Observed before: subsection 2 cited
+`m7a_holes -eq 8` at `dev/gates.sh:3395` and
+`PASS-M7A-INFER-SETTLE-BUDGET` at `dev/gates.sh:3526-3527`.  Both were
+right when BUILD-1 measured them, and both drifted when the Stage D
+block and the dated comments landed in BUILD-2.  Observed after:
+re-derived with `rg -n` on 2026-09-04 and rewritten as
+`dev/gates.sh:3425` (`m7a_holes` is read at 3423 and the `-eq 8`
+conjunct is at 3425) and `dev/gates.sh:3562-3563` (the files and green
+conjuncts at 3562, the md5 at 3563, and the `echo` of the marker at
+3571).  No assertion and no literal moved;  the cites are prose.  The
+other `dev/gates.sh` cites in this Stage D section were re-checked in
+the same pass and all resolve.
+
+**Conflict note C-D8 (2026-09-04): section 7 item 6 stated a `SPEC.md`
+spelling count the tree contradicts.**  Observed before: "the count of
+the spelling is 7 (6 at HEAD plus the one new record)".  The number
+came from the build brief and was never re-measured, which the count
+honesty pin at plan 793-803 forbids.  Observed after: "the count of the
+spelling is 4 (3 at HEAD plus the one new record)".  Measured on
+2026-09-04: `rg -o 'expected-type-only=[0-9]+' SPEC.md | wc -l` prints
+4, at SPEC.md:1452, 2229, 2236 and 2255, values 62, 59, 62 and 60, and
+`git show 4a2fa75:SPEC.md | rg -o 'expected-type-only=[0-9]+' | wc -l`
+prints 3.  The 6 and the 7 belong to a different command:
+`rg -c 'expected-type-only=' SPEC.md` prints 6 at `4a2fa75` and 7 here,
+which is the count pin 12 uses and which subsection 2 records
+correctly.  The two halves of the item that a gate depends on hold and
+were re-checked: `| tail -n 1` prints `expected-type-only=60`, and the
+new record at SPEC.md:2255 sits below every older one, so
+`PASS-M5D-MEASURE-LOG` reads the new record and keeps its own literal
+22.
+
+**Gate tail of the review round,
+`/Users/oobi/Documents/tot-m7-stageD-review-gate.log`:**
+
+    PASS-M7D-HELPERS-SHARED
+    PASS-M7D-PRELUDE-HOLES
+    PASS-M7D-ANCHORS
+    PASS-M7D-CACHE-KEY
+    GATE-EXIT=0
+    PASS=414
+    FAIL=
+    DONE Fri  4 Sep 2026 20:13:23 PDT
+
+`BUILD-EXIT=0`, `STATUS_LINES=9`, `M7A-MARKERS=7`, `M7B-MARKERS=2`,
+`M7B-SUITE=3`.  `rg -c '^PASS-M7D-'` prints 4 and names the four
+markers above.  `rg -c '^PASS M7D-'` prints 6, the same number the
+build run measured.  The wrapper waited 540 seconds for the load to
+fall to 10.76, ran once, and printed no `LOAD-RED` line.  Porcelain is
+the nine entries of subsection 8, unchanged.  Nothing is staged and
+nothing is committed.

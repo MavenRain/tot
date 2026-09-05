@@ -2315,7 +2315,27 @@ m5d_bites=$(rg -c '"\$watchdog" "\$BITE_S"' "$ROOT/dev/gates.sh")
 # entry-state 224, and NONE of them was the authority.  The recipe
 # printed 228 and no watchdog call was added or removed to reach any
 # predicted number.
-{ [ "$m5d_nolit" -eq 1 ] && [ "$m5d_tiers" -eq 228 ] && [ "$m5d_bites" -eq 2 ] \
+# M8 Stage A (2026-09-05) raised it 228 -> 234: the four new legs run
+# the CLI six times, one FAST call per run (one in
+# PASS-M8A-LOCAL-SPINE-SYNTH, two in PASS-M8A-ZERO-ARG-UNCHANGED, two
+# in PASS-M8A-BARE-LAMBDA-REFUSES, one in PASS-M8A-KERNEL-UNCHANGED),
+# and delete none.  Measured with the recipe above before (228) and
+# after (234) the edit.  The plan predicted 0 new uses from a regex
+# count over its own block bytes, which counted the plan's standalone
+# `timeout 10` spelling and not the folded tier calls;  the recipe is
+# the authority (conflict C-A2, precedent C-D4).  The first reading of
+# the edited file was 235, because the new block's header comment
+# quoted the tier-call spelling in prose;  the prose was re-spelled to
+# name the tier in words, no watchdog call was added or removed, and
+# the recipe then printed 234.
+# M8 Stage A review round (2026-09-05) walked it 234 -> 233: leg (i)
+# gains one CLI run for the explicit twin, and legs (iii) and (iv) each
+# drop the local control leg (i) owns, so the M8A block runs the CLI
+# five times, not six (conflict note C-A3, dev/M8-BUILD-LOG.md).
+# Measured with the recipe above before (234) and after (233) the edit.
+# No call was added or removed to reach a predicted number;  the recipe
+# is the authority (precedent C-D4).
+{ [ "$m5d_nolit" -eq 1 ] && [ "$m5d_tiers" -eq 233 ] && [ "$m5d_bites" -eq 2 ] \
   && [ -s "$ROOT/dev/gates.sh" ]; } \
   && echo PASS-M5D-TIERS \
   || { echo "FAIL-M5D-TIERS (nolit=$m5d_nolit tiers=$m5d_tiers bites=$m5d_bites)"; exit 1; }
@@ -3974,6 +3994,195 @@ m7e_readme_ok=$(rg -c 'LICENSE-APACHE' "$ROOT"/README.md)
   && [ -z "$m7e_readme_stale" ] && [ "$m7e_readme_ok" -ge 1 ]; } \
   && echo PASS-M7E-DEBT-H \
   || { echo "FAIL-M7E-DEBT-H (file=$m7e_apache body=$m7e_apache_body stale=$m7e_readme_stale ok=$m7e_readme_ok)"; exit 1; }
+
+# ---------------------------------------------------------------------
+# M8 Stage A (plan dev/M8-PLAN.md:830-892): the argument-driven capture
+# source reaches a LOCAL head.  Four legs, one marker each.  Field
+# ownership after the review round of 2026-09-05 (conflict note C-A3,
+# dev/M8-BUILD-LOG.md): leg 1 owns the local-spine pair, both files,
+# their printed line and the two source strings the suite elaborates;
+# leg 2 owns the church field and keeps the local control that
+# orchestrator ruling C-A1 fixes; leg 3 owns the bare field, the
+# stable part of the kernel refusal and its own source string; leg 4
+# owns the lib digest and the lib file count.  Only leg 2 still reads
+# a field another leg owns, and note C-A3 records why.  The plan
+# writes the four commands standalone with
+# `timeout 10`;  they are folded into the shared machinery here, so
+# each CLI run is one FAST-tier watchdog call.  FAST is 10, so no
+# predicted exit code and no predicted substring moves.  The block
+# declares no scratch directory, so the EXIT trap at dev/gates.sh:434
+# is unchanged.
+
+# Gate M8A (i), PASS-M8A-LOCAL-SPINE-SYNTH (plan dev/M8-PLAN.md:834-840;
+# attack findings A1-F1 and A1-F2, both accepted).  A hole whose only
+# informative later argument is a LOCAL-headed spine resolves.  The
+# fixture exits 1 at the entry state with `hole: no expected type at
+# this position` and exits 0 after the stage, printing its def name.
+# The existence test runs first, so a deleted fixture cannot stand in
+# for a refusal.  The leg reads the explicit twin as well, the M7 twin
+# shape at dev/gates.sh:3300-3345: the holed file and the explicit file
+# print one line, that line is the same on both sides, and it is
+# pinned.  The leg also renders the two source strings the suite
+# elaborates out of test/surface.ml and compares them with the bytes
+# of the two files, so a file and its string cannot drift apart
+# (review-round fix, conflict note C-A3).  MUTATION: surface/elab.ml,
+# restore `| _ :: _ -> None` as synth's non-empty local arm;  the
+# fixture returns to exit 1 with the hole message.
+# The renderer prints the bytes of one `let <name> : string =` literal
+# of test/surface.ml.  It reads the OCaml line continuation and the
+# `\n` and `\ ` escapes, which is every escape the three M8A payloads
+# use.  Each leg that trusts a render first asserts that its own
+# fixture holds no backslash and no double quote, so no other escape
+# can reach the renderer unseen.
+m8a_lit() {
+  awk -v name="$1" '
+    function emit(line,   cont) {
+      sub(/^[ \t]+/, "", line)
+      if (substr(line, 1, 1) == "\"") line = substr(line, 2)
+      cont = 0
+      if (substr(line, length(line), 1) == "\\") { cont = 1; line = substr(line, 1, length(line) - 1) }
+      if (substr(line, length(line), 1) == "\"") line = substr(line, 1, length(line) - 1)
+      gsub(/\\ /, " ", line)
+      buf = buf line
+      return cont
+    }
+    !started && index($0, "let " name " : string =") == 1 {
+      started = 1
+      rest = substr($0, length("let " name " : string =") + 1)
+      sub(/^[ \t]+/, "", rest)
+      if (rest == "") { inlit = 1; next }
+      inlit = emit(rest)
+      next
+    }
+    inlit { inlit = emit($0); next }
+    END { n = split(buf, parts, /\\n/); for (i = 1; i < n; i++) print parts[i] }
+  ' "$ROOT"/test/surface.ml
+}
+[ -f "$ROOT"/dev/m8a/local-spine-holed.tot ] \
+  || { echo "FAIL-M8A-LOCAL-SPINE-SYNTH (MISSING-FIXTURE dev/m8a/local-spine-holed.tot)"; exit 1; }
+[ -f "$ROOT"/dev/m8a/local-spine-explicit.tot ] \
+  || { echo "FAIL-M8A-LOCAL-SPINE-SYNTH (MISSING-FIXTURE dev/m8a/local-spine-explicit.tot)"; exit 1; }
+m8a_spine=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/dev/m8a/local-spine-holed.tot 2>&1)
+m8a_spinecode=$?
+m8a_twin=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/dev/m8a/local-spine-explicit.tot 2>&1)
+m8a_twincode=$?
+m8a_spine_esc=$(rg -l '[\\"]' "$ROOT"/dev/m8a/local-spine-holed.tot \
+  "$ROOT"/dev/m8a/local-spine-explicit.tot)
+m8a_holed_src=$(m8a_lit m8a_local_spine_holed)
+m8a_holed_file=$(cat "$ROOT"/dev/m8a/local-spine-holed.tot)
+m8a_expl_src=$(m8a_lit m8a_local_spine_explicit)
+m8a_expl_file=$(cat "$ROOT"/dev/m8a/local-spine-explicit.tot)
+{ [ "$m8a_spinecode" -eq 0 ] && [ "$m8a_twincode" -eq 0 ] \
+    && printf '%s\n' "$m8a_spine" | rg -q 'probeH' \
+    && [ -n "$m8a_spine" ] && [ "$m8a_spine" = "$m8a_twin" ] \
+    && printf '%s\n' "$m8a_spine" \
+       | rg -qx 'def probeH : \(0 A : Type 0\) -> \(w _ : \(w _ : A\) -> A\) -> \(w _ : A\) -> \(Option A\)' \
+    && [ -z "$m8a_spine_esc" ] \
+    && [ -n "$m8a_holed_src" ] && [ "$m8a_holed_src" = "$m8a_holed_file" ] \
+    && [ -n "$m8a_expl_src" ] && [ "$m8a_expl_src" = "$m8a_expl_file" ]; } \
+  && echo PASS-M8A-LOCAL-SPINE-SYNTH \
+  || {
+    printf '%s\n---\n%s\n' "$m8a_spine" "$m8a_twin"
+    echo "FAIL-M8A-LOCAL-SPINE-SYNTH (code=$m8a_spinecode twin=$m8a_twincode esc=$m8a_spine_esc holedsrc_len=${#m8a_holed_src} explsrc_len=${#m8a_expl_src} out=$m8a_spine)"
+    exit 1
+  }
+
+# Gate M8A (ii), PASS-M8A-ZERO-ARG-UNCHANGED (plan dev/M8-PLAN.md:842-
+# 858; accepted finding A1-F1).  Proposal 1 regressed the empty-argument
+# case, and this leg is the one that catches it.  A green corpus file
+# whose bodies drive the zero-argument branch keeps exit 0 while the
+# local-spine control moves to exit 0.
+# Conflict note C-A1 (2026-09-05, build log): the plan's first field is
+# `prelude`, and stdlib/prelude.tot exits 1 at EVERY state, because the
+# CLI bootstraps the prelude before it checks the named file and then
+# reports `duplicate global Bool`.  The field is dead as an observable.
+# Orchestrator ruling C-A1 replaces it with `church`, measured 0 at the
+# entry state and 0 after the stage.  The `local` field stays as the
+# plan writes it.  MUTATION: surface/elab.ml, in the
+# `[] -> local_ty locals ix` branch of synth's local arm, replace
+# `local_ty locals ix` with `Some (Term.Var ix)`, the unshifted escape;
+# a captured slot then reads a wrong local index, Check.define
+# (surface/run.ml:241) answers a kernel Mismatch, and `church` moves.
+"$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/examples/church.tot > /dev/null 2>&1
+m8a_churchcode=$?
+"$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/dev/m8a/local-spine-holed.tot > /dev/null 2>&1
+m8a_zerolocal=$?
+{ [ "$m8a_churchcode" -eq 0 ] && [ "$m8a_zerolocal" -eq 0 ]; } \
+  && echo PASS-M8A-ZERO-ARG-UNCHANGED \
+  || {
+    echo "FAIL-M8A-ZERO-ARG-UNCHANGED (church=$m8a_churchcode local=$m8a_zerolocal)"
+    exit 1
+  }
+
+# Gate M8A (iii), PASS-M8A-BARE-LAMBDA-REFUSES (plan dev/M8-PLAN.md:860-
+# 869;  the M7 hand-off fixture, dev/M7-PLAN.md:957-961).  The kernel
+# infers the callee of an application before it checks the argument, so
+# the Cannot_infer arm at lib/check.ml:959 is the only refusal
+# `(fun x => x) zero` reaches.  The bare field stays 1 at every state,
+# which is what shows the new capture path leaves a callee position the
+# kernel itself infers alone.  Review-round fix (conflict note C-A3):
+# the leg no longer reads the local control leg (i) owns, and it no
+# longer pins the moving half of the refusal text, `the bare lambda`,
+# which leg (iv)'s own mutation rewrites.  The suite pins the whole
+# message: case M8A-2 (test/surface.ml) asserts the suffix `cannot
+# infer a type for the bare lambda (binder x)` in process, so no
+# assertion is lost.  This leg pins the part of the message leg (iv)'s
+# mutation cannot move, the position, the refusal prefix and the binder
+# name, and it compares its fixture with the source string the suite
+# elaborates.  MUTATION: lib/check.ml:958-959, infer a Pi domain for a
+# bare lambda instead of `Error (Error.Cannot_infer ...)`;  the bare
+# field moves.
+[ -f "$ROOT"/dev/m8a/bare-lambda-holed.tot ] \
+  || { echo "FAIL-M8A-BARE-LAMBDA-REFUSES (MISSING-FIXTURE dev/m8a/bare-lambda-holed.tot)"; exit 1; }
+m8a_bare=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/dev/m8a/bare-lambda-holed.tot 2>&1)
+m8a_barecode=$?
+m8a_bare_esc=$(rg -l '[\\"]' "$ROOT"/dev/m8a/bare-lambda-holed.tot)
+m8a_bare_src=$(m8a_lit m8a_bare_lambda)
+m8a_bare_file=$(cat "$ROOT"/dev/m8a/bare-lambda-holed.tot)
+{ [ "$m8a_barecode" -eq 1 ] \
+    && printf '%s\n' "$m8a_bare" \
+       | rg -q 'bare-lambda-holed\.tot:1:1: cannot infer a type for ' \
+    && printf '%s\n' "$m8a_bare" | rg -q '\(binder x\)$' \
+    && [ -z "$m8a_bare_esc" ] \
+    && [ -n "$m8a_bare_src" ] && [ "$m8a_bare_src" = "$m8a_bare_file" ]; } \
+  && echo PASS-M8A-BARE-LAMBDA-REFUSES \
+  || {
+    printf '%s\n' "$m8a_bare"
+    echo "FAIL-M8A-BARE-LAMBDA-REFUSES (bare=$m8a_barecode esc=$m8a_bare_esc baresrc_len=${#m8a_bare_src})"
+    exit 1
+  }
+
+# Gate M8A (iv), PASS-M8A-KERNEL-UNCHANGED (plan dev/M8-PLAN.md:884-892;
+# "the kernel is untouched", tot-m8-design-verdict.md:196).  Stage A is
+# an elaborator change, so every file under lib/ keeps its bytes while
+# the new capture path goes live.  The digest walks all 17 lib/*.ml
+# files in sorted name order;  prep ruling PREP-1 ruled answer A, and
+# the plan's own command at dev/M8-PLAN.md:887 already cats the 17.
+# This leg's observable is the digest, distinct from the bare field leg
+# (iii) pins at the same lib/check.ml line, so the two legs mutate one
+# line without sharing a mutation text or an observable.  Review-round
+# fix (conflict note C-A3): the leg no longer reads the local control
+# leg (i) owns, so it watches the digest and the file count alone, the
+# two fields its own comment names.  MUTATION:
+# lib/check.ml:959, change the binder text in the Cannot_infer message;
+# lib_md5 moves off its literal.
+m8a_lib=$(cat "$ROOT"/lib/budget.ml "$ROOT"/lib/check.ml "$ROOT"/lib/erase.ml \
+  "$ROOT"/lib/error.ml "$ROOT"/lib/eterm.ml "$ROOT"/lib/eval.ml "$ROOT"/lib/global.ml \
+  "$ROOT"/lib/interp.ml "$ROOT"/lib/json_escape.ml "$ROOT"/lib/level.ml \
+  "$ROOT"/lib/literal.ml "$ROOT"/lib/pp.ml "$ROOT"/lib/prim.ml "$ROOT"/lib/quantity.ml \
+  "$ROOT"/lib/term.ml "$ROOT"/lib/totality.ml "$ROOT"/lib/value.ml | md5 -q)
+m8a_libcount=$(fd -e ml . "$ROOT"/lib | wc -l | tr -d ' ')
+{ [ "$m8a_lib" = ec077852495cdc0ac9a7abd4eb2fe786 ] && [ "$m8a_libcount" -eq 17 ]; } \
+  && echo PASS-M8A-KERNEL-UNCHANGED \
+  || {
+    echo "FAIL-M8A-KERNEL-UNCHANGED (lib_md5=$m8a_lib files=$m8a_libcount)"
+    exit 1
+  }
 
 # ctxcat id 5: an instance with TWO dictionary binders on the SAME type
 # variable. Round 1's fuel bounded the depth of one resolution PATH,

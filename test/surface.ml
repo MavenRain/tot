@@ -1119,6 +1119,29 @@ let case_guards_define_no_shared_helper () : (unit, string) result =
               acc)
        (Ok ())
 
+(* M8 Stage A (plan dev/M8-PLAN.md:893-937): the four source strings the
+   M8A cases elaborate IN PROCESS.  The first two are the bytes of
+   dev/m8a/local-spine-holed.tot and dev/m8a/local-spine-explicit.tot,
+   so a case and its gate leg read one payload from two sides: the leg
+   reads the CLI's text over the file on disk, the case reads the
+   elaborator's own [Ok] value over the string.  The last two are
+   authored by the Stage A prep under rulings SA-Q6 and PREP-2, and
+   both were measured before they landed here. *)
+let m8a_local_spine_holed : string =
+  "def probeH : (0 A : Type 0) -> (A -> A) -> A -> Option A :=\n\
+  \  fun A f x => match (some _ (f x)) with | none => none A | some y => some A y end\n"
+
+let m8a_local_spine_explicit : string =
+  "def probeH : (0 A : Type 0) -> (A -> A) -> A -> Option A :=\n\
+  \  fun A f x => match (some A (f x)) with | none => none A | some y => some A y end\n"
+
+let m8a_bare_lambda : string = "def probeB : Option Nat := some _ ((fun x => x) zero)\n"
+let m8a_fenced_head : string = "eval (mkEqD _ boolEq)\n"
+
+let m8a_open_capture : string =
+  "def probeH : (0 A : Type 0) -> (A -> List A) -> A -> List A :=\n\
+  \  fun A f a => map _ A (fun x => x) (f a)\n"
+
 let cases (bst : Tot_surface.Run.state) : (string * (unit -> (unit, string) result)) list =
   [
     ( "cadd two two runs to church four",
@@ -2271,6 +2294,37 @@ let cases (bst : Tot_surface.Run.state) : (string * (unit -> (unit, string) resu
         ~src:
           "class Sized (0 A : Type 0) := { szf : A -> Nat }\n\
            instance : Sized Nat := mkSized Nat (fun n => n)" );
+    (* M8 Stage A (plan dev/M8-PLAN.md:893-937, cases M8A-1 to M8A-4).
+       None of the four duplicates its gate leg.  The legs measure the
+       CLI's external text over files on disk;  these cases drive
+       [Tot_surface.Run.script ~st:bst ~exec:false], the same path
+       [Check.define] (surface/run.ml:241) sits on, over source strings.
+       So a change to how output is FORMATTED cannot make a case pass
+       while its leg fails, or the reverse. *)
+    ( "M8A-1: a hole whose only informative later argument is a local-headed spine resolves",
+      fun () ->
+        let* () =
+          m7e_expect_source_checks bst ~label:"M8A-1 explicit twin" ~src:m8a_local_spine_explicit ()
+        in
+        Tot_surface.Run.script ~st:bst ~exec:false m8a_local_spine_explicit
+        |> Result.fold
+             ~error:(fun e ->
+               Error ("M8A-1: the explicit twin failed: " ^ Tot_surface.Serror.to_string e))
+             ~ok:(fun (twin, _exit_code) ->
+               (* the non-empty test is the anti-vacuity sentinel: a twin
+                  that printed nothing would pass any comparison *)
+               match () with
+               | () when Int.equal (List.length twin) 0 ->
+                   Error "M8A-1: the explicit twin printed no line"
+               | () -> expect_lines_check ~st:bst m8a_local_spine_holed twin ()) );
+    ( "M8A-2: the kernel still refuses a bare lambda in callee position",
+      m7e_expect_source_error bst ~label:"M8A-2" ~src:m8a_bare_lambda
+        ~want_suffix:"cannot infer a type for the bare lambda (binder x)" );
+    ( "M8A-3: a fenced GLOBAL head with a holed leading slot keeps its refusal",
+      m7e_expect_source_error bst ~label:"M8A-3" ~src:m8a_fenced_head
+        ~want_suffix:"hole: no expected type at this position" );
+    ( "M8A-4: an OPEN captured type reaches the kernel and Check.define accepts it",
+      m7e_expect_source_checks bst ~label:"M8A-4" ~src:m8a_open_capture );
   ]
 
 (** The ordinary in-process suite: bootstrap once, run every [cases]

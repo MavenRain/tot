@@ -1,0 +1,1 @@
+def probeB : Option Nat := some _ ((fun x => x) zero)

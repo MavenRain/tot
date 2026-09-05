@@ -203,46 +203,52 @@ let rec rigid ~(m : int) ~(k : int) ~(d : int) (decl : Term.t) (exp : Term.t)
     the [k] SETTLED leading args (formal order, each scoped over the
     outer scope) substituted for their formals;  [d] counts binders
     crossed inside [t], which [Term.shift] carries the settled args
-    across.  [None] on any surviving telescope Var (that argument then
+    across.  [escape] answers a free variable that falls OUTSIDE the [k]
+    settled args (M8 Stage A).  Such a variable names a binder of the
+    ENCLOSING scope, which a GLOBAL head never has and a LOCAL head has
+    by construction, so the caller supplies the reading.  [None] on any
+    surviving telescope Var that [escape] declines (that argument then
     elaborates via [term]) and, conservatively, on a [Match] node. *)
-let rec inst_domain ~(j : int) ~(k : int) (settled : Term.t list) ~(d : int) (t : Term.t) :
-    Term.t option =
+let rec inst_domain ~(escape : int -> Term.t option) ~(j : int) ~(k : int)
+    (settled : Term.t list) ~(d : int) (t : Term.t) : Term.t option =
   match t with
   | Term.Var i when i >= d ->
       let p = j - 1 - (i - d) in
-      if p >= 0 && p < k then List.nth_opt settled p |> Option.map (Term.shift ~cutoff:0 ~by:d)
-      else None
+      (match () with
+       | () when p >= 0 && p < k -> List.nth_opt settled p |> Option.map (Term.shift ~cutoff:0 ~by:d)
+       | () -> escape i)
   | Term.Var i -> Some (Term.Var i)
   | Term.Univ l -> Some (Term.Univ l)
   | Term.Global g -> Some (Term.Global g)
   | Term.Lit l -> Some (Term.Lit l)
   | Term.Auto -> Some Term.Auto
   | Term.Pi (q, x, dom, cod) ->
-      inst_domain ~j ~k settled ~d dom
+      inst_domain ~escape ~j ~k settled ~d dom
       |> Option.map (fun dom' ->
-             inst_domain ~j ~k settled ~d:(d + 1) cod
+             inst_domain ~escape ~j ~k settled ~d:(d + 1) cod
              |> Option.map (fun cod' -> Term.Pi (q, x, dom', cod')))
       |> Option.join
   | Term.Lam (q, x, body) ->
-      inst_domain ~j ~k settled ~d:(d + 1) body |> Option.map (fun body' -> Term.Lam (q, x, body'))
+      inst_domain ~escape ~j ~k settled ~d:(d + 1) body
+      |> Option.map (fun body' -> Term.Lam (q, x, body'))
   | Term.App (q, f, a) ->
-      inst_domain ~j ~k settled ~d f
+      inst_domain ~escape ~j ~k settled ~d f
       |> Option.map (fun f' ->
-             inst_domain ~j ~k settled ~d a |> Option.map (fun a' -> Term.App (q, f', a')))
+             inst_domain ~escape ~j ~k settled ~d a |> Option.map (fun a' -> Term.App (q, f', a')))
       |> Option.join
   | Term.Let (x, ty, def, body) ->
-      inst_domain ~j ~k settled ~d ty
+      inst_domain ~escape ~j ~k settled ~d ty
       |> Option.map (fun ty' ->
-             inst_domain ~j ~k settled ~d def
+             inst_domain ~escape ~j ~k settled ~d def
              |> Option.map (fun def' ->
-                    inst_domain ~j ~k settled ~d:(d + 1) body
+                    inst_domain ~escape ~j ~k settled ~d:(d + 1) body
                     |> Option.map (fun body' -> Term.Let (x, ty', def', body')))
              |> Option.join)
       |> Option.join
   | Term.Ann (tm, ty) ->
-      inst_domain ~j ~k settled ~d tm
+      inst_domain ~escape ~j ~k settled ~d tm
       |> Option.map (fun tm' ->
-             inst_domain ~j ~k settled ~d ty |> Option.map (fun ty' -> Term.Ann (tm', ty')))
+             inst_domain ~escape ~j ~k settled ~d ty |> Option.map (fun ty' -> Term.Ann (tm', ty')))
       |> Option.join
   | Term.Match _ -> None
 
@@ -376,29 +382,64 @@ let is_closed (t : Term.t) : bool = Option.is_none (min_free_var ~d:0 t)
     argument term.  [None] when the declared type runs out of Pis, when
     an argument holds a placeholder, or when the residual type keeps a
     telescope variable.  [inst_domain] does the substitution, so this
-    adds no new de Bruijn arithmetic. *)
+    adds no new de Bruijn arithmetic.  The head is a GLOBAL, whose
+    declared type is read at top level, so no free variable escapes the
+    peeled telescope on a well-formed program:  [escape] answers [None]
+    and this function keeps its M7 behaviour exactly. *)
 let inst_applied (gty : Term.t) (applied : Term.t list) : Term.t option =
   let n = List.length applied in
   match () with
   | () when List.exists has_auto applied -> None
   | () ->
       peel_domains n gty
-      |> Option.map (fun (_doms, rest) -> inst_domain ~j:n ~k:n applied ~d:0 rest)
+      |> Option.map (fun (_doms, rest) ->
+             inst_domain ~escape:(fun _ -> None) ~j:n ~k:n applied ~d:0 rest)
+      |> Option.join
+
+(** M8 Stage A:  the LOCAL-head twin of [inst_applied].  A local's
+    declared type, shifted to the use site by [local_ty], mentions the
+    binders of the ENCLOSING scope as free variables, so the residual
+    left by [peel_domains] keeps them.  The residual is read under the
+    [n] peeled binders, and an escaping index names a binder [n] frames
+    further out, so [Term.Var (i - n)] is that same binder read one
+    frame shallower.  Everything else matches [inst_applied]:  [None]
+    when the declared type runs out of Pis and [None] when an argument
+    holds a placeholder.  The captured type stays OPEN, which the
+    downstream rigid match accepts (the whnf RETRY step alone is
+    closed-only), and the kernel re-checks the finished definition
+    (surface/run.ml:241). *)
+let inst_applied_local (lty : Term.t) (applied : Term.t list) : Term.t option =
+  let n = List.length applied in
+  match () with
+  | () when List.exists has_auto applied -> None
+  | () ->
+      peel_domains n lty
+      |> Option.map (fun (_doms, rest) ->
+             inst_domain ~escape:(fun i -> Some (Term.Var (i - n))) ~j:n ~k:n applied ~d:0 rest)
       |> Option.join
 
 (** The type of an already-elaborated argument, when the elaborator can
-    read it off without typechecking.  Two shapes only:
+    read it off without typechecking.  Three shapes only:
     (1) a local [Term.Var] whose type [locals] carries;
     (2) a spine headed by a GLOBAL, whose declared type loses one domain
-    per applied argument.  [None] everywhere else, including under a
-    hole, a lambda and a match.  The kernel re-checks the finished
+    per applied argument;
+    (3) a spine headed by a LOCAL, whose type [locals] carries and which
+    loses one declared domain per applied argument, keeping the free
+    locals of the residual (M8 Stage A).  [None] everywhere else,
+    including under a hole, a lambda and a match.  The kernel re-checks the finished
     definition (surface/run.ml:241), so a wrong answer here is a kernel
     [Mismatch], never a silent accept. *)
 let synth (globals : Global.t) (locals : Term.t option list) (t : Term.t) : Term.t option =
   spine_head t []
   |> Option.map (fun (head, applied) ->
          match head with
-         | Term.Var ix -> ( match applied with [] -> local_ty locals ix | _ :: _ -> None)
+         | Term.Var ix -> (
+             match applied with
+             | [] -> local_ty locals ix
+             | _ :: _ ->
+                 local_ty locals ix
+                 |> Option.map (fun lty -> inst_applied_local lty applied)
+                 |> Option.join)
          | Term.Global g ->
              Global.find g globals
              |> Option.map Global.entry_ty
@@ -486,7 +527,7 @@ let ctor_field_types (globals : Global.t) (c : string) (scrut_ty : Term.t option
                        [local_ty] convention (conflict note C-A4). *)
                     List.mapi
                       (fun i (_q, _x, fty) ->
-                        inst_domain ~j:(np + i) ~k:np ps ~d:0 fty
+                        inst_domain ~escape:(fun _ -> None) ~j:(np + i) ~k:np ps ~d:0 fty
                         |> Option.map (Term.shift ~cutoff:0 ~by:i))
                       ce.Global.args))
   |> Option.join
@@ -845,7 +886,7 @@ and spine (globals : Global.t) (scope : string list) ~(expected : Term.t)
                  | () when fence -> (
                      match arg with
                      | Syntax.SHole loc ->
-                         inst_domain ~j ~k (List.rev settled) ~d:0 dom
+                         inst_domain ~escape:(fun _ -> None) ~j ~k (List.rev settled) ~d:0 dom
                          |> Option.map (fun dom' ->
                                 Error (Serror.Hole { loc; expected = Some (scope, dom') }))
                          |> unwrap_or (fun () -> term globals scope ~locals arg)
@@ -855,7 +896,7 @@ and spine (globals : Global.t) (scope : string list) ~(expected : Term.t)
                      | Syntax.SInst _ ->
                          term globals scope ~locals arg)
                  | () ->
-                     inst_domain ~j ~k (List.rev settled) ~d:0 dom
+                     inst_domain ~escape:(fun _ -> None) ~j ~k (List.rev settled) ~d:0 dom
                      |> Option.map (fun dom' -> term_at globals scope ~locals ~expected:dom' arg)
                      |> unwrap_or (fun () -> term globals scope ~locals arg)
                in
@@ -923,7 +964,7 @@ and spine_infer (globals : Global.t) (scope : string list) ~(locals : Term.t opt
                            | Syntax.SApp _ | Syntax.SLet _ | Syntax.SAnn _ | Syntax.SMatch _
                            | Syntax.SStr _ | Syntax.SInt _ | Syntax.SLetStar _ | Syntax.SAuto _
                            | Syntax.SInst _ ->
-                               inst_domain ~j ~k (List.rev settled) ~d:0 dom
+                               inst_domain ~escape:(fun _ -> None) ~j ~k (List.rev settled) ~d:0 dom
                                |> Option.map (fun dom' ->
                                       term_at globals scope ~locals ~expected:dom' arg)
                                |> unwrap_or (fun () -> term globals scope ~locals arg))

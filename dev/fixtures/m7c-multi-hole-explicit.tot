@@ -1,0 +1,5 @@
+-- M7 Stage C: the explicit twin of m7c-multi-hole.tot.  It checks at
+-- exit 0, which proves the holed file fails for its holes and for no
+-- other reason.
+def flagged : List String := cons String "grep" (nil String)
+def h : List String := cons String "flag" (nil String)

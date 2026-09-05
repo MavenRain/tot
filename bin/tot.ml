@@ -63,7 +63,7 @@ let run_file ~(exec : bool) ~(policy : Tot_surface.Run.policy) ~(serror_exit : i
          prerr_endline (path ^ ": " ^ Tot_surface.Source.message e);
          1)
        ~ok:(fun (src : string) ->
-         Tot_surface.Run.script ~st ~policy ~budget ~exec src
+         Tot_surface.Run.script_tailed ~st ~policy ~budget ~exec src
          |> Result.fold
               ~ok:(fun (lines, exit_code) ->
                 List.iter print_endline lines;
@@ -72,7 +72,7 @@ let run_file ~(exec : bool) ~(policy : Tot_surface.Run.policy) ~(serror_exit : i
                    `exitWith`; absent that (or absent a `main` at all,
                    every M2 script), 0. *)
                 Option.value exit_code ~default:0)
-              ~error:(fun e ->
+              ~error:(fun ((e : Tot_surface.Serror.t), (tail : string option)) ->
                 (* M3 fixes, B4: a runtime script error's message goes to
                    STDERR (stdout is the hook protocol's channel and must
                    carry only a rendered decision). M4 Stage D, D5.1: the
@@ -111,6 +111,14 @@ let run_file ~(exec : bool) ~(policy : Tot_surface.Run.policy) ~(serror_exit : i
                     2
                 | () ->
                     prerr_endline (path ^ ":" ^ Tot_surface.Serror.to_string e);
+                    (* M7 Stage C (pin 7): the position-only tail, one
+                       line, on the SAME channel as the error it
+                       extends.  No path prefix: the line above already
+                       named the file, and pin 7 fixes these bytes.
+                       [None] for every non-hole error and for a
+                       one-hole item, so no existing transcript
+                       moves. *)
+                    Option.iter prerr_endline tail;
                     serror_exit))
 
 (** The prelude-auto-loaded path: classify the prelude PATH, bootstrap

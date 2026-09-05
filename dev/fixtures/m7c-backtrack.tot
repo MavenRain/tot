@@ -1,0 +1,5 @@
+-- M7 Stage C (pin 7): the parse walk speculates a binder group at the
+-- parenthesized annotation, rejects it, and re-parses the same
+-- tokens.  The tail must name the second hole exactly once, which is
+-- what the rollback buys.
+def h : List _ := (nil : List _)

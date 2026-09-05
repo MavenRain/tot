@@ -11,6 +11,17 @@ let ( let* ) = Result.bind
 let parse_err (loc : Loc.t) (msg : string) : ('a, Serror.t) result =
   Error (Serror.Parse { loc; msg })
 
+(** M7 Stage C (pin 7): the term-position hole positions the CURRENT
+    item's parse walk has met, newest first.  This is a record kept
+    INSIDE the walk that already runs, not a second pass: the only
+    writer is the [Underscore] arm of [parse_atom], the only reader is
+    [with_item_holes], and [parse_items] clears it at every item
+    boundary.  The parser runs in one thread and finishes before any
+    elaboration starts, so no caller interleaves two parses;
+    [term_only] may leave entries behind and the next item clears
+    them. *)
+let holes : Loc.t list ref = ref []
+
 (** M4 Stage A: a short, human-readable description of a parsed term's
     outermost shape, for the data-codomain peel's "expected 'Type',
     found ..." error (the codomain is peeled from an already-parsed
@@ -302,7 +313,7 @@ and parse_branches (ts : Token.t list)
 (** Speculative "(q x .. : T)" binder group. Commits only if the token
     after ')' is '->'; the returned rest does NOT consume that arrow. Any
     inner failure (including term-parse errors) yields None. *)
-and try_binder_group (ts : Token.t list) :
+and binder_group_attempt (ts : Token.t list) :
     (Loc.t * Quantity.t * string list * Syntax.t * Token.t list) option =
   match ts with
   | { Token.kind = Token.LParen; loc } :: rest ->
@@ -323,6 +334,22 @@ and try_binder_group (ts : Token.t list) :
                    ~error:(fun _e -> None)
           | ({ Token.kind = _; loc = _ } :: _ | []) -> None))
   | ({ Token.kind = _; loc = _ } :: _ | []) -> None
+
+(** M7 Stage C (pin 7): the speculation's hole record is transactional.
+    A rejected group is re-parsed by the application path, which
+    records the same positions again, so the attempt's records are
+    dropped.  This is the file's ONLY backtracking site
+    (surface/parser.ml:1-5), so this is the only rollback. *)
+and try_binder_group (ts : Token.t list) :
+    (Loc.t * Quantity.t * string list * Syntax.t * Token.t list) option =
+  let saved = !holes in
+  let attempt = binder_group_attempt ts in
+  let () =
+    match () with
+    | () when Option.is_none attempt -> holes := saved
+    | () -> ()
+  in
+  attempt
 
 and parse_arrow (ts : Token.t list) : (Syntax.t * Token.t list, Serror.t) result =
   try_binder_group ts
@@ -366,7 +393,11 @@ and parse_atom (ts : Token.t list) : (Syntax.t * Token.t list, Serror.t) result 
   match ts with
   | { Token.kind = Token.Ident x; loc } :: rest -> Ok (Syntax.SVar (loc, x), rest)
   | { Token.kind = Token.KAuto; loc } :: rest -> Ok (Syntax.SAuto loc, rest)
-  | { Token.kind = Token.Underscore; loc } :: rest -> Ok (Syntax.SHole loc, rest)
+  | { Token.kind = Token.Underscore; loc } :: rest ->
+      (* M7 Stage C (pin 7): the position, recorded where the walk
+         already stands.  The node is unchanged. *)
+      let () = holes := loc :: !holes in
+      Ok (Syntax.SHole loc, rest)
   | { Token.kind = Token.KType; loc } :: { Token.kind = Token.Nat n; loc = _ } :: rest ->
       Ok (Syntax.SType (loc, n), rest)
   | { Token.kind = Token.KType; loc } :: rest -> Ok (Syntax.SType (loc, 0), rest)
@@ -391,43 +422,62 @@ and parse_atom (ts : Token.t list) : (Syntax.t * Token.t list, Serror.t) result 
       parse_err bad_loc ("expected a term, found " ^ Token.describe kind)
   | [] -> eof_err
 
-let rec parse_items (ts : Token.t list) (acc : Syntax.item list) :
-    (Syntax.item list, Serror.t) result =
+(** M7 Stage C (pin 7): parse ONE item with a fresh record, then pair
+    the item with the positions the walk met, oldest first.  The reset
+    is per item because pin 7's unit is "the same definition". *)
+let with_item_holes (f : unit -> (Syntax.item * Token.t list, Serror.t) result) :
+    ((Syntax.item * Loc.t list) * Token.t list, Serror.t) result =
+  let () = holes := [] in
+  Result.map (fun (it, rest) -> ((it, List.rev !holes), rest)) (f ())
+
+let rec parse_items (ts : Token.t list) (acc : (Syntax.item * Loc.t list) list) :
+    ((Syntax.item * Loc.t list) list, Serror.t) result =
   match ts with
   | { Token.kind = Token.Eof; loc = _ } :: _rest -> Ok (List.rev acc)
   | { Token.kind = Token.KDef; loc } :: rest ->
-      let* item, rest2 = parse_def ~loc ~reducible:false rest in
-      parse_items rest2 (item :: acc)
+      let* pair, rest2 = with_item_holes (fun () -> parse_def ~loc ~reducible:false rest) in
+      parse_items rest2 (pair :: acc)
   | { Token.kind = Token.KReducible; loc }
     :: { Token.kind = Token.KDef; loc = _ }
     :: rest ->
-      let* item, rest2 = parse_def ~loc ~reducible:true rest in
-      parse_items rest2 (item :: acc)
+      let* pair, rest2 = with_item_holes (fun () -> parse_def ~loc ~reducible:true rest) in
+      parse_items rest2 (pair :: acc)
   | { Token.kind = Token.KReducible; loc } :: _rest ->
       parse_err loc "expected 'def' after 'reducible'"
   | { Token.kind = Token.KData; loc } :: rest ->
-      let* item, rest2 = parse_data ~loc rest in
-      parse_items rest2 (item :: acc)
+      let* pair, rest2 = with_item_holes (fun () -> parse_data ~loc rest) in
+      parse_items rest2 (pair :: acc)
   | { Token.kind = Token.KEval; loc } :: rest ->
-      let* tm, rest2 = parse_term rest in
-      parse_items rest2 (Syntax.IEval (loc, tm) :: acc)
+      let* pair, rest2 =
+        with_item_holes (fun () ->
+            Result.map (fun (tm, rest2) -> (Syntax.IEval (loc, tm), rest2)) (parse_term rest))
+      in
+      parse_items rest2 (pair :: acc)
   | { Token.kind = Token.KCheck; loc } :: rest ->
-      let* tm, rest2 = parse_term rest in
-      parse_items rest2 (Syntax.ICheck (loc, tm) :: acc)
+      let* pair, rest2 =
+        with_item_holes (fun () ->
+            Result.map (fun (tm, rest2) -> (Syntax.ICheck (loc, tm), rest2)) (parse_term rest))
+      in
+      parse_items rest2 (pair :: acc)
   | { Token.kind = Token.KAxiom; loc }
     :: { Token.kind = Token.Ident name; loc = _ }
     :: { Token.kind = Token.Colon; loc = _ }
     :: rest ->
-      let* ty, rest2 = parse_term rest in
-      parse_items rest2 (Syntax.IAxiom { loc; name; ty } :: acc)
+      let* pair, rest2 =
+        with_item_holes (fun () ->
+            Result.map
+              (fun (ty, rest2) -> (Syntax.IAxiom { loc; name; ty }, rest2))
+              (parse_term rest))
+      in
+      parse_items rest2 (pair :: acc)
   | { Token.kind = Token.KAxiom; loc = bad_loc } :: _rest ->
       parse_err bad_loc "expected 'NAME : TYPE' after 'axiom'"
   | { Token.kind = Token.KClass; loc } :: rest ->
-      let* item, rest2 = parse_class ~loc rest in
-      parse_items rest2 (item :: acc)
+      let* pair, rest2 = with_item_holes (fun () -> parse_class ~loc rest) in
+      parse_items rest2 (pair :: acc)
   | { Token.kind = Token.KInstance; loc } :: rest ->
-      let* item, rest2 = parse_instance ~loc rest in
-      parse_items rest2 (item :: acc)
+      let* pair, rest2 = with_item_holes (fun () -> parse_instance ~loc rest) in
+      parse_items rest2 (pair :: acc)
   | { Token.kind; loc = bad_loc } :: _rest ->
       parse_err bad_loc
         ("expected 'def', 'reducible', 'data', 'eval', 'check', 'axiom', 'class', or \
@@ -649,7 +699,14 @@ and parse_instance ~(loc : Loc.t) (ts : Token.t list) :
         ("expected ': TYPE := TERM' after 'instance', found " ^ Token.describe kind)
   | [] -> eof_err
 
-let parse (ts : Token.t list) : (Syntax.item list, Serror.t) result = parse_items ts []
+(** M7 Stage C (pin 7): the items, each with the hole positions the
+    walk recorded for it. *)
+let parse_with_holes (ts : Token.t list) :
+    ((Syntax.item * Loc.t list) list, Serror.t) result =
+  parse_items ts []
+
+let parse (ts : Token.t list) : (Syntax.item list, Serror.t) result =
+  Result.map (List.map fst) (parse_with_holes ts)
 
 (** Parse exactly one term and require [Eof] (M3 Stage A). Used by
     [surface/bootstrap.ml] to elaborate a prim's type from source text

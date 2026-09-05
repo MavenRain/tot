@@ -623,28 +623,72 @@ let main_epilogue (final : state) ~(exec : bool) ~(policy : policy) :
              let* code = run_unit_main ~strict_json:policy.strict_json final in
              Ok (None, code))
 
-(** [st] seeds the starting environment (M3 Stage A); default [initial]
-    keeps every existing caller and every existing test unchanged. M3
-    Stage B: [script] additionally returns the process exit code
-    [main]'s epilogue computed, [None] when there is no [IO Unit] (or,
-    M3 Stage D, [IO Verdict]) [main], or it never called [exitWith]
-    (verdict 3.7). M3 Stage D, D4: when the epilogue returns
-    [Some replacement_lines] (the [IO Verdict] driver path took over
-    rendering), that list REPLACES the ordinary accumulated output
-    instead of appending to it. *)
-let script ?(st : state = initial) ?(policy : policy = default_policy)
+(** M7 Stage C (pin 7): the reported hole's own position, [None] for
+    every other error.  Enumerated with no catch-all, so a future
+    [Serror] constructor must decide its posture here. *)
+let reported_hole (e : Serror.t) : Loc.t option =
+  match e with
+  | Serror.Hole { loc; expected = _expected } -> Some loc
+  | Serror.Lex _ | Serror.Parse _ | Serror.Unknown_name _ | Serror.Bad_level _
+  | Serror.Kernel _ | Serror.Main_bad_type _ | Serror.Axioms_disabled _
+  | Serror.Missing_main | Serror.Json_strict_reject ->
+      None
+
+(** Source order for two positions. *)
+let loc_order (a : Loc.t) (b : Loc.t) : int =
+  match () with
+  | () when a.Loc.line <> b.Loc.line -> Int.compare a.Loc.line b.Loc.line
+  | () -> Int.compare a.Loc.col b.Loc.col
+
+let loc_equal (a : Loc.t) (b : Loc.t) : bool =
+  Int.equal a.Loc.line b.Loc.line && Int.equal a.Loc.col b.Loc.col
+
+(** M7 Stage C (pin 7): the tail LINE for one item, positions only, no
+    expected types.  [holes] is what the PARSE walk recorded for the
+    item that failed (surface/parser.ml:400, the [Underscore] arm of
+    [parse_atom]).  [None] when the error is not a hole, and [None]
+    when the item carries no other hole, so a one-hole file keeps its
+    one-line stderr byte for byte.  The sort is
+    defensive and there is NO dedup: a lost rollback in the parser must
+    show up as a repeated position, not disappear. *)
+let hole_tail ~(holes : Loc.t list) (e : Serror.t) : string option =
+  Option.bind (reported_hole e) (fun loc ->
+      match holes |> List.filter (fun l -> not (loc_equal loc l)) |> List.sort loc_order with
+      | [] -> None
+      | _ :: _ as locs ->
+          Some
+            (Printf.sprintf "%d more hole(s) at %s" (List.length locs)
+               (String.concat ", " (List.map Loc.to_string locs))))
+
+(** M7 Stage C (pin 7): [script] with the position-only tail beside the
+    error.  ONE pass: the positions ride out of [Parser.parse_with_holes]
+    with the item that carries them, so nothing is re-lexed, re-parsed
+    or re-folded.  A lex error, a parse error and an epilogue error
+    carry no tail. *)
+let script_tailed ?(st : state = initial) ?(policy : policy = default_policy)
     ?(budget : Budget.t = Budget.unlimited) ~(exec : bool) (src : string) :
-    (string list * int option, Serror.t) result =
-  let* tokens = Lexer.lex src in
-  let* items = Parser.parse tokens in
+    (string list * int option, Serror.t * string option) result =
+  let untailed : 'a. ('a, Serror.t) result -> ('a, Serror.t * string option) result =
+   fun r -> Result.map_error (fun e -> (e, None)) r
+  in
+  let* tokens = untailed (Lexer.lex src) in
+  let* items = untailed (Parser.parse_with_holes tokens) in
   let* final =
     List.fold_left
-      (fun acc it ->
+      (fun acc (it, holes) ->
         let* st = acc in
-        item ~budget ~exec ~policy st it)
+        item ~budget ~exec ~policy st it
+        |> Result.map_error (fun e -> (e, hole_tail ~holes e)))
       (Ok st) items
   in
-  let* replacement_lines, exit_code = main_epilogue final ~exec ~policy in
+  let* replacement_lines, exit_code = untailed (main_epilogue final ~exec ~policy) in
   let base_lines = List.rev final.lines in
   let out_lines = replacement_lines |> Option.fold ~none:base_lines ~some:Fun.id in
   Ok (out_lines, exit_code)
+
+(** Unchanged signature (M3 Stage B).  M7 Stage C: the tail is dropped
+    here, so every existing caller keeps its type. *)
+let script ?(st : state = initial) ?(policy : policy = default_policy)
+    ?(budget : Budget.t = Budget.unlimited) ~(exec : bool) (src : string) :
+    (string list * int option, Serror.t) result =
+  Result.map_error fst (script_tailed ~st ~policy ~budget ~exec src)

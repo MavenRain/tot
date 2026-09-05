@@ -1609,6 +1609,40 @@ verdict CLIs, small tools.  The house rules are the semantics:
   SPEC.md:2127-2130 says the four guard A anchors are "kept explicit".
   This entry supersedes that clause: the sentence is now false.  Stage
   E owns its citation repair; this entry does not edit that passage.
+- 2026-09-04 (M7, Stage C): pin 7's multi-hole tail lands.  The first
+  hole of a failing item keeps its exact M6 line;  every other
+  term-position hole of the SAME item is now reported on one following
+  line, `N more hole(s) at L:C[, L:C]*`, positions only, no expected
+  types.  The user's ratification amendment of 2026-09-04 gave "no
+  second traversal" the strict reading: no new pass over parsed items
+  or terms runs, not even a syntactic fold on the failed path.  The
+  positions come from the PARSE walk that already runs at HEAD, the
+  one place that builds a hole node, `surface/parser.ml:400`.  A
+  module-level record collects each item's positions as the walk
+  meets them, and a per-item reset keeps pin 7's unit at "the same
+  definition".  `Serror.t` does not change and the exit code does not
+  move.  Two new gate markers, `PASS-M7C-MULTI-HOLE-TAIL` and
+  `PASS-M7C-SINGLE-HOLE-UNCHANGED`, and five new surface suite cases
+  pin the shape.  Pin 8 rides inside `PASS-M7C-MULTI-HOLE-TAIL`: the
+  `Serror.t` and `Term.t` constructor counts stay 10 and 11, so no
+  constructor moved.  `bin/tot.ml`'s prelude-load arm keeps its
+  one-line report and calls no `Run` entry point.  That arm reports a
+  failure of `Bootstrap.cached_state_of_src`, which parses the prelude
+  only on a cache MISS.  On a cache hit no parse walk runs, so no
+  record exists to report from, and a re-parse is the second pass the
+  ratification amendment bars.
+  `PASS-M5D-TIERS` went 211 -> 218: the two new legs add seven
+  direct FAST uses, measured with
+  `rg -c '"\$watchdog" "\$(FAST|MED|SLOW|SUITE)"' dev/gates.sh`
+  before (211) and after (218) the edit.  The battery count goes
+  395 -> 402 PASS.  The tail moves the output of three files that the
+  transcript glob does not read, `dev/m7a/arg-exhausted.tot`,
+  `dev/m7a/infer-undetermined.tot` and
+  `test/fixtures/m7/m7b-arg-slot-undetermined.tot`, each of which holds
+  more than one term-position hole in one item, so three earlier gate
+  legs now pin two stderr lines instead of one (conflict C-C1 and its
+  resolution in `dev/M7-BUILD-LOG.md`).  The transcript itself stays
+  byte-identical.
 
 ## 3.  Core calculus (M0 core, M2 inductives, M3 literals and effects)
 
@@ -2165,8 +2199,10 @@ Known debts entering M5 (M4, carried from `dev/M4-PLAN.md`'s own
   explicit;  (2) the 40 prelude E anchors stay spelled until the hole
   pass has soaked on the examples (scope-out 5;
   `PASS-M6E-GUARD-HOLES` pins zero prelude holes);  (3) the checker
-  reports one error and stops, so a file with several unresolvable
-  holes surfaces them one at a time.
+  reports one error and stops, and since M7 Stage C it appends one
+  position-only tail line naming the OTHER holes of the same item,
+  recorded by the parse walk, so per-hole EXPECTED TYPES are still one
+  at a time.
 - Frozen-guard fixtures (M4 Stage C: m4c-frozen.tot and friends) must be
   maintained as the erasure story evolves.
 - Nested inductives and the `Json` cons-cell migration to

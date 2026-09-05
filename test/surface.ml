@@ -814,6 +814,27 @@ let m6c_twins (bst : Tot_surface.Run.state) ~(holed : string) ~(explicit : strin
   | () when List.equal String.equal h e && not (List.is_empty h) -> Ok ()
   | () -> Error (Printf.sprintf "holed [%s] vs explicit [%s]" (show_lines h) (show_lines e))
 
+(* M7 Stage C (pin 7): the rendered first line and the rendered tail
+   of one source, both taken from the SAME [Run.script_tailed]
+   failure, which is the pair the driver prints. *)
+let m7c_expect_tail (bst : Tot_surface.Run.state) (src : string) ~(want_line : string)
+    ~(want_tail : string option) () : (unit, string) result =
+  Tot_surface.Run.script_tailed ~st:bst ~exec:false src
+  |> Result.fold
+       ~ok:(fun (lines, _exit) ->
+         Error
+           (Printf.sprintf "expected [%s], but the script ran: [%s]" want_line
+              (show_lines lines)))
+       ~error:(fun (e, tail) ->
+         let got = Tot_surface.Serror.to_string e in
+         match () with
+         | () when String.equal got want_line && Option.equal String.equal tail want_tail -> Ok ()
+         | () ->
+             Error
+               (Printf.sprintf "got [%s] tail [%s], want [%s] tail [%s]" got
+                  (Option.value tail ~default:"None") want_line
+                  (Option.value want_tail ~default:"None")))
+
 (* M6 Stage C (plan C9): a negative pinned by its EXACT rendered error
    line (the driver prefixes only the path), and by the one-line
    property: nothing after the first line. *)
@@ -2077,6 +2098,33 @@ let cases (bst : Tot_surface.Run.state) : (string * (unit -> (unit, string) resu
     ( "M7B-3 m7b_arg_slot_undetermined: every later argument is itself a hole, so the leading \
        slot keeps the HEAD message and the rule fills nothing",
       m6c_expect_err_line bst m7b_none_src "2:8: hole: expected Type 0" );
+    (* M7 Stage C (plan C8): pins 7 and 8, the multi-hole tail, in the
+       suite that runs in process. *)
+    ( "M7C-1 m7c_tail_reports: the tail names every other term-position hole of the SAME item, \
+       in source order, positions only",
+      m7c_expect_tail bst "def h : List _ := cons _ \"flag\" (nil _)\n"
+        ~want_line:"1:14: hole: no expected type at this position"
+        ~want_tail:(Some "2 more hole(s) at 1:24, 1:38") );
+    ( "M7C-2 m7c_tail_single: a one-hole item gains no tail, so the M6 report is byte for byte \
+       unchanged",
+      m7c_expect_tail bst "def h : List _ := cons String \"flag\" (nil String)\n"
+        ~want_line:"1:14: hole: no expected type at this position" ~want_tail:None );
+    ( "M7C-3 m7c_tail_scoped: the tail never names a position of an earlier, green item, which \
+       is pin 7's \"same definition\" clause",
+      m7c_expect_tail bst
+        ("def flagged : List String := cons _ \"grep\" (nil _)\n"
+        ^ "def h : List _ := cons _ \"flag\" (nil _)\n")
+        ~want_line:"2:14: hole: no expected type at this position"
+        ~want_tail:(Some "2 more hole(s) at 2:24, 2:38") );
+    ( "M7C-4 m7c_tail_non_hole: a non-hole error carries no tail even when its item holds a \
+       hole",
+      m7c_expect_tail bst "def g : List Nat := cons _ zero nosuch\n"
+        ~want_line:"1:33: unknown name nosuch" ~want_tail:None );
+    ( "M7C-5 m7c_tail_backtrack: the speculation's rollback keeps the backtracked position \
+       out of the tail exactly once",
+      m7c_expect_tail bst "def h : List _ := (nil : List _)\n"
+        ~want_line:"1:14: hole: no expected type at this position"
+        ~want_tail:(Some "1 more hole(s) at 1:31") );
   ]
 
 (** The ordinary in-process suite: bootstrap once, run every [cases]

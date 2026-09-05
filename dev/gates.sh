@@ -431,7 +431,7 @@ tot_scratch=$(mktemp -d "${TMPDIR:-/tmp}/tot-gate-d-bin.XXXXXX")
 # M5 Stage C: the M5C scratch (generated chains/classes fixtures)
 # rides the same trap; $m5c_scratch resolves at exit time, empty and
 # harmless on any exit before its own mktemp below.
-trap 'rm -rf "$tot_scratch" "$cache_scratch" "$m5c_scratch" "$m5d_scratch" "$m5e_scratch" "$m6c_scratch" "$m6d_scratch" "$m7a_scratch"' EXIT
+trap 'rm -rf "$tot_scratch" "$cache_scratch" "$m5c_scratch" "$m5d_scratch" "$m5e_scratch" "$m6c_scratch" "$m6d_scratch" "$m7a_scratch" "$m7c_scratch"' EXIT
 cp "$ROOT"/_build/default/bin/tot.exe "$tot_scratch/tot"
 # M3 fixes, C4' (C0, 2026-09-01): chmod ONLY the scratch copy; the
 # tracked examples/guard.tot carries its own executable bit in the
@@ -2295,7 +2295,10 @@ m5d_bites=$(rg -c '"\$watchdog" "\$BITE_S"' "$ROOT/dev/gates.sh")
 # M7 Stage B (2026-09-04) raised it 205 -> 211: the two new legs add
 # six direct FAST calls (three per leg), measured with the recipe
 # above before (205) and after (211) the edit.
-{ [ "$m5d_nolit" -eq 1 ] && [ "$m5d_tiers" -eq 211 ] && [ "$m5d_bites" -eq 2 ] \
+# M7 Stage C (2026-09-04) raised it 211 -> 218: the two new legs add
+# seven direct FAST calls, measured with the recipe above before (211)
+# and after (218) the edit.
+{ [ "$m5d_nolit" -eq 1 ] && [ "$m5d_tiers" -eq 218 ] && [ "$m5d_bites" -eq 2 ] \
   && [ -s "$ROOT/dev/gates.sh" ]; } \
   && echo PASS-M5D-TIERS \
   || { echo "FAIL-M5D-TIERS (nolit=$m5d_nolit tiers=$m5d_tiers bites=$m5d_bites)"; exit 1; }
@@ -2688,6 +2691,15 @@ codee=$?
 # nothing determines the slot in either position.  The leg keeps its
 # name, its four sub-legs, its column and its message.  Nothing is
 # deleted: the M6 rule is to re-open a tripwire's design.
+#
+# M7 Stage C (pin 7, C-C1): 2026-09-04.  Sub-leg (a) moves to the pin 7
+# shape.  Pin 7 prints a position-only tail as a SECOND stderr line for
+# an item that holds more than one term-position hole.
+# dev/m7a/arg-exhausted.tot holds three such holes (2:8, 2:35, 2:37),
+# so a.err now has two lines.  Line 1 keeps the pinned pin-3 line, with
+# no change.  Line 2 is pinned byte for byte to the tail the binary
+# prints.  Sub-legs (b), (c) and (d) keep one line each.  The leg name,
+# the markers, the exit codes and the empty-stdout checks do not move.
 outa=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
   "$ROOT"/dev/m7a/arg-exhausted.tot 2> "$m6c_scratch"/a.err)
 codea=$?
@@ -2702,11 +2714,12 @@ outd=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
 coded=$?
 { [ "$codea" -eq 1 ] && [ "$codeb" -eq 1 ] && [ "$codec" -eq 1 ] && [ "$coded" -eq 1 ] \
     && [ -z "$outa" ] && [ -z "$outb" ] && [ -z "$outc" ] && [ -z "$outd" ] \
-    && [ "$(wc -l < "$m6c_scratch"/a.err)" -eq 1 ] \
+    && [ "$(wc -l < "$m6c_scratch"/a.err)" -eq 2 ] \
     && [ "$(wc -l < "$m6c_scratch"/b.err)" -eq 1 ] \
     && [ "$(wc -l < "$m6c_scratch"/c.err)" -eq 1 ] \
     && [ "$(wc -l < "$m6c_scratch"/d.err)" -eq 1 ] \
     && rg -q '^\S*/arg-exhausted\.tot:2:8: hole: expected Type 0$' "$m6c_scratch"/a.err \
+    && [ "$(awk 'NR==2' "$m6c_scratch"/a.err)" = '2 more hole(s) at 2:35, 2:37' ] \
     && rg -q '^\S*/m6c-hole-n-infer\.tot:1:6: hole: no expected type at this position$' "$m6c_scratch"/b.err \
     && rg -q '^\S*/m6c-hole-n-proof\.tot:1:38: hole: expected Type 0$' "$m6c_scratch"/c.err \
     && rg -q '^\S*/m6c-hole-n-class\.tot:1:51: hole: expected Type 0$' "$m6c_scratch"/d.err; } \
@@ -3305,6 +3318,14 @@ m7a_ambcode=$?
 # reason.  `infer-undetermined.tot` holds every later argument as a
 # hole.  Each stderr line is pinned whole, so a new column or a new
 # message is a FAIL.  MUTATION: relax the fence; leg (b) moves.
+#
+# M7 Stage C (pin 7, C-C1): 2026-09-04.  The `infer-undetermined.tot`
+# sub-leg moves to the pin 7 shape.  That file holds two term-position
+# holes in one item (1:14 and 1:16), so nc.err now has two lines.  Line
+# 1 keeps the pinned line, with no change.  Line 2 is pinned byte for
+# byte to the tail the binary prints.  The na.err and nb.err sub-legs
+# keep one line each.  The leg name, the marker, the exit codes and the
+# empty-stdout checks do not move.
 [ -f "$ROOT"/dev/m7a/infer-fenced.tot ] && [ -f "$ROOT"/dev/m7a/infer-fenced-explicit.tot ] \
   && [ -f "$ROOT"/dev/m7a/infer-undetermined.tot ] \
   || { echo "FAIL-M7A-ARGHOLE-REFUSES-NONINFERABLE (MISSING-FIXTURE under dev/m7a)"; exit 1; }
@@ -3324,7 +3345,8 @@ m7a_ndcode=$?
     && [ -z "$m7a_na" ] && [ -z "$m7a_nb" ] && [ -z "$m7a_nc" ] \
     && [ "$(wc -l < "$m7a_scratch"/na.err)" -eq 1 ] \
     && [ "$(wc -l < "$m7a_scratch"/nb.err)" -eq 1 ] \
-    && [ "$(wc -l < "$m7a_scratch"/nc.err)" -eq 1 ] \
+    && [ "$(wc -l < "$m7a_scratch"/nc.err)" -eq 2 ] \
+    && [ "$(awk 'NR==2' "$m7a_scratch"/nc.err)" = '1 more hole(s) at 1:16' ] \
     && rg -q '^\S*/m6c-hole-n-infer\.tot:1:6: hole: no expected type at this position$' \
        "$m7a_scratch"/na.err \
     && rg -q '^\S*/infer-fenced\.tot:1:13: hole: no expected type at this position$' \
@@ -3572,13 +3594,96 @@ m7b_p2=$("$watchdog" "$FAST" "$m5d_bin" check \
   "$ROOT"/test/fixtures/m7/m7b-liftio-slot.tot 2>&1); m7b_c5=$?
 m7b_n1=$("$watchdog" "$FAST" "$m5d_bin" check \
   "$ROOT"/test/fixtures/m7/m7b-arg-slot-undetermined.tot 2>&1); m7b_c6=$?
-m7b_wn="$ROOT/test/fixtures/m7/m7b-arg-slot-undetermined.tot:7:8: hole: expected Type 0"
+# M7 Stage C (pin 7, C-C1): 2026-09-04.  The negative moves to the pin
+# 7 shape.  m7b-arg-slot-undetermined.tot holds three term-position
+# holes in one item (7:8, 7:35, 7:37), so the binary prints two stderr
+# lines.  The whole-output compare keeps line 1 unchanged and pins line
+# 2 byte for byte to the tail the binary prints.  The two positives,
+# the leg name, the marker and the exit codes do not move.
+m7b_wn="$ROOT/test/fixtures/m7/m7b-arg-slot-undetermined.tot:7:8: hole: expected Type 0
+2 more hole(s) at 7:35, 7:37"
 { [ "$m7b_c4" -eq 0 ] && [ "$m7b_p1" = 'def main : (IO Verdict)' ] \
   && [ "$m7b_c5" -eq 0 ] && [ "$m7b_p2" = 'def main : (IO Verdict)' ] \
   && [ "$m7b_c6" -eq 1 ] && [ "$m7b_n1" = "$m7b_wn" ]; } \
   && echo PASS-M7B-LIFTIO-SLOT-CLOSES \
   || { printf '%s\n%s\n%s\n' "$m7b_p1" "$m7b_p2" "$m7b_n1"; \
        echo "FAIL-M7B-LIFTIO-SLOT-CLOSES (c=$m7b_c4/$m7b_c5/$m7b_c6)"; exit 1; }
+
+# ---------------------------------------------------------------------
+# M7 Stage C: multi-hole tail reporting (verdict pins 7 and 8).  Two
+# markers.  All three fixtures live under dev/fixtures/, OUTSIDE the
+# transcript glob (dev/gen-m5e-transcript.sh:13) and outside the
+# anchor corpus (dev/hole-anchors.py:86-87), because pin 4 holds the
+# reseal for Stage D and pin 10 fixes the ANCHORS literal there.
+# ---------------------------------------------------------------------
+m7c_scratch=$(mktemp -d "${TMPDIR:-/tmp}/tot-gate-m7c.XXXXXX")
+
+# Gate C9 (i), PASS-M7C-MULTI-HOLE-TAIL (pins 7 and 8).  Five legs.
+# (a) check: exit 1, stdout EMPTY, stderr EXACTLY two lines, the M6
+# line first and the pin-7 tail second.  (b) the same tail on the run
+# path and under --serror-exit 0, so the mapping moves the code and
+# never the report.  (c) the tail names NO position of the green
+# definition above it.  (d) the backtrack fixture: one position, once.
+# (e) pin 8: the two constructor counts, derived from the type blocks,
+# not from a line number.
+m7c_out=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/dev/fixtures/m7c-multi-hole.tot 2> "$m7c_scratch"/multi.err); m7c_c1=$?
+m7c_twin=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/dev/fixtures/m7c-multi-hole-explicit.tot 2> "$m7c_scratch"/twin.err); m7c_c2=$?
+m7c_run=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe run \
+  "$ROOT"/dev/fixtures/m7c-multi-hole.tot 2> "$m7c_scratch"/run.err); m7c_c3=$?
+m7c_se0=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check --serror-exit 0 \
+  "$ROOT"/dev/fixtures/m7c-multi-hole.tot 2> "$m7c_scratch"/se0.err); m7c_c4=$?
+m7c_bck=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/dev/fixtures/m7c-backtrack.tot 2> "$m7c_scratch"/back.err); m7c_c5=$?
+m7c_sctors=$(awk '/^type t =/,/^let to_string/' "$ROOT"/surface/serror.ml | rg -c '^  \| [A-Z]')
+m7c_tctors=$(awk '/^type t =/,/^\(\*\*/' "$ROOT"/lib/term.ml | rg -c '^  \| [A-Z]')
+{ [ "$m7c_c1" -eq 1 ] && [ "$m7c_c2" -eq 0 ] && [ "$m7c_c3" -eq 1 ] && [ "$m7c_c4" -eq 0 ] \
+    && [ "$m7c_c5" -eq 1 ] \
+    && [ -z "$m7c_out" ] && [ -z "$m7c_run" ] && [ -z "$m7c_se0" ] \
+    && [ "$(wc -l < "$m7c_scratch"/multi.err | tr -d ' ')" -eq 2 ] \
+    && [ "$(wc -l < "$m7c_scratch"/run.err | tr -d ' ')" -eq 2 ] \
+    && [ "$(wc -l < "$m7c_scratch"/se0.err | tr -d ' ')" -eq 2 ] \
+    && [ "$(wc -l < "$m7c_scratch"/back.err | tr -d ' ')" -eq 2 ] \
+    && [ "$(wc -l < "$m7c_scratch"/twin.err | tr -d ' ')" -eq 0 ] \
+    && rg -q '^\S*/m7c-multi-hole\.tot:7:14: hole: no expected type at this position$' \
+         "$m7c_scratch"/multi.err \
+    && [ "$(awk 'NR==2' "$m7c_scratch"/multi.err)" = "2 more hole(s) at 7:24, 7:38" ] \
+    && [ "$(awk 'NR==2' "$m7c_scratch"/run.err)" = "2 more hole(s) at 7:24, 7:38" ] \
+    && [ "$(awk 'NR==2' "$m7c_scratch"/se0.err)" = "2 more hole(s) at 7:24, 7:38" ] \
+    && rg -q '^\S*/m7c-backtrack\.tot:5:14: hole: no expected type at this position$' \
+         "$m7c_scratch"/back.err \
+    && [ "$(awk 'NR==2' "$m7c_scratch"/back.err)" = "1 more hole(s) at 5:31" ] \
+    && { rg -q '6:35|6:49' "$m7c_scratch"/multi.err; [ $? -eq 1 ]; } \
+    && [ "$m7c_sctors" -eq 10 ] && [ "$m7c_tctors" -eq 11 ]; } \
+  && echo PASS-M7C-MULTI-HOLE-TAIL \
+  || {
+    cat "$m7c_scratch"/multi.err "$m7c_scratch"/back.err
+    echo "FAIL-M7C-MULTI-HOLE-TAIL (exit=$m7c_c1/$m7c_c2/$m7c_c3/$m7c_c4/$m7c_c5 ctors=$m7c_sctors/$m7c_tctors)"
+    exit 1
+  }
+
+# Gate C9 (ii), PASS-M7C-SINGLE-HOLE-UNCHANGED (pin 7).  A one-hole
+# item must keep the M6 one-line report, byte for byte, so the stage
+# cannot buy its tail by printing a tail everywhere.  Both fixtures
+# are pin-stable: infer position (pin 2) and the proof fence.
+m7c_i=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/test/fixtures/m6c-hole-n-infer.tot 2> "$m7c_scratch"/i.err); m7c_c6=$?
+m7c_p=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/test/fixtures/m6c-hole-n-proof.tot 2> "$m7c_scratch"/p.err); m7c_c7=$?
+{ [ "$m7c_c6" -eq 1 ] && [ "$m7c_c7" -eq 1 ] \
+    && [ "$(wc -l < "$m7c_scratch"/i.err | tr -d ' ')" -eq 1 ] \
+    && [ "$(wc -l < "$m7c_scratch"/p.err | tr -d ' ')" -eq 1 ] \
+    && rg -q '^\S*/m6c-hole-n-infer\.tot:1:6: hole: no expected type at this position$' \
+         "$m7c_scratch"/i.err \
+    && rg -q '^\S*/m6c-hole-n-proof\.tot:1:38: hole: expected Type 0$' "$m7c_scratch"/p.err \
+    && { rg -q 'more hole' "$m7c_scratch"/i.err "$m7c_scratch"/p.err; [ $? -eq 1 ]; }; } \
+  && echo PASS-M7C-SINGLE-HOLE-UNCHANGED \
+  || {
+    cat "$m7c_scratch"/i.err "$m7c_scratch"/p.err
+    echo "FAIL-M7C-SINGLE-HOLE-UNCHANGED (exit=$m7c_c6/$m7c_c7)"
+    exit 1
+  }
 
 # ctxcat id 5: an instance with TWO dictionary binders on the SAME type
 # variable. Round 1's fuel bounded the depth of one resolution PATH,

@@ -1,0 +1,7 @@
+-- M7 Stage C (pin 7): the reported hole is the def's own TYPE, so no
+-- later argument of the spine can determine it and no Stage A or
+-- Stage B rule moves it.  The two later holes of the SAME definition
+-- are the tail.  The two holes on line 6 belong to another
+-- definition, which checks green, and must never appear in the tail.
+def flagged : List String := cons _ "grep" (nil _)
+def h : List _ := cons _ "flag" (nil _)

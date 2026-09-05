@@ -3175,6 +3175,12 @@ m6e_oo=$("$watchdog" "$FAST" "$m5d_bin" run "$ROOT"/examples/guard-rewrap.tot \
 # FLOOR: m6e_pz now COUNTS the holed prelude sites and must be more
 # than 0.  The exact prelude number is pinned once, in
 # PASS-M7D-PRELUDE-HOLES, so no literal is pinned twice.
+# M8 Stage B (2026-09-05): the literal walks 68 to 69.  Stage A's
+# local-aware instantiation resolves the local-headed spine `f z`, so
+# the cong0 motive at stdlib/prelude.tot:94 takes the `_` spelling and
+# the corpus gains one holed anchor.  The M7 refusal of that spelling,
+# recorded at the M7D leg below, is overturned;  the walk is in
+# dev/M8-BUILD-LOG.md.
 m6e_g1=$("$watchdog" "$FAST" "$m5d_bin" check "$ROOT"/examples/guard.tot 2>&1); m6e_c6=$?
 m6e_g2=$("$watchdog" "$FAST" "$m5d_bin" check "$ROOT"/examples/guard-rewrap.tot 2>&1); m6e_c7=$?
 m6e_g3=$("$watchdog" "$FAST" "$m5d_bin" check "$ROOT"/examples/guard-classes.tot 2>&1); m6e_c8=$?
@@ -3184,7 +3190,7 @@ m6e_env=$("$watchdog" "$FAST" "$m5d_bin" run "$ROOT"/examples/guard.tot \
   < "$ROOT"/test/fixtures/deny.json); m6e_c9=$?
 m6e_wantenv='{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"house rule: use rg instead of grep and sd instead of sed (command: grep foo /tmp/x)"}}'
 { [ "$m6e_c6" -eq 0 ] && [ "$m6e_c7" -eq 0 ] && [ "$m6e_c8" -eq 0 ] \
-  && [ "$m6e_holes" -eq 68 ] && [ "$m6e_pz" -gt 0 ] \
+  && [ "$m6e_holes" -eq 69 ] && [ "$m6e_pz" -gt 0 ] \
   && [ "$m6e_c9" -eq 2 ] && [ "$m6e_env" = "$m6e_wantenv" ]; } \
   && echo PASS-M6E-GUARD-HOLES \
   || { printf '%s\n%s\n%s\n%s\n' "$m6e_g1" "$m6e_g2" "$m6e_g3" "$m6e_env"; \
@@ -3645,6 +3651,10 @@ m7a_c3=$?
 # 218 and 219, and the corpus holed literal walks 26 to 68.  The leg
 # keeps its name, its marker and all five assertions;  the slot count
 # stays 4 and the holed count stays an exact number.
+# M8 Stage B (2026-09-05): the corpus holed literal walks 68 to 69.
+# This leg reads the same corpus recipe as PASS-M6E-GUARD-HOLES, so
+# the re-spell of stdlib/prelude.tot:94 moves both by one.  The four
+# guard slots, the slot count and the deny envelope do not move.
 m7b_g1=$("$watchdog" "$FAST" "$m5d_bin" check "$ROOT"/examples/guard.tot 2>&1); m7b_c1=$?
 m7b_g2=$("$watchdog" "$FAST" "$m5d_bin" check "$ROOT"/examples/guard-rewrap.tot 2>&1); m7b_c2=$?
 m7b_slots=$(rg -c 'SITE examples/guard(-rewrap)?\.tot:(83|84|218|219) head=bindIO arg=0 anchor=\[_\] pos=check bucket=A' "$m5d_scratch/hole-sites.txt")
@@ -3653,7 +3663,7 @@ m7b_env=$("$watchdog" "$FAST" "$m5d_bin" run "$ROOT"/examples/guard.tot \
   < "$fx"/deny.json); m7b_c3=$?
 m7b_wantenv='{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"house rule: use rg instead of grep and sd instead of sed (command: grep foo /tmp/x)"}}'
 { [ "$m7b_c1" -eq 0 ] && [ "$m7b_c2" -eq 0 ] \
-  && [ "$m7b_slots" -eq 4 ] && [ "$m7b_holed" -eq 68 ] \
+  && [ "$m7b_slots" -eq 4 ] && [ "$m7b_holed" -eq 69 ] \
   && [ "$m7b_c3" -eq 2 ] && [ "$m7b_env" = "$m7b_wantenv" ]; } \
   && echo PASS-M7B-GUARD-ARG-HOLES \
   || { printf '%s\n%s\n%s\n' "$m7b_g1" "$m7b_g2" "$m7b_env"; \
@@ -3797,19 +3807,23 @@ m7d_pre=$(rg -c "$m7d_hre" "$ROOT"/stdlib/prelude.tot || echo 0)
        echo "FAIL-M7D-HELPERS-SHARED (c=$m7d_c1/$m7d_c2 dup=$m7d_dup pre=$m7d_pre)"; exit 1; }
 
 # PASS-M7D-PRELUDE-HOLES (pin 11, and pin 5's prelude half).  Three
-# assertions: the prelude carries exactly 46 holed anchors (44
+# assertions: the prelude carries exactly 47 holed anchors (45
 # re-spelled plus the two the migrated splitEach body brings), the five
 # argument-driven prelude sites are among them, and a prelude consumer
-# still checks at exit 0.  46 = 2 + 39 + 5.  The plan predicted 47 from
-# 45 re-spells;  stdlib/prelude.tot:94 refuses the `_` spelling and
-# keeps its explicit one, which is conflict C-D3 and the orchestrator
-# ruling of 2026-09-04.  The two migrated sites are
-# bucket=E, so pin 10's "the A and N buckets do not move" holds and the
-# A count below stays 5.  The walk is in dev/M7-BUILD-LOG.md.
+# still checks at exit 0.  47 = 2 + 40 + 5.  The M7 plan predicted 47
+# from 45 re-spells and the M7 tree measured 46, because
+# stdlib/prelude.tot:94 refused the `_` spelling then, which is
+# conflict C-D3 and the orchestrator ruling of 2026-09-04.  M8 Stage A
+# gave the elaborator local-aware instantiation, so that site takes the
+# hole and the literal walks 46 to 47 (M8 Stage B, 2026-09-05).  The
+# re-spelled site is bucket=E, like the two migrated sites, so pin 10's
+# "the A and N buckets do not move" holds and the A count below stays
+# 5.  The M7 walk is in dev/M7-BUILD-LOG.md and the M8 walk is in
+# dev/M8-BUILD-LOG.md.
 m7d_ph=$(rg -c 'SITE stdlib/prelude\.tot:.*anchor=\[_\]' "$m5d_scratch/hole-sites.txt" || echo 0)
 m7d_pa=$(rg -c 'SITE stdlib/prelude\.tot:.*anchor=\[_\].*bucket=A' "$m5d_scratch/hole-sites.txt" || echo 0)
 m7d_cls=$("$watchdog" "$FAST" "$m5d_bin" check "$ROOT"/examples/guard-classes.tot 2>&1); m7d_c3=$?
-{ [ "$m7d_ph" -eq 46 ] && [ "$m7d_pa" -eq 5 ] && [ "$m7d_c3" -eq 0 ]; } \
+{ [ "$m7d_ph" -eq 47 ] && [ "$m7d_pa" -eq 5 ] && [ "$m7d_c3" -eq 0 ]; } \
   && echo PASS-M7D-PRELUDE-HOLES \
   || { printf '%s\n' "$m7d_cls"; \
        echo "FAIL-M7D-PRELUDE-HOLES (holed=$m7d_ph argdriven=$m7d_pa check=$m7d_c3)"; exit 1; }
@@ -4183,6 +4197,23 @@ m8a_libcount=$(fd -e ml . "$ROOT"/lib | wc -l | tr -d ' ')
     echo "FAIL-M8A-KERNEL-UNCHANGED (lib_md5=$m8a_lib files=$m8a_libcount)"
     exit 1
   }
+
+# PASS-M8B-PRELUDE-94 (R-Q7).  stdlib/prelude.tot:94's cong0 motive
+# takes the `_` spelling now that Stage A's local-aware instantiation
+# resolves the local-headed spine `f z`.  One SITE line in the
+# classifier's log carries anchor=[_] at that exact source line.
+# Review round (2026-09-05): the recipe pins the whole record, not the
+# file and the line only.  The plan's fenced block
+# (dev/M8-PLAN.md:1323-1332) matches ':94.*anchor=\[_\]', which reads 1
+# on a tree that carries the hole in ANY of the three slots of line 94,
+# so it does not witness the motive.  The record shape below is the
+# shape PASS-M7B-GUARD-ARG-HOLES already uses (dev/gates.sh:3660).
+# Conflict note C-D13 holds the walk;  proof MB-4 is in section 3d of
+# dev/M8-BUILD-LOG.md.
+m8b_p94=$(rg -c 'SITE stdlib/prelude\.tot:94 head=Eq arg=0 anchor=\[_\] pos=check bucket=E' "$m5d_scratch/hole-sites.txt" || echo 0)
+{ [ "$m8b_p94" -eq 1 ]; } \
+  && echo PASS-M8B-PRELUDE-94 \
+  || { echo "FAIL-M8B-PRELUDE-94 (p94=$m8b_p94)"; exit 1; }
 
 # ctxcat id 5: an instance with TWO dictionary binders on the SAME type
 # variable. Round 1's fuel bounded the depth of one resolution PATH,

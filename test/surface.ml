@@ -2325,6 +2325,44 @@ let cases (bst : Tot_surface.Run.state) : (string * (unit -> (unit, string) resu
         ~want_suffix:"hole: no expected type at this position" );
     ( "M8A-4: an OPEN captured type reaches the kernel and Check.define accepts it",
       m7e_expect_source_checks bst ~label:"M8A-4" ~src:m8a_open_capture );
+    (* M8 Stage B (plan dev/M8-PLAN.md:1388-1422, cases M8B-1 and
+       M8B-2).  Neither duplicates the gate leg PASS-M8B-PRELUDE-94:
+       the leg counts one SITE line in the classifier's log, while
+       these two drive [Tot_surface.Run.script ~st:bst ~exec:false]
+       over source strings.  Case 1 shows the re-spelled cong0 motive
+       still elaborates for a consumer;  case 2 holds the one-hole
+       refusal in place, so a re-spell that made every hole resolve
+       would redden it.  M8B-1's source is the plan source with the
+       two bare numerals written as [succ]/[zero] applications: the
+       plan spelling elaborates a numeral as Int while [add] is
+       Nat -> Nat -> Nat, which the tree refuses with "type mismatch:
+       expected Nat, found Int".  The substitution is a checklist-field
+       substitution under plan section 3.2 and it carries the same
+       claim;  the walk is in dev/M8-BUILD-LOG.md.  Review round
+       (2026-09-05): neither case WITNESSES the Stage B edit.  Both
+       stay green with the pre-stage prelude in place, measured through
+       the TOT_PRELUDE override (surface/bootstrap.ml:245-247), because
+       an ill-typed motive stops the shared bootstrap and no case runs
+       at all.  M8B-1 is a REGRESSION GUARD for the consumer of cong0;
+       the marker PASS-M8B-PRELUDE-94 is the only witness for the
+       spelling of line 94.  Case 2 now pins the POSITION as well as
+       the text, the shape M7A-11 and M7A-12 carry
+       (test/surface.ml:2210-2215), because the text alone does not
+       name the applied-lambda site its title names. *)
+    ( "M8B-1: cong0 still elaborates and evaluates under the re-spelled motive",
+      m7e_expect_source_checks bst ~label:"m8b-cong0-elaborates"
+        ~src:
+          {tot|
+def transported : Eq Nat (add (succ zero) (succ (succ zero))) (add (succ (succ zero)) (succ zero)) :=
+  cong0 Nat Nat (add (succ zero) (succ (succ zero))) (add (succ (succ zero)) (succ zero)) (fun x => x)
+    (refl Nat (succ (succ (succ zero))))
+|tot} );
+    ( "M8B-2: the one-hole message for a genuinely undetermined site is unchanged",
+      m6c_expect_err_line bst
+        {tot|
+def stuck : Nat := (fun x => x) _
+|tot}
+        "2:33: hole: no expected type at this position" );
   ]
 
 (** The ordinary in-process suite: bootstrap once, run every [cases]

@@ -91,7 +91,7 @@ reducible def trans0 : (0 A : Type 0) -> (0 a : A) -> (0 b : A) -> (0 c : A) ->
 
 reducible def cong0 : (0 A : Type 0) -> (0 B : Type 0) -> (0 a : A) -> (0 b : A) ->
     (0 f : A -> B) -> (0 h : Eq A a b) -> Eq B (f a) (f b) :=
-  fun A B a b f h => subst0 A a b (fun z => Eq B (f a) (f z)) h (refl B (f a))
+  fun A B a b f h => subst0 A a b (fun z => Eq _ (f a) (f z)) h (refl B (f a))
 
 reducible def pred : Nat -> Nat :=
   fun n => match n with | zero => zero | succ p => p end

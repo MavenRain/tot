@@ -1,0 +1,19 @@
+data Wf (0 A : Type 0) (0 R : A -> A -> Type 0) : A -> Type 0 :=
+  | wfin : (x : A) -> ((y : A) -> R y x -> Wf A R y) -> Wf A R x
+def rec wfRec : (0 A : Type 0) -> (0 R : A -> A -> Type 0) ->
+    (0 P : A -> Type 0) ->
+    ((x : A) -> ((y : A) -> R y x -> P y) -> P x) ->
+    (x : A) -> Wf A R x -> P x :=
+  fun A R P f x a =>
+    match a as aa in Wf z return P z with
+    | wfin x0 h => f x0 (fun y r => wfRec A R P f y (h y r))
+    end
+-- M7 Stage E fixture (verdict pin 14, graft G2): the SAME
+-- accessibility shape under different names.  Nothing here is called
+-- Acc or acc.  M7 builds no rule, so the shipped structural guard
+-- refuses this file exactly as it refuses the Acc-named spelling, and
+-- the gate pins that message.  The control's job is to stop M8 from
+-- writing the recognizer name-dependently by accident: an M8 rule that
+-- admits the Acc-named recursor and still refuses this file has read
+-- the name, not the shape.  Gate PASS-M7E-WF-PROVENANCE-ORACLE leg (b)
+-- pins it; wfRec must stay at line 3 column 1.

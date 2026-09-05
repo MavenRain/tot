@@ -10296,6 +10296,21 @@ test/fixtures/m6h-hole-n-fence-proof.tot:1:42: hole: expected Nat
 #out
 def probeSplit : (w _ : String) -> (w _ : (List String)) -> (List String)
 #err
+### test/fixtures/m7e-launder.tot
+#exit 1
+#out
+#err
+test/fixtures/m7e-launder.tot:3:1: invalid constructor mkt: negative or non-uniform occurrence of Tl
+### test/fixtures/m7e-wf-provenance.tot
+#exit 1
+#out
+#err
+test/fixtures/m7e-wf-provenance.tot:5:1: recursive definition accCross failed the structural termination guard
+### test/fixtures/m7e-wf-renamed.tot
+#exit 1
+#out
+#err
+test/fixtures/m7e-wf-renamed.tot:3:1: recursive definition wfRec failed the structural termination guard
 ### test/fixtures/nested-neg.tot
 #exit 1
 #out

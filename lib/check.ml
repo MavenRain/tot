@@ -1775,11 +1775,18 @@ let define_instance ?(budget : Budget.t = Budget.unlimited) (globals : Global.t)
   (* M4 fixes round 1 (ctxcat id 9): install the very artifact the shape
      validator just accepted, rather than a second elaboration of the
      same source type that agrees with it only by determinism. *)
-  (* M6 Stage A (verdict pin 8), the dead-spot record: an instance body
-     passes [~rule] but never [~rec_], so [define]'s guard cannot run on
-     it and the threading here is inert plumbing, not a live gate.  M7
-     decides whether instances gain a real [rec_] story or the
-     threading simplifies (verdict, Known debts). *)
+  (* M7 Stage E (verdict pin 17): instance bodies are NEVER guarded.
+     DECIDED.  The surface has no channel to ask for one: `instance rec`
+     is a parse error ("expected ': TYPE := TERM' after 'instance'"), so
+     [~rec_] can only ever take [define]'s [false] default
+     (lib/check.ml:1473) and the guard cannot run on an instance body.
+     The threading stays as written.  [~rule] is passed EXPLICITLY, and
+     [define]'s [~rule] stays REQUIRED (lib/check.ml:1474), so an M8
+     admission rule still arrives here as a compiler error.  Two panel
+     proposals spelled the opposite (drop [~rule] from this call, or
+     drop it from [define_instance]);  both need a DEFAULT on [define]'s
+     [~rule], which destroys the enumeration channel the doc comment at
+     lib/check.ml:1467-1472 exists to protect, so neither is taken. *)
   define ~reducible:true ~stamped_ty:ty' ~budget ~rule:Totality.Structural globals ~name
     ~ty ~def
 

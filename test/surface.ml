@@ -693,6 +693,39 @@ let m5a_expect_fixture_checks (bst : Tot_surface.Run.state) (fixture : string) (
        ~error:(fun e ->
          Error (Printf.sprintf "%s: expected exit 0, got %s" fixture (Tot_surface.Serror.to_string e)))
 
+(* M7 Stage E (plan E8): check one source string in process and require
+   a rejection whose message ENDS with [want_suffix].  Same oracle rule
+   as [m5a_expect_fixture_check_error]: the message prints on a pass, so
+   the rejection is shown to fire for the intended reason.  The source
+   arrives as TEXT, not as a fixture path, because the two instance
+   cases must not add a file to the transcript glob. *)
+let m7e_expect_source_error (bst : Tot_surface.Run.state) ~(label : string) ~(src : string)
+    ~(want_suffix : string) () : (unit, string) result =
+  Tot_surface.Run.script ~st:bst ~exec:false src
+  |> Result.fold
+       ~ok:(fun (lines, _exit_code) ->
+         Error
+           (Printf.sprintf "%s: expected a rejection, but the source checked: [%s]" label
+              (show_lines lines)))
+       ~error:(fun e ->
+         let msg = Tot_surface.Serror.to_string e in
+         Printf.printf "  expected error (%s): %s\n" label msg;
+         match () with
+         | () when String.ends_with ~suffix:want_suffix msg -> Ok ()
+         | () ->
+             Error (Printf.sprintf "%s: got %S, want a message ending %S" label msg want_suffix))
+
+(* M7 Stage E (plan E8): check one source string in process and require
+   it to CHECK clean. *)
+let m7e_expect_source_checks (bst : Tot_surface.Run.state) ~(label : string) ~(src : string) () :
+    (unit, string) result =
+  Tot_surface.Run.script ~st:bst ~exec:false src
+  |> Result.fold
+       ~ok:(fun (_lines, _exit_code) -> Ok ())
+       ~error:(fun e ->
+         Error
+           (Printf.sprintf "%s: expected exit 0, got %s" label (Tot_surface.Serror.to_string e)))
+
 (* M5 Stage A (A8 cases 14/15): feed THIS process's stdin from a
    scratch file for the duration of [k].  [Effect.dispatch]'s
    [readStdin] arm reads the real fd 0, so the strict-json
@@ -989,7 +1022,9 @@ let m7a_exhausted_src =
 
 (* M7 Stage B (plan B4.4): the guard let-star A slots, the three
    shapes the milestone separates.  [m7b_both_src] is
-   examples/guard.tot:133-134 after the re-spell.  [m7b_lift_src] is
+   examples/guard.tot:133-134 after the re-spell (M7 Stage E: the Stage
+   D helper move walked those two slots to examples/guard.tot:83-84, and
+   the source strings below are unchanged).  [m7b_lift_src] is
    the slot pin 6 called explicit-forever, alone;  the Stage A infer
    settle reaches it (Ratification amendment 2026-09-04), so it
    resolves.  [m7b_none_src] is the shape the rule must NOT fill. *)
@@ -2207,6 +2242,35 @@ let cases (bst : Tot_surface.Run.state) : (string * (unit -> (unit, string) resu
       case_cache_key_folds_the_prelude_source );
     ( "M7D-4 guards_define_no_shared_helper: neither guard example defines a moved helper",
       case_guards_define_no_shared_helper );
+    (* M7 Stage E (plan E8, cases M7E-1 to M7E-5).  Three oracles that
+       must stay RED until an M8 rule is designed, and two that pin the
+       instance decision of verdict pin 17. *)
+    ( "M7E-1: the accessibility descent from a NON-seed formal stays rejected (pin 14)",
+      m5a_expect_fixture_check_error bst "m7e-wf-provenance.tot"
+        ~want_suffix:"recursive definition accCross failed the structural termination guard" );
+    ( "M7E-2: the renamed accessibility shape is refused exactly like the Acc-named one (G2)",
+      m5a_expect_fixture_check_error bst "m7e-wf-renamed.tot"
+        ~want_suffix:"recursive definition wfRec failed the structural termination guard" );
+    ( "M7E-3: the two-layer polarity launder and its one-layer control both stay rejected \
+       (pin 15)",
+      fun () ->
+        let* () =
+          m5a_expect_fixture_check_error bst "m7e-launder.tot"
+            ~want_suffix:"invalid constructor mkt: negative or non-uniform occurrence of Tl" ()
+        in
+        m5a_expect_fixture_check_error bst "nested-neg.tot"
+          ~want_suffix:"invalid constructor mkt3: negative or non-uniform occurrence of T3" () );
+    ( "M7E-4: the surface has no channel to ask for a guarded instance body (pin 17)",
+      m7e_expect_source_error bst ~label:"instance rec"
+        ~src:
+          "class Sized (0 A : Type 0) := { szf : A -> Nat }\n\
+           instance rec : Sized Nat := mkSized Nat (fun n => n)"
+        ~want_suffix:"parse error: expected ': TYPE := TERM' after 'instance', found 'rec'" );
+    ( "M7E-5: an ordinary instance still checks clean under the Structural rule (pin 17)",
+      m7e_expect_source_checks bst ~label:"instance"
+        ~src:
+          "class Sized (0 A : Type 0) := { szf : A -> Nat }\n\
+           instance : Sized Nat := mkSized Nat (fun n => n)" );
   ]
 
 (** The ordinary in-process suite: bootstrap once, run every [cases]

@@ -93,5 +93,5 @@ before execution: a runtime type argument prints as `<erased>`.
 
 ## License
 
-MIT (LICENSE-MIT).  Dual MIT OR Apache-2.0 intended;  the Apache text is not
-yet vendored.
+Dual MIT OR Apache-2.0.  Both texts ship with the repository: MIT in
+LICENSE-MIT and Apache-2.0 in LICENSE-APACHE.  You choose either licence.

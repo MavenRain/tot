@@ -1,0 +1,21 @@
+data Acc (0 A : Type 0) (0 R : A -> A -> Type 0) : A -> Type 0 :=
+  | acc : (x : A) -> ((y : A) -> R y x -> Acc A R y) -> Acc A R x
+data Box (0 A : Type 0) (0 R : A -> A -> Type 0) (0 x : A) : Type 0 :=
+  | mkBox : Acc A R x -> Box A R x
+def rec accCross : (0 A : Type 0) -> (0 R : A -> A -> Type 0) -> (0 x : A) ->
+    Acc A R x -> Box A R x -> Nat :=
+  fun A R x a t => match t with | mkBox a2 => accCross A R x a2 t end
+-- M7 Stage E fixture (verdict pin 14, graft G3): an accessibility
+-- descent whose PROVENANCE is the wrong formal.  Acc has the shape a
+-- recognizer fires on: two erased parameters, a relation formal, one
+-- index, one constructor.  The recursive call feeds the Acc slot with
+-- a2, which is a FIELD OF t, and passes t itself unchanged.  So under
+-- the a candidacy the Acc argument is smaller by way of t, not by way
+-- of a's own seed, and under the t candidacy the t argument does not
+-- descend at all.  bad2.tot, crossformal-t.tot and deep2.tot declare
+-- parameterless, relationless, indexless types, so a recognizer-based
+-- rule never reaches them and they cannot discriminate it; this file
+-- can.  It must stay REJECTED under any M8 rule that carries the
+-- provenance side condition of SPEC section 2's seed-invariant entry.
+-- Gate PASS-M7E-WF-PROVENANCE-ORACLE pins it; accCross must stay at
+-- line 5 column 1.

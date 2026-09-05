@@ -1,0 +1,14 @@
+data U (0 A : Type 0) : Type 0 := | mku : (A -> Nat) -> U A
+data V (0 A : Type 0) : Type 0 := | mkv : U A -> V A
+data Tl : Type 0 := | mkt : V Tl -> Tl
+-- M7 Stage E fixture (verdict pin 15, graft G6): a negative
+-- occurrence LAUNDERED through one intermediate family.  Tl sits in
+-- V's parameter, V's field is U, and U's field is (A -> Nat), so the
+-- occurrence is negative two layers down.  The applied-ness test at
+-- lib/check.ml:1964-1976 is one level deep, so what refuses this file
+-- today is not a polarity analysis, and the message does not say which
+-- layer tripped.  test/fixtures/nested-neg.tot is the ONE-LAYER
+-- control and already ships (M6 Stage A, pin 10).  M8's nesting work
+-- must keep both rejected, or state in SPEC.md, in those words, which
+-- one it admits and why.  Gate PASS-M7E-POSITIVITY-LAUNDER-ORACLE;
+-- mkt must stay at line 3 column 1.

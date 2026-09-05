@@ -2304,7 +2304,18 @@ m5d_bites=$(rg -c '"\$watchdog" "\$BITE_S"' "$ROOT/dev/gates.sh")
 # before (218) and after (224) the edit.  Plan D3.4 predicted a delta
 # of 7 from a seven-call estimate;  the plan's own block bytes carry
 # six calls, and the recipe output is the authority (conflict C-D4).
-{ [ "$m5d_nolit" -eq 1 ] && [ "$m5d_tiers" -eq 224 ] && [ "$m5d_bites" -eq 2 ] \
+# M7 Stage E (2026-09-04) raised it 224 -> 228: the five new legs add
+# four direct FAST calls and delete none (two in
+# PASS-M7E-WF-PROVENANCE-ORACLE, two in
+# PASS-M7E-POSITIVITY-LAUNDER-ORACLE;  the other three legs run no
+# binary).  Measured with the recipe above before (224) and after (228)
+# the edit.  Conflict note C-E1: four numbers were on the table before
+# the measurement, the plan's predicted 204, a regex count over the
+# plan's block bytes of 228, the Stage E inventory's 229 and the
+# entry-state 224, and NONE of them was the authority.  The recipe
+# printed 228 and no watchdog call was added or removed to reach any
+# predicted number.
+{ [ "$m5d_nolit" -eq 1 ] && [ "$m5d_tiers" -eq 228 ] && [ "$m5d_bites" -eq 2 ] \
   && [ -s "$ROOT/dev/gates.sh" ]; } \
   && echo PASS-M5D-TIERS \
   || { echo "FAIL-M5D-TIERS (nolit=$m5d_nolit tiers=$m5d_tiers bites=$m5d_bites)"; exit 1; }
@@ -2551,7 +2562,7 @@ wantn='nested-neg.tot:2:1: invalid constructor mkt3: negative or non-uniform occ
 
 # ---- M6 Stage B (plan B8): the blocking Unit strict-json posture
 # (verdict pins 5-6, ruling R3).  Four legs.  None is gate_timed, so
-# the PASS-M5D-MEASURE-LOG literal (count 18, pinned name set) does
+# the PASS-M5D-MEASURE-LOG literal (count 22, pinned name set) does
 # not move.  The IO Unit fixture is GENERATED into the Gate D scratch
 # dir on purpose (the m5a-envelope.tot precedent): a new
 # test/fixtures/*.tot would enter the gen-m5e-transcript.sh glob and
@@ -3559,8 +3570,14 @@ m7a_b2=$("$watchdog" "$FAST" "$m7a_exe" check "$ROOT"/dev/m7a/infer-fenced.tot 2
 m7a_c2=$?
 m7a_b3=$("$watchdog" "$FAST" "$m7a_exe" check "$ROOT"/dev/m7a/infer-undetermined.tot 2>&1)
 m7a_c3=$?
-{ [ "$m7a_files" -eq 101 ] && [ "$m7a_green" -eq 62 ] \
-    && [ "$m7a_digest" = 9cb630c7ccdc6c30b335b7355dc83a82 ] \
+# M7 Stage E (2026-09-04): files walks 101 to 104 and the digest walks
+# 9cb630c7ccdc6c30b335b7355dc83a82 to 9278f6b7034f2f65b6d789e9e1d74a90,
+# because the three Stage E oracle fixtures join the depth-1 corpus.
+# green STAYS 62: all three fixtures are NEGATIVES and exit 1.  Both
+# numbers come from this leg's own recipe re-run on the edited tree,
+# never from the plan (conflict C-D4, ruling C-E6).
+{ [ "$m7a_files" -eq 104 ] && [ "$m7a_green" -eq 62 ] \
+    && [ "$m7a_digest" = 9278f6b7034f2f65b6d789e9e1d74a90 ] \
     && [ "$m7a_c1" -eq 1 ] && [ "$m7a_c2" -eq 1 ] && [ "$m7a_c3" -eq 1 ] \
     && printf '%s\n' "$m7a_b1" \
        | rg -qx '\S*/m6c-hole-n-infer\.tot:1:6: hole: no expected type at this position' \
@@ -3821,6 +3838,142 @@ m7d_wantsig='def probeSplit : (w _ : String) -> (w _ : (List String)) -> (List S
   && echo PASS-M7D-CACHE-KEY \
   || { printf '%s\n%s\n%s\n' "$m7d_cold" "$m7d_warm" "$m7d_re"; \
        echo "FAIL-M7D-CACHE-KEY (exits=$m7d_c4/$m7d_c5/$m7d_c6 entries=$m7d_n1/$m7d_n2/$m7d_n3 fv=$m7d_fv)"; exit 1; }
+
+# ---------------------------------------------------------------------
+# M7 Stage E (plan 5757-6005).  Five legs: three executable oracles that
+# must stay RED until an M8 rule is designed, one source pin on the
+# instance decision of verdict pin 17, and the licence half of small
+# debt (h).  The block declares NO scratch directory; it uses $ROOT,
+# $watchdog and $FAST only, so the trap at the head of this file does
+# not move.  Every address below was MEASURED on the tree AFTER the
+# Stage E lib/check.ml comment edit, never copied from the plan
+# (orchestrator rulings C-E1 and C-E3).
+
+# PASS-M7E-SPEC-CITATIONS (pins 12, 16, grafts G1, G5, G7).  SPEC
+# sections 5 and 6 are repaired and the five drifted citations are
+# corrected.  The plan's own predicted addresses are themselves stale
+# and are asserted here as ABSENT: guard-rewrap.tot:264-265 for the two
+# let* slots (the tree says :218-219 after the Stage D helper move) and
+# lib/check.ml:2051 for self_rec (the tree says :2066 after the Stage E
+# comment edit).  The two code-site conditions are pin 16's no-diff
+# assertion: Interp.Frozen and the Quantity.Zero arm of
+# Run.compute_guard are untouched by M7, so a stage that "tidies" the
+# emptiness story into code turns this leg red.  Ruling C-E2: the
+# guard-rewrap duplication note the plan wanted cited was DELETED by
+# Stage D with the helper move, so the SPEC sentence states the
+# post-Stage-D fact and this leg pins it by CONTENT ($m7e_dupnote),
+# never by a guard-file line number.  The leg is source-only and runs
+# no binary, like PASS-M5D-MEASURE-LOG above.
+m7e_cit_gr=$(rg -c 'guard-rewrap\.tot:218-219' "$ROOT"/SPEC.md)
+m7e_cit_g=$(rg -c 'guard\.tot:83-84' "$ROOT"/SPEC.md)
+m7e_cit_stale=$(rg -c 'guard-rewrap\.tot:(253-254|264-265)|guard\.tot:133|lib/check\.ml:(1828|2051)|lib/totality\.ml:52' "$ROOT"/SPEC.md; true)
+m7e_sec5=$(rg -c '^- M6 \(done\)' "$ROOT"/SPEC.md)
+m7e_sec6=$(rg -c '^Known debts entering M7' "$ROOT"/SPEC.md)
+m7e_horns=$(rg -c 'not asserted as proved' "$ROOT"/SPEC.md)
+m7e_tot66=$(rg -c 'lib/totality\.ml:66' "$ROOT"/SPEC.md)
+m7e_chk2066=$(rg -c 'lib/check\.ml:2066' "$ROOT"/SPEC.md)
+# The two repaired addresses are checked against the TREE as well as
+# against SPEC.md, so a later edit that moves either site turns this leg
+# red instead of leaving SPEC quietly wrong.
+m7e_tot66_is=$(awk 'NR==66' "$ROOT"/lib/totality.ml | rg -cF -- 'Term.App (_q, f, a) -> mentions name f || mentions name a'; true)
+m7e_chk2066_is=$(awk 'NR==2066' "$ROOT"/lib/check.ml | rg -cF -- 'let self_rec = List.exists'; true)
+m7e_dupnote=$(rg -ci 'copied|duplicat' "$ROOT"/examples/guard.tot "$ROOT"/examples/guard-rewrap.tot; true)
+m7e_frozen=$(rg -cF 'Frozen' "$ROOT"/lib/interp.ml)
+m7e_zeroarm=$(rg -cF -- '() when Eterm.mentions name def_e -> Interp.Frozen' "$ROOT"/surface/run.ml)
+{ [ "$m7e_cit_gr" -ge 1 ] && [ "$m7e_cit_g" -ge 1 ] && [ -z "$m7e_cit_stale" ] \
+  && [ "$m7e_sec5" -eq 1 ] && [ "$m7e_sec6" -eq 1 ] && [ "$m7e_horns" -ge 1 ] \
+  && [ "$m7e_tot66" -ge 1 ] && [ "$m7e_chk2066" -ge 1 ] \
+  && [ "$m7e_tot66_is" = 1 ] && [ "$m7e_chk2066_is" = 1 ] \
+  && [ -z "$m7e_dupnote" ] \
+  && [ "$m7e_frozen" -eq 5 ] && [ "$m7e_zeroarm" -eq 1 ]; } \
+  && echo PASS-M7E-SPEC-CITATIONS \
+  || { echo "FAIL-M7E-SPEC-CITATIONS (gr=$m7e_cit_gr g=$m7e_cit_g stale=$m7e_cit_stale sec5=$m7e_sec5 sec6=$m7e_sec6 horns=$m7e_horns t66=$m7e_tot66/$m7e_tot66_is c2066=$m7e_chk2066/$m7e_chk2066_is dup=$m7e_dupnote frozen=$m7e_frozen zero=$m7e_zeroarm)"; exit 1; }
+
+# PASS-M7E-WF-PROVENANCE-ORACLE (pin 14, grafts G2 and G3).  Two legs,
+# both NEGATIVE today.  Leg (a) is the descent whose provenance is the
+# wrong formal: Acc has the recognizer shape, the Acc slot receives a
+# field of t, and t itself does not descend.  Leg (b) is the SAME
+# accessibility shape under names that contain no Acc.  M7 builds no WF
+# rule, so both are refused by the shipped structural guard.  An M8
+# rule that flips leg (a) has dropped the provenance side condition; an
+# M8 rule that flips leg (b) alone has read the NAME, not the shape.
+# Do not "fix" either by deleting it; re-open the design instead.
+out=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/test/fixtures/m7e-wf-provenance.tot 2>&1)
+code=$?
+wantpv='m7e-wf-provenance.tot:5:1: recursive definition accCross failed the structural termination guard'
+out2=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/test/fixtures/m7e-wf-renamed.tot 2>&1)
+code2=$?
+wantrn='m7e-wf-renamed.tot:3:1: recursive definition wfRec failed the structural termination guard'
+{ [ "$code" -eq 1 ] && printf '%s\n' "$out" | rg -q -- "$wantpv" \
+  && [ "$code2" -eq 1 ] && printf '%s\n' "$out2" | rg -q -- "$wantrn"; } \
+  && echo PASS-M7E-WF-PROVENANCE-ORACLE \
+  || { printf '%s\n' "$out"; printf '%s\n' "$out2"; \
+       echo "FAIL-M7E-WF-PROVENANCE-ORACLE (exit=$code/$code2)"; exit 1; }
+
+# PASS-M7E-POSITIVITY-LAUNDER-ORACLE (pin 15, graft G6).  Leg (a) is
+# the two-layer launder: Tl in V's parameter, V's field a U, U's field
+# a function INTO Nat, so the negative occurrence is two families down.
+# Leg (b) is the one-layer control, which already ships from M6 Stage
+# A.  The applied-ness test at lib/check.ml:1964-1976 is one level
+# deep, so the fence refuses both with the SAME wording and says
+# nothing about the layer.  M8's nesting work must keep both rejected,
+# or state in SPEC.md, in those words, which one it admits and why.
+# The address is the MEASURED one (ruling C-E3 extension): the plan
+# wrote lib/check.ml:1949-1961, which was already stale at HEAD and is
+# 15 lines stale after the Stage E comment edit.
+out=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/test/fixtures/m7e-launder.tot 2>&1)
+code=$?
+wantl='m7e-launder\.tot:3:1: invalid constructor mkt: negative or non-uniform occurrence of Tl'
+out2=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$ROOT"/test/fixtures/nested-neg.tot 2>&1)
+code2=$?
+wantc='nested-neg\.tot:2:1: invalid constructor mkt3: negative or non-uniform occurrence of T3'
+{ [ "$code" -eq 1 ] && printf '%s\n' "$out" | rg -q -- "$wantl" \
+  && [ "$code2" -eq 1 ] && printf '%s\n' "$out2" | rg -q -- "$wantc"; } \
+  && echo PASS-M7E-POSITIVITY-LAUNDER-ORACLE \
+  || { printf '%s\n' "$out"; printf '%s\n' "$out2"; \
+       echo "FAIL-M7E-POSITIVITY-LAUNDER-ORACLE (exit=$code/$code2)"; exit 1; }
+
+# PASS-M7E-INSTANCE-RULE (pin 17, debt (i)).  The decision is recorded
+# and the call it decides is pinned byte for byte.  The two-line want
+# string proves BOTH halves at once: [~rule:Totality.Structural] is
+# passed explicitly, and no [~rec_] is passed, so [define]'s false
+# default (lib/check.ml:1473) applies and the guard cannot run on an
+# instance body.  Dropping [~rule] here, or from [define_instance],
+# needs a DEFAULT on [define]'s required [~rule], which would destroy
+# the enumeration channel of lib/check.ml:1467-1472.  Suite cases M7E-4
+# and M7E-5 carry the behavioural half.  Ruling C-E5: the recipe below
+# is the authority, so the recorded phrase sits WHOLE and lowercase on
+# one line of the comment; the plan fence split and capitalised it,
+# which reads 0 under a per-line count.
+m7e_inst_note=$(rg -c 'instance bodies are NEVER guarded' "$ROOT"/lib/check.ml)
+m7e_inst=$(rg -A 1 -x -F -- "  define ~reducible:true ~stamped_ty:ty' ~budget ~rule:Totality.Structural globals ~name" "$ROOT"/lib/check.ml)
+m7e_inst_want=$'  define ~reducible:true ~stamped_ty:ty\' ~budget ~rule:Totality.Structural globals ~name\n    ~ty ~def'
+m7e_rulereq=$(rg -cF -- '~(rule : Totality.rule)' "$ROOT"/lib/check.ml)
+{ [ "$m7e_inst_note" -eq 1 ] && [ "$m7e_inst" = "$m7e_inst_want" ] \
+  && [ "$m7e_rulereq" -eq 1 ]; } \
+  && echo PASS-M7E-INSTANCE-RULE \
+  || { printf '%s\n' "$m7e_inst"; \
+       echo "FAIL-M7E-INSTANCE-RULE (note=$m7e_inst_note rulereq=$m7e_rulereq)"; exit 1; }
+
+# PASS-M7E-DEBT-H (verdict scope-in 5, small debt (h), licence half).
+# The Apache text is vendored and README stops saying it is not.  The
+# helper half of debt (h) is Stage D's and is pinned by
+# PASS-M7D-HELPERS-SHARED.  SPEC section 6 carries the PAID date; the
+# leg pins no SPEC line number, because section 6 moves under any later
+# debt edit.
+m7e_apache=0
+[ -f "$ROOT"/LICENSE-APACHE ] && m7e_apache=1
+m7e_apache_body=$(rg -c 'Apache License' "$ROOT"/LICENSE-APACHE; true)
+m7e_readme_stale=$(rg -c 'the Apache text is not' "$ROOT"/README.md; true)
+m7e_readme_ok=$(rg -c 'LICENSE-APACHE' "$ROOT"/README.md)
+{ [ "$m7e_apache" -eq 1 ] && [ -n "$m7e_apache_body" ] \
+  && [ -z "$m7e_readme_stale" ] && [ "$m7e_readme_ok" -ge 1 ]; } \
+  && echo PASS-M7E-DEBT-H \
+  || { echo "FAIL-M7E-DEBT-H (file=$m7e_apache body=$m7e_apache_body stale=$m7e_readme_stale ok=$m7e_readme_ok)"; exit 1; }
 
 # ctxcat id 5: an instance with TWO dictionary binders on the SAME type
 # variable. Round 1's fuel bounded the depth of one resolution PATH,

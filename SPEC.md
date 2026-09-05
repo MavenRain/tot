@@ -1472,8 +1472,8 @@ verdict CLIs, small tools.  The house rules are the semantics:
   expected-type-only pass COULD reach, and 40 of those 59 sit in the
   prelude that Stage E may not touch.  No site fell short of the
   ceiling: every one of the 19 resolves, and a build-time probe with
-  guard.tot:133's argument-driven slot (arg 0 of the `let*`
-  desugaring, the A bucket) spelled `_` refuses with
+  the argument-driven slot of the first `let*` in `guard.tot` (arg 0 of
+  the `let*` desugaring, the A bucket) spelled `_` refuses with
   `guard-asite.tot:133:8: hole: expected Type 0` at exit 1.  With the
   scrubber's three sites the tree carries 22 `anchor=[_]` rows, all
   in examples/ (`PASS-M6E-GUARD-HOLES`).
@@ -1575,9 +1575,12 @@ verdict CLIs, small tools.  The house rules are the semantics:
   370 -> 371 PASS.  The hole-anchor classes do not move:
   `dev/hole-anchors.py` excludes test fixtures (its lines 13-15).
 - 2026-09-04 (M7, Stage B): the four guard A slots close, and pin 6's
-  two negatives retire (pins 5, 6, 11).  `examples/guard.tot:133-134`
-  and `examples/guard-rewrap.tot:264-265` lose their explicit spelling
-  and become holes.  Each file's first `let*` slot fills from the
+  two negatives retire (pins 5, 6, 11).  The two `let*` slots of
+  `examples/guard.tot` and the two of `examples/guard-rewrap.tot` lose
+  their explicit spelling and become holes.  M7 Stage E re-measured the
+  four addresses after the Stage D helper move shortened both files:
+  they are `examples/guard.tot:83-84` and
+  `examples/guard-rewrap.tot:218-219`.  Each file's first `let*` slot fills from the
   bind's third argument, `readStdin`.  Each file's second `let*` slot
   fills too: Stage A's infer settle elaborates the inner `liftIO _
   (jsonParse raw)` argument, so the chain that determines the slot
@@ -1686,6 +1689,54 @@ verdict CLIs, small tools.  The house rules are the semantics:
   from 133, 134, 264 and 265 to 83, 84, 218 and 219 and its holed
   literal moves from 26 to 68.  The leg keeps its name, its marker and
   all five assertions.  The `:94` re-spell is handed to M8.
+- 2026-09-04 (M7, Stage E): the decisions land, the oracles ship and
+  the licence pair completes.  M7 builds no well-founded rule.  Three
+  fixtures carry the obligation instead.
+  `test/fixtures/m7e-wf-provenance.tot` is an accessibility descent
+  whose provenance is the wrong formal.
+  `test/fixtures/m7e-wf-renamed.tot` is the same shape under names that
+  contain no `Acc`.  `test/fixtures/m7e-launder.tot` is a two-layer
+  polarity launder, and it runs against the shipped one-layer control
+  `test/fixtures/nested-neg.tot`.  All three exit 1 today, and all
+  three must stay red until an M8 rule is designed.  Pin 17 is DECIDED:
+  instance bodies are never guarded, the decision sits in a twelve-line
+  comment at lib/check.ml:1778-1789, and the surface offers no channel
+  to ask for a guarded instance body.  `LICENSE-APACHE` is vendored
+  beside `LICENSE-MIT`, so small debt (h) closes.  Section 5 now reads
+  M6 and M7 as done and renames the forward-looking bullet the M8
+  candidate list.  Section 6 gains `Known debts entering M7` with
+  fifteen entries and two obligations.  Five drifted citations are
+  repaired against the tree: the two guard slots are
+  examples/guard.tot:83-84 and examples/guard-rewrap.tot:218-219,
+  `self_rec` is lib/check.ml:2066, the applied-ness test is
+  lib/check.ml:1964-1976, and the `define_instance` dead spot is the
+  new comment itself.  Five gate markers land,
+  `PASS-M7E-SPEC-CITATIONS`, `PASS-M7E-WF-PROVENANCE-ORACLE`,
+  `PASS-M7E-POSITIVITY-LAUNDER-ORACLE`, `PASS-M7E-INSTANCE-RULE` and
+  `PASS-M7E-DEBT-H`, and five surface suite cases, M7E-1 to M7E-5, take
+  the suite 143 -> 148.  The battery slice goes 410 -> 420.  Nine notes
+  settle the stage, and `dev/M7-BUILD-LOG.md` carries each one with the
+  recipe that settled it.  C-E1: `PASS-M5D-TIERS` follows the live
+  recipe and goes 224 -> 228, against a predicted 204, a plan-byte
+  count of 228 and an inventory count of 229, and no watchdog call was
+  added or removed to reach any of them.  C-E2: the duplication note
+  the plan wanted cited was deleted by Stage D with the helper move, so
+  the sentence states the post-Stage-D fact and the leg pins it by
+  content.  C-E3 and its extension: every citation takes the address
+  measured after the comment edit, never the predicted one.  C-E4: the
+  invariant that the built binary keeps its md5 across a comment-only
+  edit is WITHDRAWN as impossible, and a one-hunk diff wholly inside
+  the comment replaces it.  C-E5: the recorded decision phrase sits
+  whole and lowercase on one line, because the leg counts it per line.
+  C-E6: `PASS-M7A-INFER-SETTLE-BUDGET` moves to 104 files and a new
+  digest, green holds at 62, the stale `count 18` prose in a Stage B
+  block header becomes `count 22`, and a dated line inside an older
+  stage entry stays as written.  C-E7: the two builders read their
+  scopes correctly.  C-E8: this stage writes no second machine spelling
+  of the anchors literal, so the Stage D record stays the textually
+  last one and `PASS-M5D-MEASURE-LOG` keeps reading it.  C-E9: the
+  forward-looking bullet is named the M8 candidate list, not the M7
+  one.
 
 ## 3.  Core calculus (M0 core, M2 inductives, M3 literals and effects)
 
@@ -1903,22 +1954,50 @@ The `tot` executable (`bin/`) wraps `Run` as `tot (check|run) FILE`.
   `Syntax.defkind`).
   Ported `examples/guard-classes.tot`, the house `rg`/`sd` guard again
   with the flagged command list behind a type class and two `Eq` proofs.
-- M6 candidate list (M5 Stage E rewrote the former `M5:` bullet with
-  the spike's numbers;  measure and decide the next tradeoff):
-  - Well-founded recursion.  Leading candidate.  `Acc` checks today;
-    the whole kernel delta sits in `Totality.guard`;  the prototype
-    clause is measured in the Stage E entry of section 2 and is too
-    permissive as written (2 of 4 measured shapes flip, including
-    infinitary structural recursion).
-  - Holes.  Sized by Stage D's hole-anchor count (98 anchors over the
-    530-line prelude-plus-examples corpus: 59 expected-type-only, 9
-    argument-driven, 30 neither), not by taste.
+- M5 (done): the gate battery and the measurement discipline (the
+  watchdog tiers, the `gate_timed` measure log and the hole-anchor
+  classifier);  instance-resolution sharing, which took a branching
+  telescope from an exponential term to a quadratic `let`-nest;  a
+  measured fuel backstop plus `--check-budget-ms` and the reserved
+  exit 3;  the strict-json posture;  and the default transcript as a
+  byte-exact identity oracle.  The well-founded spike ran here and
+  shipped no rule.
+- M6 (done): the `--experimental-wf` spike is DELETED, not left dark;
+  the blocking Unit strict-json posture lands;  the hole slice lands (a
+  structured `Serror.Hole` carrying the expected type as a kernel
+  `Term.t`, and an expected-type-only pass over the example files);  and
+  the house guard scrubber is ported, narrowly, with every miss
+  recorded in the file header.
+- M7 (done): five stages, each with its own gate markers and surface
+  suite cases.  Stage A settles the leading erased slot of an
+  application, in check position and in infer position, and pins
+  conservativity on the whole corpus.  Stage B closes the four guard
+  argument-driven slots and retires pin 6's two explicit-forever
+  negatives.  Stage C adds the position-only tail line that names the
+  other holes of the same failing item.  Stage D moves the six shared
+  list helpers into `stdlib/prelude.tot` and re-spells 44 prelude
+  anchors.  Stage E records the decisions, ships three oracle fixtures
+  that must stay red until an M8 rule exists, and vendors the Apache
+  licence text.
+- M8 candidate list (M7 Stage E rewrote the former `M6 candidate list`
+  bullet;  measure and decide the next tradeoff):
+  - Well-founded recursion.  Leading candidate.  `Acc` checks today and
+    the whole kernel delta sits in `Totality.guard`.  M7 ships two
+    oracle fixtures and no rule, and any rule must carry the provenance
+    side condition that section 6 states, so a descent from a NON-seed
+    formal stays rejected.
+  - Holes.  Sized by the Stage D hole-anchor count, not by taste: 99
+    anchors over the prelude-plus-examples corpus, of which 60 are
+    solvable from the expected type alone, 9 are argument-driven and 30
+    are neither.  Section 6's holes debt bullet carries the machine
+    record.  Section 2's dated Stage D entry states the same walk in
+    prose and keeps the literal out of itself (pin 12).
   - Nested and mutual inductives (would unblock the `Json` cons-cell
     migration to `jarr : List Json -> Json`).  Blocked on the MUTUAL
     gap in `Totality.mentions`, which tests only the family's own
     name, over an emptiness claim SPEC still records as UNPROVEN.
   - Universe polymorphism (`Eq` is currently `Type 0`-monomorphic).
-    Not needed by `Acc` (Stage E probe P1).
+    Not needed by `Acc` (M5 Stage E probe P1).
 
 ## 6.  Known debts (deliberate)
 
@@ -1927,6 +2006,9 @@ The `tot` executable (`bin/`) wraps `Run` as `tot (check|run) FILE`.
 - No cumulativity: concrete types live one universe up from where
   church-encoded tests want them.
 - Apache license text not vendored yet (README notes dual intent).
+  PAID 2026-09-04 (M7 Stage E, verdict scope-in 5): `LICENSE-APACHE` is
+  vendored beside `LICENSE-MIT`, README names both files and states the
+  dual `MIT OR Apache-2.0` choice, and `PASS-M7E-DEBT-H` pins the pair.
 - Errors carry mostly pre-rendered strings, not structured values (the
   M2 variants add small records).  PARTIALLY PAID 2026-09-03 (M6
   Stage C, scope-in 6): `Serror.Hole` carries the expected type as a
@@ -2239,8 +2321,14 @@ Known debts entering M5 (M4, carried from `dev/M4-PLAN.md`'s own
   `PASS-M6E-ANCHORS`, `PASS-M6E-GUARD-HOLES`).  What remains: (1) the
   9 A anchors need an App arm in `check`;  4 of them sit in the
   guards, the `String` and `(Option Json)` slots of the two `let*`
-  lines in guard.tot:133-134 and guard-rewrap.tot:253-254, kept
-  explicit;  (2) the 40 prelude E anchors stay spelled until the hole
+  lines in guard.tot:83-84 and guard-rewrap.tot:218-219.  Those four
+  are CLOSED by M7 Stage B, which retired pin 6's two explicit-forever
+  negatives and moved the refusal obligation to
+  `test/fixtures/m7/m7b-arg-slot-undetermined.tot`
+  (`PASS-M7B-GUARD-ARG-HOLES`, `PASS-M7B-LIFTIO-SLOT-CLOSES`).  The
+  earlier "kept explicit" clause is superseded, and M7 Stage E
+  re-measured both addresses after the Stage D helper move shortened
+  each guard;  (2) the 40 prelude E anchors stay spelled until the hole
   pass has soaked on the examples (scope-out 5;
   `PASS-M6E-GUARD-HOLES` pins zero prelude holes);  (3) the checker
   reports one error and stops, and since M7 Stage C it appends one
@@ -2271,11 +2359,13 @@ Known debts entering M5 (M4, carried from `dev/M4-PLAN.md`'s own
   `jarr : List Json -> Json` (a pre-M4 debt, restated): the door
   stays SHUT through M5, and the recorded REASON is corrected here
   (design pin 14).  The gap is the MUTUAL gap: `Totality.mentions`
-  tests only the family's OWN name (lib/check.ml:1828), so a
+  tests only the family's OWN name where `self_rec` is computed
+  (lib/check.ml:2066, re-measured at M7 Stage E), so a
   recursive PAIR of families reads as non-self-recursive.  It is NOT
   a nesting gap, and the earlier text claiming so was wrong:
   `Totality.mentions` recurses into both halves of `App`
-  (lib/totality.ml:52), so `jarr : List Json -> Json` gives
+  (lib/totality.ml:66, the `Term.App` arm, re-measured at M7 Stage E),
+  so `jarr : List Json -> Json` gives
   `self_rec = true` already.  This entry replaces the losing claim.
 - The bounded regex engine.  `Str` stays single-threaded-safe;  the
   replacement is its own mini-milestone.
@@ -2447,10 +2537,139 @@ compensating instrument):
   `firstToken`, `orEmpty` and `elideAt` now exist in two example
   files, because there are no modules and the global namespace is
   flat.  A fix to one is a fix to neither until somebody copies it.
-  The prelude is the natural home and the move is a cache-format
-  change, so it waits.
+  CLOSED 2026-09-04 (M7 Stage D): the six helpers live once, in
+  `stdlib/prelude.tot`, with their comments, and neither guard defines
+  one (`PASS-M7D-HELPERS-SHARED`).  The recorded REASON for waiting was
+  wrong and is corrected here (design pin 18): the move is NOT a
+  cache-format change.  `Cache.key` folds the prelude SOURCE into the
+  digest (surface/cache.ml:343-346), so an edited prelude re-keys by
+  itself and `format_version` stays 10 (surface/cache.ml:118,
+  `PASS-M7D-CACHE-KEY`).
 - Key-TYPE sharing stays unspent (design pin 7).  Stage B's exit
   measurement (term_size 694 against the 4000 gate) left no need to
   share the per-slot key TYPES through the same materializer;  the
   option is recorded here and needs no new design if a later corpus
   reopens it.
+
+Known debts entering M7 (M7 Stage E, 2026-09-04, written at the M7
+exit commit).  One list, not two: every CARRIED item below is the M8
+hand-off, and every CLOSED or RETIRED item is recorded so a reader can
+see what M7 spent.  Each address was measured on the tree on the day
+this list was written, after the Stage E `lib/check.ml` comment edit
+moved every line below `define_instance` by seven.  Ratification
+answer Q5 rides on entry 1: an eventual `Acc`-style family takes a WIDE
+relation formal and pays at erasure, the quantity discipline does not
+widen for relation positions, and M7 builds nothing for it.
+
+1. Well-founded recursion, sized as ONE unit.  CARRIED.  Three parts
+   buy it together: a sound admission rule whose side condition carries
+   PROVENANCE (lib/totality.ml:17-19 states the obligation and
+   lib/totality.ml:178-181 builds the seed the obligation is about), the
+   erased elimination form, and the indexed-relation quantity story
+   (SPEC.md:1092-1093 for the `Acc` shape, SPEC.md:1111-1112 for the
+   coupling to the subsingleton fence).  M7 leaves M8 the recognizer
+   shape of graft G1 below and the two fixtures
+   `test/fixtures/m7e-wf-provenance.tot` and
+   `test/fixtures/m7e-wf-renamed.tot`, not a memory.  Q5's
+   wide-relation direction rides here.
+2. The activation channel for a second admission rule.  CARRIED.
+   `Totality.rule` has one constructor (lib/totality.ml:20) and
+   `Check.define`'s `~rule` is REQUIRED (lib/check.ml:1474), which is
+   the re-entry channel:  an M8 rule arrives as a compiler error at
+   every call site.  The doc comment that protects the channel is
+   lib/check.ml:1467-1472.  M8 states the selector in the same breath
+   as the rule.
+3. Argument-driven holes.  CLOSED by M7.  Stage A settles the leading
+   erased slot in check position and, under the Ratification amendment
+   of 2026-09-04, in infer position too.  `check` still has no `App`
+   arm of its own (lib/check.ml:1208-1211 names the decision at the
+   site and routes those forms through infer-then-convert), so the
+   settle lives in the elaborator, not the kernel.  The Stage A and
+   Stage B markers pin the anchors and the four guard slots.
+4. The two explicit guard slots.  RETIRED, not carried.  The design
+   verdict listed them as M8 debt 6 with the reason "closing them needs
+   the infer path to settle, which M7 scopes out".  The amendment
+   authorised that settle, Stage B re-derived both slots and closed
+   them, so the debt does not enter M8.  The refusal obligation moves
+   to `test/fixtures/m7/m7b-arg-slot-undetermined.tot`.
+5. Prelude re-spelling.  CLOSED by Stage D and pinned by
+   `PASS-M7D-ANCHORS`, whose literal this file records once, in the
+   holes debt bullet of this section at SPEC.md:2343.  Section 2's
+   dated Stage D entry keeps that literal out of itself (pin 12) and
+   states the same walk in prose.  Stage E deliberately writes no
+   second machine spelling of that literal, so the section 6 record
+   stays the textually LAST one and `PASS-M5D-MEASURE-LOG` keeps
+   reading it.
+   One anchor, `stdlib/prelude.tot:94`, keeps its explicit spelling and
+   M8 owns it (conflict C-D3).
+6. Nested inductives and the strict positivity fence.  CARRIED.  The
+   applied-ness test at lib/check.ml:1964-1976 is one level deep and
+   the message names no layer, so a two-layer launder and a one-layer
+   control are refused with the same wording.  M7 ships the oracle
+   `test/fixtures/m7e-launder.tot` against the shipped control
+   `test/fixtures/nested-neg.tot` and owes no rule.
+7. The `Frozen` emptiness claim.  CARRIED as an OPEN obligation, stated
+   with both horns below.  lib/interp.ml:85-91 is the claim and
+   SPEC.md:851-853 already records it as UNPROVEN.
+8. The `Json` cons-cell family.  CARRIED.  Eight constructor names are
+   hard-wired in the interpreter (the array reader is
+   lib/interp.ml:393-396) and in surface/bootstrap.ml:66-73.  The
+   `jarr` migration touches at least two `.ml` modules plus the
+   prelude, and it waits on entry 6.
+9. The `.mli` surface.  CARRIED.  Measured on the tree the day this
+   list was written: `lib/` holds 17 modules and 2 interfaces (`Level`
+   and `Budget`), so 15 have none, and all 12 modules in `surface/`
+   have none.
+10. Multi-hole reporting.  PART CLOSED.  Stage C ships the
+    position-only tail.  Per-hole expected types stay carried, because
+    the strict reading of "no second traversal" at Q2 of the amendment
+    forbids a new pass and the `Serror` type does not change in M7.
+    The prelude arm's one-line report on a cache hit is carried to M8.
+11. Cumulativity or an `Eq1` layer.  CARRIED.  No measured demand.
+12. The guard tokenizer duplication.  CLOSED by Stage D.  The six
+    helpers live once, in `stdlib/prelude.tot`, and
+    `PASS-M7D-HELPERS-SHARED` pins that neither guard defines one.  The
+    duplication note that used to sit in `examples/guard-rewrap.tot`
+    went with the move, so this entry carries no guard-file address and
+    `PASS-M7E-SPEC-CITATIONS` pins the fact by content instead
+    (conflict C-E2).
+13. The Apache licence text.  CLOSED by Stage E, recorded in the
+    residual list above and pinned by `PASS-M7E-DEBT-H`.
+14. The instance-body dead threading.  CLOSED as a DECISION by Stage E,
+    at lib/check.ml:1771-1791, pinned by `PASS-M7E-INSTANCE-RULE` and
+    by surface suite cases M7E-4 and M7E-5.  Instance bodies are never
+    guarded, because the surface has no channel to ask for one.
+15. `test/fixtures/s0-erased-guard.tot`.  CARRIED.  It redeclares
+    `Nat`, so it runs only through `test/surface.ml`.  A gate leg that
+    wants it as a positive control reaches it the way the suite does,
+    or the fixture is re-spelled.
+
+Two obligations land in the same subsection, because each is a claim
+M8 inherits rather than a task M8 schedules.
+
+Obligation 1 (graft G5, design pin 16): the `Frozen` emptiness claim.
+lib/interp.ml:85-91 says that `Frozen` "is reachable only through an
+inhabitant of a provably empty type, so it is dead code by the Stage A
+soundness argument;  it exists so that a missed case degrades to a
+permanent neutral instead of a loop".  This file states BOTH horns and
+asserts neither.  Horn one: the empty type is genuinely empty, and
+`Frozen` is dead code.  Horn two: the fence admits an inhabitant, and
+`Frozen` is the backstop that keeps a missed case a permanent neutral
+instead of a loop.  Nothing proves horn one, so horn one is recorded
+here and is not asserted as proved.  M7 changed no byte of either site:
+`Interp.Frozen` and the `Quantity.Zero` arm of `Run.compute_guard`
+(surface/run.ml:117-120) are what M6 shipped, and
+`PASS-M7E-SPEC-CITATIONS` counts both so a later stage cannot tidy the
+emptiness story into code without turning the leg red.
+
+Obligation 2 (graft G1): the accessibility-shape recognizer, stated
+NAME INDEPENDENTLY.  A family `F` is accessibility-shaped when three
+things hold.  (i) Its `Ind` entry has two parameters stamped
+`(0 A : Type L)` and `(0 R : ...)`, with `R`'s type a two-domain arrow
+into `Type L` over `A`.  (ii) It has exactly one index, of type `A`.
+(iii) It has exactly one constructor, whose stamped type is
+`(x : A) -> ((y : A) -> R y x -> F A R y) -> F A R x` up to binder
+names.  M7 builds no rule from this.  M8 inherits the shape definition
+and the two fixtures of entry 1 rather than re-deriving both, and
+`test/fixtures/m7e-wf-renamed.tot` is the control that a rule reading
+the NAME `Acc` rather than the SHAPE would flip on its own.

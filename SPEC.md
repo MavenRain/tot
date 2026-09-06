@@ -2019,30 +2019,29 @@ The `tot` executable (`bin/`) wraps `Run` as `tot (check|run) FILE`.
   anchors.  Stage E records the decisions, ships three oracle fixtures
   that must stay red until an M8 rule exists, and vendors the Apache
   licence text.
-- M8 candidate list (M7 Stage E rewrote the former `M6 candidate list`
-  bullet;  measure and decide the next tradeoff):
-  - Well-founded recursion.  Leading candidate.  `Acc` checks today and
-    the whole kernel delta sits in `Totality.guard`.  M7 ships two
-    oracle fixtures and no rule, and any rule must carry the provenance
-    side condition that section 6 states, so a descent from a NON-seed
-    formal stays rejected.
-  - Holes.  Sized by the Stage D hole-anchor count, not by taste: 99
-    anchors over the prelude-plus-examples corpus, of which 60 are
-    solvable from the expected type alone, 9 are argument-driven and 30
-    are neither.  Section 6's holes debt bullet carries the machine
-    record.  Section 2's dated Stage D entry states the same walk in
-    prose and keeps the literal out of itself (pin 12).
-  - Nested and mutual inductives (would unblock the `Json` cons-cell
-    migration to `jarr : List Json -> Json`).  Blocked on the MUTUAL
-    gap in `Totality.mentions`, which tests only the family's own
-    name, over an emptiness claim SPEC still records as UNPROVEN.
-  - Universe polymorphism (`Eq` is currently `Type 0`-monomorphic).
-    Not needed by `Acc` (M5 Stage E probe P1).
+- M8 (done): four stages.  Stage A gives the argument-driven hole
+  capture a local-aware instantiation for a LOCAL head, generalizing
+  `inst_domain` with an `~escape` parameter and leaving the kernel
+  untouched.  Stage B spends that rule on `stdlib/prelude.tot:94`'s
+  `cong0` motive, re-spelling `Eq B` to `Eq _` and re-measuring the
+  three literals that move with it.  Stage C closes three M7 hand-off
+  reporting debts: a pinned decision, a new gate leg, a driver fix,
+  with no new rule.  Stage D sweeps every module in `lib/` to carry an
+  interface, adds a private `Global_store` module behind `lib/dune`'s
+  `private_modules` field, and narrows the public `Global` interface to
+  hide general insertion.
 
 ## 6.  Known debts (deliberate)
 
 - No `.mli` interfaces yet except `Level` and `Budget`;  `Global.add`
-  is public but documented as kernel-internal.
+  is public but documented as kernel-internal.  CLOSED 2026-09-05
+  (M8 Stage D): every module in `lib/` now carries an interface
+  (SPEC.md:1931-1933, 18 `.ml` files and 18 `.mli` files), pinned by
+  `PASS-M8D-MLI-COVERAGE` and `PASS-M8D-KERNEL-INTERNAL`
+  (dev/gates.sh:4370, dev/gates.sh:4406).  The public `Global`
+  interface exports no general insertion: `val add` does not appear in
+  `lib/global.mli`, and a client reaches the environment only through
+  `Check` or the narrow `add_rec_self`.
 - No cumulativity: concrete types live one universe up from where
   church-encoded tests want them.
 - Apache license text not vendored yet (README notes dual intent).
@@ -2643,7 +2642,7 @@ widen for relation positions, and M7 builds nothing for it.
    One anchor, `stdlib/prelude.tot:94`, keeps its explicit spelling and
    M8 owns it (conflict C-D3).
 6. Nested inductives and the strict positivity fence.  CARRIED.  The
-   applied-ness test at lib/check.ml:1964-1976 is one level deep and
+   applied-ness test at lib/check.ml:1913 is one level deep and
    the message names no layer, so a two-layer launder and a one-layer
    control are refused with the same wording.  M7 ships the oracle
    `test/fixtures/m7e-launder.tot` against the shipped control
@@ -2713,3 +2712,41 @@ names.  M7 builds no rule from this.  M8 inherits the shape definition
 and the two fixtures of entry 1 rather than re-deriving both, and
 `test/fixtures/m7e-wf-renamed.tot` is the control that a rule reading
 the NAME `Acc` rather than the SHAPE would flip on its own.
+
+Known debts entering M9 (M9 Stage A, 2026-09-06, written at the M9
+Stage A exit commit).  Two debts M9 carries forward to M10, each with
+the one reason the M9 design panel measured, and the `Frozen`
+emptiness claim stays open with the reason unchanged since M7.
+
+1. Well-founded recursion, the accessibility-shape selector (design
+   panel name C1).  DEFERRED.  The selector needs data
+   `Totality.guard` does not receive: `lib/totality.mli:43` hands it a
+   bare `Term.t` with no domain slot on `Lam` (`lib/term.ml:15`), so
+   reading a formal's stamped type needs both `guard` and `passes`
+   (`lib/totality.ml:80-81`) widened, an `.mli` break M9 does not
+   price.  A second reason stands unchallenged: C1's soundness
+   argument is a loan against the one-level fence now at
+   `lib/check.ml:1913` (`is_applied`), and C2 is the candidate that
+   moves that fence, so C1 after C2 is cheaper than C1 before it.
+2. Nested inductives and the polarity rule (design panel name C2).
+   DEFERRED.  The rule as sketched is unsound in one arm:
+   `lib/check.ml:1969` is `Term.Pi (_q, _x, dom, cod) -> no_occur dom
+   && strict_pos (depth + 1) cod`, a domain with NO occurrence at all,
+   and a signed rule that admits a flipped occurrence there accepts a
+   doubly flipped shape the tree refuses today.  C2 lands FIRST in M10
+   and soaks, before C1 is costed.
+
+`Frozen` emptiness (obligation 1, `lib/interp.ml:85-91`): stays open
+with both horns stated and neither asserted.  Two probes tried the two
+spellings that could reach the `Quantity.Zero` arm of
+`Run.compute_guard` (`surface/run.ml:117-120`) from a source program,
+an erased `Nat` principal eliminated into `Unit` and the same formal
+eliminated into a type, and both are refused earlier, by the erasure
+rule and not by the guard ("erased variable n used at runtime", exit
+1).  That is not a proof of horn one: absence over two spellings is
+not absence over all spellings, and tot has no channel that could tell
+a reader which guard a definition received.  `lib/interp.ml:92-95` and
+`surface/run.ml:117-120` are untouched by this or any M9 stage, and
+`PASS-M7E-SPEC-CITATIONS` (dev/gates.sh:3930-3931) keeps counting both
+sites, so no later M9 stage can tidy the emptiness story into code
+without turning that leg red.

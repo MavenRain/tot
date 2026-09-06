@@ -4523,6 +4523,30 @@ m8d_exlines=$(wc -l < "$m8d_ex" | tr -d ' ')
     exit 1
   }
 
+# Gate M9A (i), the M9 Stage A exit stamp leg (plan dev/M9-PLAN.md:1280-1343;
+# rulings A3-F6, R-Q6, R10;  prep ruling SA-Q1 (a)).  Stage A stamps M8 as
+# done in SPEC.md and records the two debts M9 hands to M10, so this leg
+# reads the three strings the stage writes or closes and compares the
+# module counts SPEC.md states against the counts the tree carries.  The
+# comment names no marker literal, so the marker string appears exactly
+# once in this file, on the echo line, which is what the plan's own
+# review checklist item 7 measures.  MUTATION: SPEC.md, the sentence that
+# states the lib/ file counts, `holds 18` to `holds 19`;  spec_ml moves
+# 18 -> 1819 while fd_ml stays 18 and the sixth conjunct fails.
+m9a_sec6=$(rg -c '^Known debts entering M9' "$ROOT"/SPEC.md 2>/dev/null); m9a_sec6=${m9a_sec6:-0}
+m9a_sec5=$(rg -c '^- M8 \(done\)' "$ROOT"/SPEC.md 2>/dev/null); m9a_sec5=${m9a_sec5:-0}
+m9a_stale=$(rg -c 'kernel-internal\.$' "$ROOT"/SPEC.md 2>/dev/null); m9a_stale=${m9a_stale:-0}
+m9a_fd_ml=$(fd -e ml --max-depth 1 . "$ROOT"/lib | wc -l | tr -d ' ')
+m9a_fd_mli=$(fd -e mli --max-depth 1 . "$ROOT"/lib | wc -l | tr -d ' ')
+m9a_spec_sent=$(rg -o '[0-9]+ `\.ml` files and [0-9]+ `\.mli` files' "$ROOT"/SPEC.md)
+m9a_spec_ml=$(printf '%s\n' "$m9a_spec_sent" | rg -o '^[0-9]+' | sort -u | tr -d ' \n')
+m9a_spec_mli=$(printf '%s\n' "$m9a_spec_sent" | rg -o 'and [0-9]+' | rg -o '[0-9]+' | sort -u | tr -d ' \n')
+{ [ "$m9a_sec6" -eq 1 ] && [ "$m9a_sec5" -eq 1 ] && [ "$m9a_stale" -eq 0 ] \
+  && [ "$m9a_fd_ml" = 18 ] && [ "$m9a_fd_mli" = 18 ] \
+  && [ "$m9a_spec_ml" = "$m9a_fd_ml" ] && [ "$m9a_spec_mli" = "$m9a_fd_mli" ]; } \
+  && echo PASS-M9A-EXIT-STAMP \
+  || { echo "FAIL-M9A-EXIT-STAMP (sec6=$m9a_sec6 sec5=$m9a_sec5 stale=$m9a_stale fd_ml=$m9a_fd_ml fd_mli=$m9a_fd_mli spec_ml=$m9a_spec_ml spec_mli=$m9a_spec_mli)"; exit 1; }
+
 # ctxcat id 5: an instance with TWO dictionary binders on the SAME type
 # variable. Round 1's fuel bounded the depth of one resolution PATH,
 # never the total number of resolutions, so this branching shape

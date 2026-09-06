@@ -405,6 +405,75 @@ let state () : (Run.state, Serror.t) result =
   let* src = read_prelude_src (prelude_path ()) in
   state_of_src src
 
+(** M8 Stage C (item 10): [split_after_name] over the pair list that
+    [Parser.parse_with_holes] returns.  The split decision reads the
+    ITEM half of each pair alone, so the segment boundaries are exactly
+    the ones [state_of_src] computes; the hole positions travel with
+    their own item.  Total by construction: the prefix LENGTH comes out
+    of the item-half split and [List.filteri] partitions on it, so
+    there is no indexing and no exception. *)
+let split_after_name_holed (target : string) (pairs : (Syntax.item * Loc.t list) list) :
+    ((Syntax.item * Loc.t list) list * (Syntax.item * Loc.t list) list) option =
+  split_after_name target (List.map fst pairs)
+  |> Option.map (fun ((through, _after) : Syntax.item list * Syntax.item list) ->
+         let n = List.length through in
+         (List.filteri (fun i _ -> i < n) pairs, List.filteri (fun i _ -> i >= n) pairs))
+
+(** M8 Stage C (item 10): [fold_prelude_items] with the position-only
+    tail beside the error.  The ONLY difference from
+    [fold_prelude_items] is the [Run.hole_tail ~holes] attached to a
+    failing item's error (surface/run.ml:654).  The policy, the [~exec]
+    flag and the fold order are the same, so see [fold_prelude_items]'s
+    own comment for why the policy is hardcoded here too: the name
+    carries the same PRELUDE restriction to every future call site. *)
+let fold_prelude_items_tailed (st : Run.state) (pairs : (Syntax.item * Loc.t list) list) :
+    (Run.state, Serror.t * string option) result =
+  List.fold_left
+    (fun acc (it, holes) ->
+      let* s = acc in
+      Run.item ~exec:true ~policy:Run.default_policy s it
+      |> Result.map_error (fun (e : Serror.t) -> (e, Run.hole_tail ~holes e)))
+    (Ok st) pairs
+
+(** M8 Stage C (item 10): [state_of_src] with the position-only tail
+    beside a prelude error.  [Parser.parse_with_holes] runs EXACTLY
+    ONCE and nothing is re-lexed, re-parsed or re-folded, the same
+    one-pass shape [Run.script_tailed] has (surface/run.ml:668).  The
+    three-phase split of [state_of_src] is unchanged, applied to the
+    ITEM half of each pair.  A lex error, a parse error, a missing
+    phase marker and a [verify_required_ctors] failure all carry NO
+    tail, because no prelude ITEM reported them, so those messages keep
+    their bytes.  [state_of_src] and [state ()] above keep their own
+    signature and their own behaviour: this is a SECOND entry point for
+    the driver, never a replacement for either. *)
+let state_of_src_tailed (src : string) : (Run.state, Serror.t * string option) result =
+  let untailed : 'a. ('a, Serror.t) result -> ('a, Serror.t * string option) result =
+   fun r -> Result.map_error (fun (e : Serror.t) -> (e, None)) r
+  in
+  let* st1 = untailed (phase1 ()) in
+  let* tokens = untailed (Lexer.lex src) in
+  let* syn_pairs = untailed (Parser.parse_with_holes tokens) in
+  let not_found (marker : string) : Serror.t * string option =
+    ( Serror.Lex
+        {
+          loc = Loc.start;
+          msg = "prelude: \"" ^ marker ^ "\" marker not found (Stage C phase split)";
+        },
+      None )
+  in
+  let* seg1, rest1 =
+    split_after_name_holed "foldNat" syn_pairs |> Option.to_result ~none:(not_found "foldNat")
+  in
+  let* seg2, seg3 =
+    split_after_name_holed "Json" rest1 |> Option.to_result ~none:(not_found "Json")
+  in
+  let* st_a = fold_prelude_items_tailed st1 seg1 in
+  let* st_b = untailed (phase2 st_a) in
+  let* st_c = fold_prelude_items_tailed st_b seg2 in
+  let* st_d = untailed (phase3 st_c) in
+  let* st_e = fold_prelude_items_tailed st_d seg3 in
+  untailed (verify_required_ctors { st_e with Run.lines = [] })
+
 (** [TOT_CACHE_VERIFY=1] recomputes [state ()] on every cache HIT too,
     purely to COMPARE against the cached blob, never to replace the
     fast path's own result (M3 Stage D, D2). Prints one line on
@@ -439,8 +508,14 @@ let cache_verify_flag () : bool =
     recomputes from it too, so the verify comparison is "the state
     these exact bytes produce" against "the state stored under these
     exact bytes' key", which is the property [Cache]'s own correctness
-    argument states. *)
-let cached_state_of_src (src : string) : (Run.state, Serror.t) result =
+    argument states.
+
+    M8 Stage C (item 10): the ERROR side widens to [Serror.t * string
+    option], the tail beside the error, because the miss branch now
+    elaborates through [state_of_src_tailed].  The hit branch and the
+    [Cache.save] below are untouched, and [cached_state ()] drops the
+    tail with [Result.map_error fst] to keep its own signature. *)
+let cached_state_of_src (src : string) : (Run.state, Serror.t * string option) result =
   let cache_key = Cache.key src in
   (* M3 fixes round 2 (ctxcat id 12): dispatch on the load result
      directly ([Option.to_result] + [Result.fold], both branches a
@@ -466,10 +541,10 @@ let cached_state_of_src (src : string) : (Run.state, Serror.t) result =
          in
          Ok { Run.globals; eglobals; lines = [] })
        ~error:(fun () ->
-         let* st = state_of_src src in
+         let* st = state_of_src_tailed src in
          let () = Cache.save cache_key st.Run.globals st.Run.eglobals in
          Ok st)
 
 let cached_state () : (Run.state, Serror.t) result =
   let* src = read_prelude_src (prelude_path ()) in
-  cached_state_of_src src
+  cached_state_of_src src |> Result.map_error fst

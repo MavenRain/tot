@@ -1,0 +1,6 @@
+-- M8 Stage C (PASS-M8C-HOLE-POSITIONS): one item, one type hole and
+-- three application holes, four holes total.  Item 8 is Option A
+-- (R-Q5): report positions only, never a synthesized type.  N=3 in
+-- the tail here, one more than M7C's N=2 (dev/fixtures/m7c-multi-hole.tot),
+-- so the fold is pinned as general over the list length.
+def h : List _ := cons _ "a" (cons _ "b" (nil _))

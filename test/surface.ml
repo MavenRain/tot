@@ -1142,6 +1142,67 @@ let m8a_open_capture : string =
   "def probeH : (0 A : Type 0) -> (A -> List A) -> A -> List A :=\n\
   \  fun A f a => map _ A (fun x => x) (f a)\n"
 
+(* M8 Stage C (M8C-3): one literal, non-overlapping substitution over a
+   source string, the in-memory twin of the two `sd -s` calls the gate
+   recipe of PASS-M8C-PRELUDE-TAIL makes on a scratch COPY of
+   stdlib/prelude.tot.  It returns the number of substitutions it made
+   beside the patched text, so the case can refuse a silently vacuous
+   patch instead of reporting a hole error it did not cause.  It is
+   written over the index list of the subject, so it needs no loop. *)
+let m8c_replace_all (subject : string) ~(pat : string) ~(rep : string) : int * string =
+  let n = String.length subject in
+  let m = String.length pat in
+  let hits =
+    List.init (Int.max 0 (n - m + 1)) Fun.id
+    |> List.filter (fun i -> String.equal (String.sub subject i m) pat)
+  in
+  let count, cursor, acc =
+    hits
+    |> List.fold_left
+         (fun (count, cursor, acc) i ->
+           match () with
+           | () when i < cursor -> (count, cursor, acc)
+           | () -> (count + 1, i + m, acc ^ String.sub subject cursor (i - cursor) ^ rep))
+         (0, 0, "")
+  in
+  (count, acc ^ String.sub subject cursor (n - cursor))
+
+(* M8 Stage C (M8C-3): stdlib/prelude.tot read through
+   [In_channel.with_open_text], the pattern [run_gate] already uses,
+   patched IN MEMORY with the two substitutions above, then elaborated
+   through [Bootstrap.state_of_src_tailed] with NO cache directory at
+   all.  That is what keeps it distinct from PASS-M8C-PRELUDE-TAIL: the
+   gate leg shells the CLI with TOT_PRELUDE pointed at a scratch file
+   and a private cache dir, so it drives the whole miss branch of
+   [cached_state_of_src], [Cache.save] included;  this case isolates the
+   parse-and-fold plumbing from the caching layer, so a cache-only
+   regression cannot hide a tail-plumbing regression underneath it. *)
+let m8c_prelude_tail_on_miss () : (unit, string) result =
+  let want_line = "93:54: hole: no expected type at this position" in
+  let want_tail = Some "2 more hole(s) at 94:48, 94:73" in
+  let src =
+    In_channel.with_open_text (Filename.concat repo_root "stdlib/prelude.tot") In_channel.input_all
+  in
+  let n1, once = m8c_replace_all src ~pat:"Eq B (f a) (f b) :=" ~rep:"Eq B (f a) _ :=" in
+  let n2, patched = m8c_replace_all once ~pat:"(refl B (f a))" ~rep:"(refl B _)" in
+  match () with
+  | () when not (Int.equal n1 1 && Int.equal n2 1) ->
+      Error (Printf.sprintf "the prelude patch matched %d and %d time(s), want 1 and 1" n1 n2)
+  | () ->
+      Tot_surface.Bootstrap.state_of_src_tailed patched
+      |> Result.fold
+           ~ok:(fun _st ->
+             Error (Printf.sprintf "the hand-broken prelude elaborated, want [%s]" want_line))
+           ~error:(fun (e, tail) ->
+             let got = Tot_surface.Serror.to_string e in
+             match () with
+             | () when String.equal got want_line && Option.equal String.equal tail want_tail -> Ok ()
+             | () ->
+                 Error
+                   (Printf.sprintf "got [%s] tail [%s], want [%s] tail [%s]" got
+                      (Option.value tail ~default:"None") want_line
+                      (Option.value want_tail ~default:"None")))
+
 let cases (bst : Tot_surface.Run.state) : (string * (unit -> (unit, string) result)) list =
   [
     ( "cadd two two runs to church four",
@@ -2363,6 +2424,30 @@ def transported : Eq Nat (add (succ zero) (succ (succ zero))) (add (succ (succ z
 def stuck : Nat := (fun x => x) _
 |tot}
         "2:33: hole: no expected type at this position" );
+    (* M8 Stage C (dev/M8-PLAN.md:1879-1923): three cases, every one IN
+       PROCESS, so none duplicates a gate leg's CLI-driven record.
+       M8C-1 and M8C-2 drive [Run.script_tailed] through
+       [m7c_expect_tail] on ORDINARY string literals, not the
+       {tot|...|tot} form the two M8B pairs above use: that form carries
+       a LEADING newline, which is why M8B-2 reports 2:33 and not 1:33,
+       so both reported positions here sit on line 1.  M8C-1 mirrors the
+       shape of dev/fixtures/m8c-hole-positions.tot, which the gate leg
+       PASS-M8C-HOLE-POSITIONS runs from disk at line 6;  the same four
+       holes on line 1 give 1:14 and the tail 1:24, 1:36, 1:47.  M8C-2
+       pins the SAME positions-only rule over an eval spine, where one
+       hole means no tail line at all.  M8C-3 calls
+       [Bootstrap.state_of_src_tailed] directly, with no cache dir. *)
+    ( "M8C-1 m8c_tail_three: a three-hole item's tail names every OTHER hole, not just the M7C pair",
+      m7c_expect_tail bst "def h : List _ := cons _ \"a\" (cons _ \"b\" (nil _))\n"
+        ~want_line:"1:14: hole: no expected type at this position"
+        ~want_tail:(Some "3 more hole(s) at 1:24, 1:36, 1:47") );
+    ( "M8C-2 m8c_tail_eval_single: Option A holds for an eval-spine hole too, not only a def's own \
+       type annotation",
+      m7c_expect_tail bst "eval _\n" ~want_line:"1:6: hole: no expected type at this position"
+        ~want_tail:None );
+    ( "M8C-3 m8c_prelude_tail_on_miss: a hand-broken multi-hole prelude carries its tail on the \
+       miss path, in process",
+      m8c_prelude_tail_on_miss );
   ]
 
 (** The ordinary in-process suite: bootstrap once, run every [cases]

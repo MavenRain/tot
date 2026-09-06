@@ -1472,7 +1472,7 @@ rm -rf "$mm_scratch"
 # mapping) and never read 2's message shape ("prelude not found:").
 oneread_calls=$(rg -c '^\s*state \(\)|= state \(\)' "$ROOT"/surface/bootstrap.ml)
 oneread_calls=${oneread_calls:-0}
-oneread_srcs=$(rg -c '[^_]state_of_src src' "$ROOT"/surface/bootstrap.ml)
+oneread_srcs=$(rg -c '[^_]state_of_src(_tailed)? src' "$ROOT"/surface/bootstrap.ml)
 oneread_srcs=${oneread_srcs:-0}
 oneread_scratch=$(mktemp -d "${TMPDIR:-/tmp}/tot-gate-oneread.XXXXXX")
 printf 'def oneReadOk : Bool := true\n' > "$oneread_scratch/target.tot"
@@ -2335,7 +2335,14 @@ m5d_bites=$(rg -c '"\$watchdog" "\$BITE_S"' "$ROOT/dev/gates.sh")
 # Measured with the recipe above before (234) and after (233) the edit.
 # No call was added or removed to reach a predicted number;  the recipe
 # is the authority (precedent C-D4).
-{ [ "$m5d_nolit" -eq 1 ] && [ "$m5d_tiers" -eq 233 ] && [ "$m5d_bites" -eq 2 ] \
+# M8 Stage C (2026-09-05) raised it 233 -> 236: the three new legs run
+# the CLI three times, one tier call per run (one in
+# PASS-M8C-HOLE-POSITIONS, one in PASS-M8C-S0-DRIVER, one in
+# PASS-M8C-PRELUDE-TAIL), and delete none.  Measured with the recipe
+# above before (233) and after (236) the edit.  The plan predicted the
+# same delta of 3;  the recipe is still the authority (precedent C-D4),
+# and no tier call was added or removed to reach a predicted number.
+{ [ "$m5d_nolit" -eq 1 ] && [ "$m5d_tiers" -eq 236 ] && [ "$m5d_bites" -eq 2 ] \
   && [ -s "$ROOT/dev/gates.sh" ]; } \
   && echo PASS-M5D-TIERS \
   || { echo "FAIL-M5D-TIERS (nolit=$m5d_nolit tiers=$m5d_tiers bites=$m5d_bites)"; exit 1; }
@@ -4214,6 +4221,121 @@ m8b_p94=$(rg -c 'SITE stdlib/prelude\.tot:94 head=Eq arg=0 anchor=\[_\] pos=chec
 { [ "$m8b_p94" -eq 1 ]; } \
   && echo PASS-M8B-PRELUDE-94 \
   || { echo "FAIL-M8B-PRELUDE-94 (p94=$m8b_p94)"; exit 1; }
+
+# ---------------------------------------------------------------------
+# M8 Stage C (dev/M8-PLAN.md:1753-1877): reporting, items 8, 9 and 10.
+# Three legs, one block.  Each leg sends stdout and stderr to SEPARATE
+# files, pins the exact line count of each stream, pins every expected
+# line as a WHOLE string, and pins the exit code.  No leg matches a
+# fragment and no leg pins a count alone.  The record shape is the M7C
+# block's (dev/gates.sh:3717-3755);  the private cache dir is the
+# PASS-M7D-CACHE-KEY idiom (dev/gates.sh:3859-3860).  The scratch dir
+# is $m5d_scratch, made at dev/gates.sh:2225 and already named in the
+# EXIT trap at dev/gates.sh:434, so this block adds no trap entry;  its
+# file names m8c-ck and prelude-holed.tot do not collide with the ck
+# and prelude-alt.tot of PASS-M7D-CACHE-KEY (ruling SC-R1, branch one).
+# ---------------------------------------------------------------------
+
+# Gate C (i), PASS-M8C-HOLE-POSITIONS (item 8, ruling R-Q5, Option A).
+# The miss path reports the POSITION of every OTHER hole of the item,
+# three of them here, and never a synthesized type.  N=3 is one more
+# than the pair PASS-M7C-MULTI-HOLE-TAIL owns, so the fold is pinned as
+# general over the list length and not as a hardcoded pair.  The
+# reported hole 6:14 sits in the declared type;  6:24, 6:36 and 6:47
+# are the three application holes.  MUTATION MC-1: in hole_tail
+# (surface/run.ml), keep only the head of the sorted, filtered list,
+# and the second stderr line stops naming three positions.
+"$watchdog" "$FAST" "$m5d_bin" check "$ROOT"/dev/fixtures/m8c-hole-positions.tot \
+  > "$m5d_scratch"/m8c-hp.out 2> "$m5d_scratch"/m8c-hp.err
+m8c_hp_code=$?
+m8c_hp_want1="$ROOT/dev/fixtures/m8c-hole-positions.tot:6:14: hole: no expected type at this position"
+{ [ "$m8c_hp_code" -eq 1 ] \
+    && [ ! -s "$m5d_scratch"/m8c-hp.out ] \
+    && [ "$(wc -l < "$m5d_scratch"/m8c-hp.out | tr -d ' ')" -eq 0 ] \
+    && [ "$(wc -l < "$m5d_scratch"/m8c-hp.err | tr -d ' ')" -eq 2 ] \
+    && [ "$(awk 'NR==1' "$m5d_scratch"/m8c-hp.err)" = "$m8c_hp_want1" ] \
+    && [ "$(awk 'NR==2' "$m5d_scratch"/m8c-hp.err)" = "3 more hole(s) at 6:24, 6:36, 6:47" ]; } \
+  && echo PASS-M8C-HOLE-POSITIONS \
+  || {
+    cat "$m5d_scratch"/m8c-hp.out "$m5d_scratch"/m8c-hp.err
+    echo "FAIL-M8C-HOLE-POSITIONS (exit=$m8c_hp_code)"
+    exit 1
+  }
+
+# Gate C (ii), PASS-M8C-S0-DRIVER (item 9, rulings A1-F6 and R-F7).
+# The erased-argument driver path becomes a pinned positive control on
+# every gate pass, from inside dev/gates.sh, where no leg watched it
+# before: at Stage C entry `rg -c 's0-erased-guard' dev/gates.sh` exited
+# 1 with no match.  The fixture redeclares Nat, so it reaches the CLI
+# only under --no-prelude.  All SEVEN stdout lines are pinned in order
+# as whole strings (ruling SC-Q1, answer (a)), with the stdout line
+# count 7 and an EMPTY stderr.  MUTATION MC-2: at lib/erase.ml:33, make
+# the zero-quantity application arm walk its argument as well, so
+# erasure descends into the dropped self-call argument of ghost, trips
+# the Erased_use "match" arm at lib/erase.ml:64, and the run exits
+# non-zero.  The committed tree keeps the wholesale-drop arm.
+"$watchdog" "$FAST" "$m5d_bin" run --no-prelude "$ROOT"/test/fixtures/s0-erased-guard.tot \
+  > "$m5d_scratch"/m8c-s0.out 2> "$m5d_scratch"/m8c-s0.err
+m8c_s0_code=$?
+{ [ "$m8c_s0_code" -eq 0 ] \
+    && [ ! -s "$m5d_scratch"/m8c-s0.err ] \
+    && [ "$(wc -l < "$m5d_scratch"/m8c-s0.err | tr -d ' ')" -eq 0 ] \
+    && [ "$(wc -l < "$m5d_scratch"/m8c-s0.out | tr -d ' ')" -eq 7 ] \
+    && [ "$(awk 'NR==1' "$m5d_scratch"/m8c-s0.out)" = "data Nat : Type 0" ] \
+    && [ "$(awk 'NR==2' "$m5d_scratch"/m8c-s0.out)" = "ctor zero : Nat" ] \
+    && [ "$(awk 'NR==3' "$m5d_scratch"/m8c-s0.out)" = "ctor succ : (w _ : Nat) -> Nat" ] \
+    && [ "$(awk 'NR==4' "$m5d_scratch"/m8c-s0.out)" \
+         = "def dropErased : (0 j : Nat) -> (w _ : Nat) -> Nat" ] \
+    && [ "$(awk 'NR==5' "$m5d_scratch"/m8c-s0.out)" \
+         = "def ghost : (0 j : Nat) -> (w _ : Nat) -> Nat" ] \
+    && [ "$(awk 'NR==6' "$m5d_scratch"/m8c-s0.out)" = "fun n => n" ] \
+    && [ "$(awk 'NR==7' "$m5d_scratch"/m8c-s0.out)" = "(succ zero)" ]; } \
+  && echo PASS-M8C-S0-DRIVER \
+  || {
+    cat "$m5d_scratch"/m8c-s0.out "$m5d_scratch"/m8c-s0.err
+    echo "FAIL-M8C-S0-DRIVER (exit=$m8c_s0_code)"
+    exit 1
+  }
+
+# Gate C (iii), PASS-M8C-PRELUDE-TAIL (item 10, rulings A1-F4, the
+# miss-path re-scope, and R-Q6).  The new tail plumbing fires on the
+# one path it exists for, the prelude miss path with an error, which no
+# other leg in the battery drives: every file the walk at
+# dev/gen-m5e-transcript.sh:13 covers keeps the real prelude valid.
+# The hand-broken prelude is a SCRATCH copy;  stdlib/prelude.tot is
+# never written.  The two substitutions add two holes to cong0, giving
+# three parsed positions in the item: 93:54 (reported), 94:48 and 94:73
+# (tail).  The private cache dir keeps the leg off the real cache, the
+# way PASS-M7D-CACHE-KEY does.  R-Q6: the leg touches neither
+# surface/cache.ml's format_version nor either M7D gate line.
+# MUTATION MC-3: delete the added `Option.iter prerr_endline tail` call
+# from the prelude-error arm of bin/tot.ml, stderr drops back to one
+# line, and the stderr line-count assertion goes red.
+m8c_ck="$m5d_scratch/m8c-ck"
+m8c_alt="$m5d_scratch/prelude-holed.tot"
+m8c_pat1=$(rg -c -F 'Eq B (f a) (f b) :=' "$ROOT"/stdlib/prelude.tot)
+m8c_pat2=$(rg -c -F '(refl B (f a))' "$ROOT"/stdlib/prelude.tot)
+cp "$ROOT"/stdlib/prelude.tot "$m8c_alt"
+sd -s 'Eq B (f a) (f b) :=' 'Eq B (f a) _ :=' "$m8c_alt"
+sd -s '(refl B (f a))' '(refl B _)' "$m8c_alt"
+"$watchdog" "$FAST" env TOT_CACHE_DIR="$m8c_ck" TOT_PRELUDE="$m8c_alt" \
+  "$m5d_bin" check "$ROOT"/dev/fixtures/m8c-prelude-tail-probe.tot \
+  > "$m5d_scratch"/m8c-pt.out 2> "$m5d_scratch"/m8c-pt.err
+m8c_pt_code=$?
+{ [ "$m8c_pt_code" -eq 1 ] \
+    && [ "$m8c_pat1" -eq 1 ] && [ "$m8c_pat2" -eq 1 ] \
+    && [ ! -s "$m5d_scratch"/m8c-pt.out ] \
+    && [ "$(wc -l < "$m5d_scratch"/m8c-pt.out | tr -d ' ')" -eq 0 ] \
+    && [ "$(wc -l < "$m5d_scratch"/m8c-pt.err | tr -d ' ')" -eq 2 ] \
+    && [ "$(awk 'NR==1' "$m5d_scratch"/m8c-pt.err)" \
+         = "prelude: 93:54: hole: no expected type at this position" ] \
+    && [ "$(awk 'NR==2' "$m5d_scratch"/m8c-pt.err)" = "2 more hole(s) at 94:48, 94:73" ]; } \
+  && echo PASS-M8C-PRELUDE-TAIL \
+  || {
+    cat "$m5d_scratch"/m8c-pt.out "$m5d_scratch"/m8c-pt.err
+    echo "FAIL-M8C-PRELUDE-TAIL (exit=$m8c_pt_code pat=$m8c_pat1/$m8c_pat2)"
+    exit 1
+  }
 
 # ctxcat id 5: an instance with TWO dictionary binders on the SAME type
 # variable. Round 1's fuel bounded the depth of one resolution PATH,

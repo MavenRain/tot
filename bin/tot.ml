@@ -176,8 +176,16 @@ let run_with_prelude ~(exec : bool) ~(policy : Tot_surface.Run.policy) ~(serror_
                 run_file ~exec ~policy ~serror_exit
                   ~budget:(budget_of_ms check_budget_ms) ~budget_ms:check_budget_ms ~st
                   path)
-              ~error:(fun e ->
+              ~error:(fun ((e, tail) : Tot_surface.Serror.t * string option) ->
                 prerr_endline ("prelude: " ^ Tot_surface.Serror.to_string e);
+                (* M8 Stage C (item 10): the position-only tail for a
+                   PRELUDE hole, one line, on the SAME channel as the
+                   error it extends, the shape the target-path arm
+                   already uses above.  No path prefix, because the
+                   prelude line above carries the "prelude: " marker.
+                   [None] for every non-hole prelude error and for a
+                   one-hole prelude, so no existing message moves. *)
+                Option.iter prerr_endline tail;
                 serror_exit))
 
 let run_no_prelude ~(exec : bool) ~(policy : Tot_surface.Run.policy) ~(serror_exit : int)

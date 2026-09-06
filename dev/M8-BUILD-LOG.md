@@ -1342,3 +1342,606 @@ leg is green.  `git status --porcelain -uall` at this point reads
 was staged, committed, pushed, checked out, stashed or cleaned by the
 closing round beyond the closer's own staging step, recorded
 separately.
+
+## Stage C (2026-09-05): the miss path reports every hole
+
+Items 8, 9 and 10 of the M7 hand-off.  Item 8 pins the shape of the
+multi-hole reporting tail (ruling R-Q5, Option A: positions only, never
+a synthesized type).  Item 9 gives `test/fixtures/s0-erased-guard.tot`
+a route through the gate battery.  Item 10 carries the tail onto the
+prelude miss path.  The stage adds no admission rule and no new
+elaboration.  It does not write `stdlib/prelude.tot`.
+
+### 1. Entry state
+
+Entry commit `d679ab5`, the M8 Stage B exit commit.  `git status
+--porcelain -uall` printed NOTHING at entry, so blocker C-C1 did not
+fire.  The entry battery, run through the wrapper
+(`tot-m7-probes/stageB/battery-wait.sh`) into
+`tot-m8-stageC-entry-gate.log`, printed `BUILD-EXIT=0`, `GATE-EXIT=0`,
+`PASS=435` at the wrapper and an empty `FAIL=` line; the slice recipe
+(`tot-m8-probes/stage-c/draft/slice.sh`) printed `SLICE=431` with
+`SLICE-BOUNDS=14,517`.  431 plus the C-A14 offset of 4 is the 435 the
+wrapper printed.
+
+Entry sizes and digests, measured:
+
+| path | lines | md5 |
+| --- | --- | --- |
+| `dev/gates.sh` | 4279 | `74c256e305db07dcef24b0a9e90c9bb8` |
+| `test/surface.ml` | 2494 | `834f0a9224e94fec0fb6f47011fe9ca6` |
+| `dev/M8-BUILD-LOG.md` | 1344 | `20921e56925f156a6a32db1e1b1d724c` |
+| `surface/bootstrap.ml` | 475 | `0a9e452969f41c077c940526b75e08d3` |
+| `bin/tot.ml` | 327 | `c902e72b66732def7e6f4af36af4359d` |
+| `stdlib/prelude.tot` | 230 | `6013fa65389a1220f9a15059294701a0` |
+
+At entry `rg -c 'PASS-M8C-' dev/gates.sh` exited 1 with no match, and so
+did `rg -c 's0-erased-guard' dev/gates.sh`.  `rg -c 'PASS-M8'
+dev/gates.sh` printed 12.  Ruling R11 held: the `PASS-M8C-` namespace
+was free and every Stage A and Stage B marker was present.
+
+### 2. What changed
+
+#### 2.1 `surface/bootstrap.ml` (Build-1)
+
+Item 10 adds `split_after_name_holed`, `fold_prelude_items_tailed` and
+`state_of_src_tailed`.  `Parser.parse_with_holes` is called EXACTLY
+once, the three-phase split is applied to the ITEM half of each pair,
+and `Run.hole_tail` is attached to the error of the failing item.
+`cached_state_of_src` widens to `(Run.state, Serror.t * string option)
+result`; its hit branch and its `Cache.save` are untouched.
+`cached_state` keeps its signature through `Result.map_error fst`.
+`state_of_src` (`:381`) and `state ()` (`:404`) are unchanged in line,
+in signature and in behaviour.  Exit size 550 lines, md5
+`17deba9637a69ef4be760f3b24fcbffd`.
+
+#### 2.2 `bin/tot.ml` (Build-1)
+
+The prelude-error arm of `run_with_prelude` gains `Option.iter
+prerr_endline tail;` after the existing `prerr_endline`, the exact
+expression the target-path arm at `:121` already uses.  No other arm
+changes.  Exit size 335 lines, md5 `6a964d565ed1f5b59ffedbb0c06f2d32`.
+
+#### 2.3 `dev/fixtures/` (Build-1)
+
+Two new gate-only fixtures.  `dev/fixtures/m8c-hole-positions.tot`, 6
+lines, md5 `3410918ea313f630b4e1957a650e8ad8`, is byte-identical to the
+plan block at `dev/M8-PLAN.md:1772-1777`.
+`dev/fixtures/m8c-prelude-tail-probe.tot`, 1 line, md5
+`bd1846b58897a65c7e355367489ef8d0`, is the plan line
+`dev/M8-PLAN.md:1841`.  Both live under `dev/fixtures/`, outside the two
+globs `dev/gen-m5e-transcript.sh:13` walks, so the sealed transcript
+gains no block.
+
+#### 2.4 `dev/gates.sh` (Build-2)
+
+One new block of 114 lines, three legs, in the slot the M8B block left
+free.  The block sits between the FAIL arm of `PASS-M8B-PRELUDE-94` and
+the legacy `ctxcat id 5` comment, with ONE blank line on each side, so
+`PASS-M4FIX-INST-BRANCHING` and `PASS-M5B-BRANCHING-20` stay the last
+two legs of the file.
+
+Every leg sends stdout and stderr to SEPARATE files under
+`$m5d_scratch`, pins the exact line count of each stream, pins each
+expected line as a WHOLE string through `awk 'NR==k'`, and pins the exit
+code.  No leg matches a fragment and no leg pins a count alone.  The
+record shape is the M7C block's; the private cache dir is the
+`PASS-M7D-CACHE-KEY` idiom.
+
+- `PASS-M8C-HOLE-POSITIONS` (item 8, R-Q5).  `check` on
+  `dev/fixtures/m8c-hole-positions.tot`: exit 1, stdout 0 lines and
+  empty, stderr EXACTLY 2 lines, line 1 the argument path plus
+  `:6:14: hole: no expected type at this position`, line 2 the whole
+  string `3 more hole(s) at 6:24, 6:36, 6:47`.
+- `PASS-M8C-S0-DRIVER` (item 9, A1-F6 and R-F7).  `run --no-prelude` on
+  `test/fixtures/s0-erased-guard.tot`: exit 0, stderr 0 lines and empty,
+  stdout EXACTLY 7 lines, all seven pinned in order as whole strings
+  (ruling SC-Q1, answer (a)).
+- `PASS-M8C-PRELUDE-TAIL` (item 10, A1-F4 and R-Q6).  A scratch copy of
+  `stdlib/prelude.tot` is patched by two `sd -s` calls, then `check` runs
+  under `TOT_CACHE_DIR="$m8c_ck"` and `TOT_PRELUDE="$m8c_alt"`: exit 1,
+  stdout 0 lines and empty, stderr EXACTLY 2 lines, `prelude: 93:54:
+  hole: no expected type at this position` then `2 more hole(s) at
+  94:48, 94:73`.  The leg also pins that each substitution pattern
+  occurs EXACTLY ONCE in `stdlib/prelude.tot`, so a silent no-op patch
+  cannot make the leg vacuous.
+
+One further line of `dev/gates.sh` changed, at `:1475`, under ruling
+SC-H1; see conflict note C-D15.  The tier literal of `PASS-M5D-TIERS`
+moved in place; see section 5.  `dev/gates.sh` exits at 4401 lines, md5
+`44278c9ade5a25573cb0cea212a1d4c6`.  `zsh -n dev/gates.sh` exits 0.
+
+#### 2.5 `test/surface.ml` (Build-2)
+
+Two helpers above the `cases` list and three tuples just before its
+closing bracket, after the two M8B pairs.  Every case runs IN PROCESS.
+No case shells `_build/default/bin/tot.exe`.
+
+`m8c_replace_all` makes one literal, non-overlapping substitution over a
+source string and returns the substitution COUNT beside the patched
+text.  It is written over the index list of the subject with `List.init`,
+`List.filter` and `List.fold_left`, so it uses no loop keyword.
+`m8c_prelude_tail_on_miss` reads `stdlib/prelude.tot` through
+`In_channel.with_open_text`, applies the two substitutions IN MEMORY,
+refuses a patch that did not match exactly once on each pattern, then
+asserts `Bootstrap.state_of_src_tailed patched` against `Error (e, tail)`
+with `Serror.to_string e = "93:54: hole: no expected type at this
+position"` and `tail = Some "2 more hole(s) at 94:48, 94:73"`.  It opens
+no cache directory, which is what separates it from the gate leg.
+
+M8C-1 and M8C-2 call `m7c_expect_tail` on the plan's ORDINARY OCaml
+string literals, stored partially applied with no trailing unit
+argument, because the `cases` list holds thunks.  The `{tot|...|tot}`
+form was NOT used: it carries a leading newline, which is why M8B-2
+reports 2:33 and not 1:33.  Both plan literals compiled as written, so
+no `let m8c_... : string` binding was needed.  `test/surface.ml` exits at
+2579 lines, md5 `c8e1a1945662b71864b4f34b5112cae5`.
+
+#### 2.6 `dev/M8-BUILD-LOG.md` (Build-2)
+
+This section, appended after line 1344.  The Stage A section at `:3`,
+the Stage B section at `:604` and its closing round at `:1278` were not
+rewritten.
+
+### 3. Conflict notes
+
+**C-D15.  `PASS-D-PRELUDE-ONEREAD` counts a spelling item 10 renames.**
+What the plan says: the AT-RISK list of Stage C names eight legs, and
+`PASS-D-PRELUDE-ONEREAD` is not among them; the plan predicts that no
+other leg moves.  What the tree says: `dev/gates.sh:1475` counted the
+application sites of `state_of_src` to `src` with `rg -c
+'[^_]state_of_src src'` and `dev/gates.sh:1484` pins that count at 3.
+Item 10 rewrites the cache-MISS branch to `state_of_src_tailed src`,
+which the narrow pattern does not match, so the recipe printed 2 and the
+fail-fast battery stopped with `FAIL-D-PRELUDE-ONEREAD (calls=0 srcs=2
+exit=1)`, `GATE-EXIT=1` and slice 345.  What I did: under orchestrator
+ruling SC-H1 I widened ONLY the pattern on `dev/gates.sh:1475` to
+`[^_]state_of_src(_tailed)? src`, left every other byte of that line
+alone, and KEPT the literal 3 at `:1484`.  The edit is one line in place,
+so the file kept its line count and every pinned line number at the time
+of the edit.  Measurement chain: 3 before item 10, 2 after item 10 under
+the old pattern, 3 after item 10 under the new pattern.  The literal was
+NOT moved to 2, because all three sites the comment of the leg names are
+still present (`surface/bootstrap.ml:406` inside `state ()`, `:531` the
+`TOT_CACHE_VERIFY` recompute, `:544` the cache miss), so dropping the
+literal would have weakened the assertion.  Proof of sufficiency ahead of
+the tree edit: the probe copy
+`tot-m8-probes/stage-c/gates-probe.sh`, carrying that single recipe
+patch, printed PASS 431, FAIL 0, GATE-EXIT 0, with a sorted marker set
+that diffed EMPTY against the entry baseline, 431 lines on each side.
+Ruling id: SC-H1, read with the never-weaken-an-assertion rule.
+
+**C-D16.  The prelude-error arm is at `bin/tot.ml:179-181`, not
+`:180-182`.**  What the plan says: `dev/M8-PLAN.md` and the stage brief
+both place the prelude-error arm of `run_with_prelude` at
+`bin/tot.ml:180-182`.  What the tree says: the arm measured at HEAD sits
+at `bin/tot.ml:179-181`; `:179` is `~error:(fun e ->`, `:180` is the
+`prerr_endline` of the prelude prefix, `:181` is `serror_exit))`.  What
+I did: Build-1 edited the MEASURED arm at 179 to 181 and booked the
+one-line drift here as a note, not a halt.  Ruling id: SC-Q2, the
+measured HEAD line wins where the plan cites the tree.
+
+**C-D17.  The `Bootstrap.state ()` call sites are not at the plan's
+lines, and there are nine of them.**  What the plan says: the existing
+callers are `test/surface.ml:1073`, `:2283`, `:2328` and `:2359`.  What
+the tree says: the four code call sites in `test/surface.ml` measured at
+HEAD are `:1073`, `:2375`, `:2420` and `:2451`; the lines 2283, 2328 and
+2359 hold no call.  A full sweep also finds five more code call sites in
+`test/main.ml`, at `:917`, `:1016`, `:1039`, `:1086` and `:1135`, which
+the plan does not name.  What I did: nothing.  `state ()` keeps its
+signature and its behaviour, so all nine sites compile untouched and both
+suites are green.  Blocker C-C2 did not fire.  Ruling id: SC-Q2.
+
+**C-D18.  `rg -c 'PASS-M8' dev/gates.sh` reads 20, not the predicted
+18.**  What the plan says: step 6 of the brief predicts 18, from 12 at
+entry plus 6 lines in the new block (one comment line and one echo line
+per leg).  What the tree says: the recipe printed 20.  The two extra
+lines are in the re-derivation note of `PASS-M5D-TIERS`, which names the
+three new markers in prose to explain the tier delta; the note occupies
+two lines that carry a `PASS-M8C-` spelling.  What I did: I measured and
+booked 20.  No marker was added or removed to reach a predicted number,
+and the distinct-marker check is unaffected: `rg -o 'PASS-M8C-[A-Z0-9-]+'
+dev/gates.sh | sort -u` returns EXACTLY three names,
+`PASS-M8C-HOLE-POSITIONS`, `PASS-M8C-PRELUDE-TAIL` and
+`PASS-M8C-S0-DRIVER`, and `rg -c 'echo PASS-' dev/gates.sh` reads the
+predicted 174.  Ruling id: precedent C-D4, the recipe is the authority.
+
+### 4. Decisions
+
+- **SC-R1, branch one, taken.**  `$m5d_scratch` (`dev/gates.sh:2225`) is
+  live at the insertion slot, so the PRELUDE-TAIL leg reuses it, with
+  `m8c_ck="$m5d_scratch/m8c-ck"` and
+  `m8c_alt="$m5d_scratch/prelude-holed.tot"`.  No scratch dir was added
+  and the EXIT trap at `dev/gates.sh:434` is unchanged.  The two names
+  do not collide with the `ck` and `prelude-alt.tot` of
+  `PASS-M7D-CACHE-KEY`.
+- **SC-Q1, answer (a).**  `PASS-M8C-S0-DRIVER` pins all SEVEN stdout
+  lines as whole strings in order, plus the stdout line count 7 and an
+  empty stderr.
+- **SC-Q2.**  Where the plan cites a tree line, the measured HEAD line
+  wins.  See C-D16 and C-D17.
+- **SC-Q3.**  The wrapper `PASS=` line is a NOTE, never a halt.  The
+  exit battery read 441, inside the 438 to 441 band the brief books as
+  measured, so it needs no note beyond the number.
+- **Whole records, not fragments.**  Each leg redirects stdout and
+  stderr to two files instead of folding them with `2>&1`, so both
+  streams get their own line-count assertion.  This is stricter than the
+  M7C precedent, which pins an empty stdout with `[ -z "$out" ]` only.
+- **`sd` in the gate.**  The two substitutions of the hand-broken
+  prelude use `sd -s`, the spelling of the plan block at
+  `dev/M8-PLAN.md:1817-1822`.  `dev/gates.sh` only PREPENDS to `PATH`
+  (`:441`), so `sd` stays reachable inside the battery; this was
+  verified before the block landed.
+- **No literal was edited to make a leg green.**  Every number in
+  section 5 came from the recipe printed beside it.
+
+### 5. Re-derivations, old value then new value
+
+| literal | recipe | old | new |
+| --- | --- | --- | --- |
+| `oneread_srcs` pattern, `dev/gates.sh:1475` | the pattern itself | `[^_]state_of_src src` | `[^_]state_of_src(_tailed)? src` |
+| `oneread_srcs` literal, `dev/gates.sh:1484` | `rg -c '[^_]state_of_src(_tailed)? src' surface/bootstrap.ml` | 3 | 3, unchanged |
+| `m5d_tiers`, literal in `PASS-M5D-TIERS` | `rg -c '"\$watchdog" "\$(FAST\|MED\|SLOW\|SUITE)"' dev/gates.sh` | 233 | 236 |
+| gate echoes | `rg -c 'echo PASS-' dev/gates.sh` | 171 | 174 |
+| `PASS-M8` lines | `rg -c 'PASS-M8' dev/gates.sh` | 12 | 20, see C-D18 |
+| `PASS-M8C-` lines | `rg -c 'PASS-M8C-' dev/gates.sh` | 0, exit 1 | 8, over three distinct markers |
+| `s0-erased-guard` lines | `rg -c 's0-erased-guard' dev/gates.sh` | 0, exit 1 | 2 |
+
+The tier move is recorded IN PLACE inside `PASS-M5D-TIERS`, in the same
+comment ladder Stage A and Stage B used, with the old value, the new
+value and the reason: the three new legs run the CLI three times, one
+tier call per run, and delete none.  The leg was not restructured.
+
+### 6. Exit state
+
+Exit battery, run through the wrapper into `tot-m8-stageC-gate.log`:
+
+- `BUILD-EXIT=0`
+- `GATE-EXIT=0`
+- `FAIL=` empty, so 0
+- wrapper `PASS=441`, a NOTE under SC-Q3
+- `SLICE=437`, `SLICE-BOUNDS=21,530`, from
+  `tot-m8-probes/stage-c/draft/slice.sh`
+
+437 is the contract number: 431 at entry, plus 3 gate markers, plus 3
+suite cases, exactly the arithmetic of plan section 2.2.  Blocker C-C4
+did not fire.
+
+**C-D19.  The exit-state bounds pair was booked one line early.**  SC-H2
+ruled verify checklist item 12 pass, with the note that this section had
+booked `SLICE-BOUNDS=20,529`, one line early on the OK build line rather
+than the BUILD-OK line, while `SLICE=437`, `FAIL=` empty, `GATE-EXIT=0`
+and `BUILD-EXIT=0` all agreed.  The closer corrects the pair in place to
+`SLICE-BOUNDS=21,530`, the same pair the review-fix battery in section
+`3e` already measured on `tot-m8-stageC-review-gate.log`.  `SLICE=437`
+is unchanged.  No other byte of this section moves.
+
+Suites: `test/surface.exe` 157 PASS, 0 FAIL, exit 0, tail line `M1
+surface: all tests green`; `test/main.exe` 105 PASS, 0 FAIL, exit 0,
+tail line `M0 kernel: all tests green`.  The three new cases print as
+`PASS M8C-1`, `PASS M8C-2` and `PASS M8C-3`.
+
+Every AT-RISK leg was re-measured on the exit log and is GREEN:
+`PASS-M5E-DEFAULT-IDENTITY`, `PASS-M6C-DEFAULT-IDENTITY`,
+`PASS-M6E-TRANSCRIPT-RESEALED`, `PASS-M8A-KERNEL-UNCHANGED`,
+`PASS-M7C-MULTI-HOLE-TAIL`, `PASS-M7C-SINGLE-HOLE-UNCHANGED`,
+`PASS-M7D-CACHE-KEY`, `PASS-M5D-TIERS` and `PASS-D-PRELUDE-ONEREAD`.
+
+Pinned constants re-measured at exit, all UNCHANGED: the 17-file `lib/`
+digest `ec077852495cdc0ac9a7abd4eb2fe786` over 17 files; the sealed
+transcript `dev/m5e-default-transcript.txt` at 10407 lines, md5
+`a0f222ff8b70b08d1e1ece6d199c5549`, 105 blocks; `stdlib/prelude.tot` at
+230 lines, md5 `6013fa65389a1220f9a15059294701a0`;
+`surface/cache.ml`'s `format_version` still 10, count 1 (R-Q6).  The
+one-block reseal diff for `test/fixtures/s0-erased-guard.tot` is EMPTY,
+`P6-DIFF-EXIT=0`, so blocker C-C5 did not fire.
+
+No dropped name is present: `rg -c
+'PASS-M8C-TRANSCRIPT-RESEAL|PASS-M8B-ANCHORS|PASS-M8B-RESPELL-COUNT|PASS-M8A-CONSERVATIVITY|PASS-M8D-SELF-ENTRY'
+dev/gates.sh` exits 1 with no match.
+
+Working tree at exit, `git status --porcelain -uall`:
+
+```
+ M bin/tot.ml
+ M dev/M8-BUILD-LOG.md
+ M dev/gates.sh
+ M surface/bootstrap.ml
+ M test/surface.ml
+?? dev/fixtures/m8c-hole-positions.tot
+?? dev/fixtures/m8c-prelude-tail-probe.tot
+```
+
+Nothing was staged, committed, pushed, checked out, stashed or cleaned
+by this stage.  Staging is the closer's own step.
+
+### 3d.  Mutation proofs
+
+Ruling R10 asks for one distinct one-edit mutation per leg.  The prover
+ran the three proofs below on the post-build tree, one at a time, and
+restored each target file byte for byte before the next one.  Every run
+went through `tot-m7-probes/stageB/battery-wait.sh` into its own log,
+and every slice came from `tot-m8-probes/stage-c/draft/slice.sh`.  The
+baseline is section 6: `BUILD-EXIT=0`, `GATE-EXIT=0`, `FAIL=` empty,
+`SLICE=437`.
+
+`dev/gates.sh` runs the two in-process suites FIRST, at `dev/gates.sh:93`
+(`SUITE-KERNEL`) and `dev/gates.sh:95` (`SUITE-SURFACE`), and stops at
+`TEST-FAIL` (`dev/gates.sh:97`) when either one is red.  A mutation of a
+shared code path therefore reddens a suite case before the battery
+reaches ANY gate leg, so each proof also re-runs its target leg's own
+command STANDALONE on the mutated binary.  That is the MB-1 precedent of
+Stage B.
+
+**MC-1, the `PASS-M8C-HOLE-POSITIONS` proof.**  Target file
+`surface/run.ml`, the `hole_tail` fold at line 654.  Edit: one step
+added to the pipeline of the match scrutinee, `|> List.filteri (fun i _
+-> i = 0)` after `|> List.sort loc_order`, so the fold keeps the head of
+the sorted, filtered list alone instead of the whole list.  md5 before
+the edit `fe854ef622cade1475f27d05b18fa8df`, md5 under the mutation
+`988ad460c07a07ba7436b9b9e67bb048`.  Log
+`tot-m8-stageC-mc1.log`.
+
+Battery: `BUILD-EXIT=0`, `GATE-EXIT=1`, wrapper `PASS=260`, `FAIL=5`,
+`SLICE=258`, `SLICE-BOUNDS=22,358`.  Red cases in `test/surface.exe`,
+four of them: M8C-1, the target, with `got [1:14: hole: no expected type
+at this position] tail [1 more hole(s) at 1:24], want [1:14: hole: no
+expected type at this position] tail [3 more hole(s) at 1:24, 1:36,
+1:47]`;  M8C-3, M7C-1 and M7C-3 as collateral, because all four read the
+same `hole_tail` fold.  M8C-2 stayed green, since a one-hole item has no
+tail to lose.  `test/main.exe` stayed green, 105 PASS, 0 FAIL.
+
+Prediction against measurement: the predicted shadow was
+`PASS-M7C-MULTI-HOLE-TAIL` (`dev/gates.sh:3748`).  The measured shadow
+sits EARLIER.  The battery stopped at `TEST-FAIL`, so no gate leg ran at
+all, the M7C leg included, and the log carries no `PASS-` marker.
+
+Standalone re-run of the leg command on the mutated binary,
+`_build/default/bin/tot.exe check dev/fixtures/m8c-hole-positions.tot`:
+exit 1, stdout 0 lines, stderr 2 lines.
+
+```
+/Users/oobi/Documents/tot/dev/fixtures/m8c-hole-positions.tot:6:14: hole: no expected type at this position
+1 more hole(s) at 6:24
+```
+
+The leg pins line 2 as the whole string `3 more hole(s) at 6:24, 6:36,
+6:47`, so the assertion is false and the leg is
+`FAIL-M8C-HOLE-POSITIONS`.  Restore: `surface/run.ml` md5
+`fe854ef622cade1475f27d05b18fa8df`, equal to the md5 before the edit,
+`dune build` exit 0, and `git status --porcelain -uall` lists the seven
+Stage C paths alone, `surface/run.ml` absent.
+
+**MC-2, the `PASS-M8C-S0-DRIVER` proof.**  Target file `lib/erase.ml`,
+line 33, `  | Term.App (Quantity.Zero, f, _a) -> term ctx f`.  Edit: the
+arm walks the erased argument as well,
+
+```
+  | Term.App (Quantity.Zero, f, _a) ->
+      Result.bind (term ctx f) (fun ef -> Result.map (fun _ -> ef) (term ctx _a))
+```
+
+md5 before the edit `f4b68f9fa3bac75f2c1f217ce46a08c9`, md5 under the
+mutation `6ff5648e7865e43a15542f39b4f12865`.  Log
+`tot-m8-stageC-mc2.log`.
+
+Battery: `BUILD-EXIT=0`, `GATE-EXIT=1`, wrapper `PASS=101`, `FAIL=6`,
+`SLICE=99`, `SLICE-BOUNDS=20,167`.  Red cases in `test/main.exe`, six of
+them: T0, the case `surface/run.ml:86` names, with
+`erased-guard-no-self-ref: erased variable j used at runtime`, then B2,
+C1, C2, C3 and C4, every one of them a `Check.define` case whose def
+carries an erased application.  `test/surface.exe` printed one line and
+exited 1, `bootstrap failed: 16:1: erased variable A used at runtime`, so
+no surface case ran.
+
+Prediction against measurement: the predicted collateral was
+`case_ghost_guard_is_unguarded` (`test/surface.ml:629`) and the T0 case
+at `test/surface.ml:1424`.  T0 is red as predicted, in `test/main.exe`.
+The surface case did NOT run, because the mutation stops the erasure of
+`stdlib/prelude.tot:16` and the surface suite cannot bootstrap.  The
+kernel suite is the measured shadow, one step before `SUITE-SURFACE`.
+
+Standalone re-run of the leg command on the mutated binary,
+`_build/default/bin/tot.exe run --no-prelude test/fixtures/s0-erased-guard.tot`:
+exit 1, stdout 0 lines, stderr 1 line.
+
+```
+/Users/oobi/Documents/tot/test/fixtures/s0-erased-guard.tot:3:1: erased variable j used at runtime
+```
+
+The leg pins exit 0, seven stdout lines and an empty stderr, so the leg
+is `FAIL-M8C-S0-DRIVER`.  The message names the erased variable `j`, from
+the `Var` arm at `lib/erase.ml:26`, and not the `match` arm at
+`lib/erase.ml:64` of the estimate: the walk into the dropped argument
+meets the erased variable one arm earlier.  The observable of the leg is
+red either way.
+
+Restore: `lib/erase.ml` md5 `f4b68f9fa3bac75f2c1f217ce46a08c9`, equal to
+the md5 before the edit.  The 17-file `lib/` digest, by the recipe
+`PASS-M8A-KERNEL-UNCHANGED` uses at `dev/gates.sh:4194`, reads
+`ec077852495cdc0ac9a7abd4eb2fe786` over 17 files, its pinned value.
+`dune build` exit 0, and `git status --porcelain -uall` lists the seven
+Stage C paths alone, `lib/erase.ml` absent.
+
+**MC-3, the `PASS-M8C-PRELUDE-TAIL` proof.**  Target file `bin/tot.ml`,
+the prelude-error arm at lines 179 to 181 as build-1 left it.  Edit: the
+added call `Option.iter prerr_endline tail;` deleted, so the miss path
+prints one stderr line instead of two.  md5 before the edit
+`6a964d565ed1f5b59ffedbb0c06f2d32`, the build-1 digest, md5 under the
+mutation `8cf254f0651ef2653ab40e86bf5be805`.  Log
+`tot-m8-stageC-mc3.log`.
+
+Battery: `BUILD-EXIT=0`, `GATE-EXIT=1`, wrapper `PASS=438`, `FAIL=1`,
+`SLICE=434`, `SLICE-BOUNDS=21,528`.  The one red line is the target,
+`FAIL-M8C-PRELUDE-TAIL (exit=1 pat=1/1)` at log line 527.  The two
+substitution counts stayed 1 and 1, so the red comes from the message
+and not from a drifted recipe.  The slice is 434 and not 437 because the
+battery stops at the red leg and never reaches the legs after it.
+
+No collateral.  `PASS-M8C-HOLE-POSITIONS` and `PASS-M8C-S0-DRIVER` are
+green in the same log, at lines 524 and 525.  `test/surface.exe` is
+green, 157 PASS, 0 FAIL, and `test/main.exe` is green, 105 PASS, 0 FAIL.
+
+Prediction against measurement: as predicted, suite case M8C-3 stayed
+GREEN under the mutation.  M8C-3 calls
+`Bootstrap.state_of_src_tailed` in process and never enters `bin/tot.ml`,
+so it watches the tail at the state builder, and the gate leg watches the
+same tail at the CLI.  That division of labour is the reason the stage
+owns BOTH a gate leg and a suite case for one piece of plumbing: the
+suite case proves the tail is computed, the gate leg proves the driver
+prints it.
+
+Standalone re-run of the leg command on the mutated binary,
+`env TOT_CACHE_DIR=<scratch>/m8c-ck TOT_PRELUDE=<scratch>/prelude-holed.tot
+_build/default/bin/tot.exe check dev/fixtures/m8c-prelude-tail-probe.tot`,
+with the hand-broken prelude built by the leg's own `cp` plus two `sd`
+calls in a scratch dir: exit 1, stdout 0 lines, stderr 1 line.
+
+```
+prelude: 93:54: hole: no expected type at this position
+```
+
+The leg pins the stderr line count at 2 and line 2 as the whole string
+`2 more hole(s) at 94:48, 94:73`, so the assertion is false and the leg
+is `FAIL-M8C-PRELUDE-TAIL`.  `stdlib/prelude.tot` was not written: its
+md5 is `6013fa65389a1220f9a15059294701a0` after the run.
+
+Restore: `bin/tot.ml` md5 `6a964d565ed1f5b59ffedbb0c06f2d32`, equal to
+the md5 before the edit and to the build-1 digest, `dune build` exit 0.
+
+After the three proofs, `git status --porcelain -uall` reads:
+
+```
+ M bin/tot.ml
+ M dev/M8-BUILD-LOG.md
+ M dev/gates.sh
+ M surface/bootstrap.ml
+ M test/surface.ml
+?? dev/fixtures/m8c-hole-positions.tot
+?? dev/fixtures/m8c-prelude-tail-probe.tot
+```
+
+The seven Stage C paths alone, as the Build stage left them plus this
+subsection.  No mutation target is listed.  Nothing was staged,
+committed, pushed, checked out, stashed or cleaned.
+
+### 3e.  Review fixes
+
+The review stage of Stage C filed five findings against the Build
+stage tree.  Two of them are the same defect from two finders, and two
+more are a second instance of it.  One is a note.  Ruling SC-H3 owns
+the class: each wrong line-number self-citation inside the new M8C
+comment block is one LOW finding, and the fix is comment bytes only,
+with no recipe, no literal, no marker, no echo and no line-count
+change.
+
+**Applied, two comment lines in `dev/gates.sh`.**
+
+Findings `item10-1` and `legs-1` are the same defect.  `dev/gates.sh:4231`
+cited the M7C whole-record block as `dev/gates.sh:3710-3748`, which is a
+HEAD number.  Conflict note C-D15 widens the PASS-D-PRELUDE-ONEREAD
+pattern in place, and step 2 of the tier work inserts 7 lines at
+`dev/gates.sh:2338`, so every line after 2338 moves by +7.  The M7C block
+is at 3717 to 3755 in the tree that ships.  The line now reads:
+
+```
+# block's (dev/gates.sh:3717-3755);  the private cache dir is the
+```
+
+Findings `item10-2` and `legs-2` are the second instance.
+`dev/gates.sh:4232` cited the PASS-M7D-CACHE-KEY private-cache pair as
+`dev/gates.sh:3852-3853`, again a HEAD number under the same +7 shift.
+`m7d_ck` is at 3859 and `m7d_alt` is at 3860 in the tree.  The line now
+reads:
+
+```
+# PASS-M7D-CACHE-KEY idiom (dev/gates.sh:3859-3860).  The scratch dir
+```
+
+Both replacements are the same width as the text they replace, 9
+characters for 9 characters, so `dev/gates.sh` keeps its 4401 lines.
+The three diff hunks against HEAD keep their bounds, `@@ -1475 +1475 @@`,
+`@@ -2338 +2338,8 @@` and `@@ -4217,0 +4225,115 @@`.  Every pinned line
+number is where it was: the EXIT trap at 434, the widened
+PASS-D-PRELUDE-ONEREAD recipe at 1475 with its literal 3 at 1484, the
+`m5d_scratch` mktemp at 2225, the M7B slot line at 3667, the M8B echo at
+4222 and the M8C block at 4225 to 4339.  The M8B number was booked as
+4215 in the first draft of this subsection, which is the M8B prose line,
+not the echo: `awk` on the tree reads `# on a tree that carries the hole
+in ANY of the three slots of line 94,` at 4215 and
+`&& echo PASS-M8B-PRELUDE-94` at 4222.  The other citations of the
+block re-measure correct and are untouched: 2225, 434, `lib/erase.ml:33`
+and `:64`, `dev/gen-m5e-transcript.sh:13` and
+`dev/M8-PLAN.md:1753-1877`.
+
+The fresh md5 of `dev/gates.sh` after the fix is
+`15aa6c3a5357571768a8b5117afd2298`, at 4401 lines.  The closer takes it
+from here and books conflict note C-D20 under SC-H3.  The id is C-D20,
+not C-D17: C-D17 is already taken by the `Bootstrap.state ()` call-site
+note at this file's line 1524, and the closer renumbers its own later
+note to the next free id so every id appears exactly once.
+
+**Declined, one note and one out-of-scope citation.**
+
+Finding `item10-5` reports that `Bootstrap.state_of_src_tailed` re-spells
+the phase-marker message that `Bootstrap.state_of_src` holds, and that
+nothing pins the two spellings equal.  The re-spelling is real, at
+`surface/bootstrap.ml:387` and `:460`, and no gate and no suite case
+breaks a phase marker, so a one-sided edit is silent in the battery.
+The fix is declined this round for two reasons.  The finding's first
+option lifts the local `not_found` out of `state_of_src`, and
+`dev/M8-PLAN.md:1716` reads verbatim "`Bootstrap.state_of_src` itself is
+UNCHANGED", so that option is not admissible in Stage C.  The finding's
+second option adds a comment, and SC-H3 confines this fix stage to the
+citation corrections in `dev/gates.sh` and nothing else.  The finder
+itself grades the item as a note to carry, not work for this round.  It
+moves no gate number.  Carry it to Stage D; if a comment is ever added,
+it goes on the `:456` side alone and it names `surface/bootstrap.ml:387`
+as the twin.
+
+`dev/gates.sh:4217` cites `dev/gates.sh:3660` for the `m7b_slots` line,
+which the same +7 shift moves to 3667.  That line is a Stage B comment
+in the M8B block, not a line of the M8C comment block, and no confirmed
+finding covers it.  SC-H3 scopes the finder to the M8C comment block and
+scopes this stage to the corrections it filed, so the line is left as it
+stands and is reported to the closer instead.
+
+**Exit battery after the fix**, run through the wrapper into
+`tot-m8-stageC-review-gate.log`:
+
+- `BUILD-EXIT=0`
+- `GATE-EXIT=0`
+- `FAIL=` empty, so 0
+- wrapper `PASS=441`, a NOTE under SC-Q3
+- `SLICE=437`, `SLICE-BOUNDS=21,530`, from
+  `tot-m8-probes/stage-c/draft/slice.sh`
+
+437 is the contract number and it did not move, which is what a
+comment-bytes fix must show.  No `^FAIL-` line is in the log.
+
+Every at-risk leg re-measured green in the same run:
+PASS-D-PRELUDE-ONEREAD at log line 440, PASS-M5D-TIERS at 464,
+PASS-M5E-DEFAULT-IDENTITY at 469, PASS-M6C-DEFAULT-IDENTITY at 487,
+PASS-M6E-TRANSCRIPT-RESEALED at 498, PASS-M7C-MULTI-HOLE-TAIL at 508,
+PASS-M7C-SINGLE-HOLE-UNCHANGED at 509, PASS-M7D-CACHE-KEY at 513 and
+PASS-M8A-KERNEL-UNCHANGED at 522.  The three new markers are at 524,
+525 and 526.  The three suite cases M8C-1, M8C-2 and M8C-3 pass in both
+suite runs.
+
+No re-derivation is booked for this subsection.  A comment line holds no
+literal, so no recipe was re-run and no value moved.  C-D15 and the tier
+literal keep the values the Build stage booked.
+
+The porcelain is the seven Stage C paths alone:
+
+```
+ M bin/tot.ml
+ M dev/M8-BUILD-LOG.md
+ M dev/gates.sh
+ M surface/bootstrap.ml
+ M test/surface.ml
+?? dev/fixtures/m8c-hole-positions.tot
+?? dev/fixtures/m8c-prelude-tail-probe.tot
+```
+
+Nothing was staged, committed, pushed, checked out, stashed or cleaned.

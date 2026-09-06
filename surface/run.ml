@@ -216,18 +216,7 @@ let rec item ?(budget : Budget.t = Budget.unlimited) ~(exec : bool) ~(policy : p
          inside [Check.define], which also rejects duplicates against
          the ORIGINAL globals) *)
       let elab_globals =
-        if rec_ then
-          Global.add name
-            (Global.Def
-               {
-                 Global.ty = ty_t;
-                 def = Term.Global name;
-                 reducible = false;
-                 rec_arg = None;
-                 partial = false;
-               })
-            st.globals
-        else st.globals
+        if rec_ then Global.add_rec_self name ty_t st.globals else st.globals
       in
       (* M6 Stage C (pins 1-3): the declared type is the body's root
          expected type;  [Elab.term_at] fills expected-type-only holes

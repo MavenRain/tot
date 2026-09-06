@@ -4,4 +4,5 @@
 ; comment beside the regex engine for the full rationale).
 (library
  (name tot_kernel)
- (libraries str))
+ (libraries str)
+ (private_modules global_store))

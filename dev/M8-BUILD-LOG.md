@@ -1945,3 +1945,1085 @@ The porcelain is the seven Stage C paths alone:
 ```
 
 Nothing was staged, committed, pushed, checked out, stashed or cleaned.
+
+## Stage D (2026-09-05): lib/ takes its interfaces
+
+The last stage of M8.  The kernel gets an interface for every module,
+and the environment storage moves behind a private module, so a client
+outside the library can no longer write an entry into the environment
+without going through `Check`.  The stage adds no admission rule, no
+elaboration rule and no observable behaviour.  It does not write
+`stdlib/prelude.tot` and it does not touch `surface/cache.ml`.
+
+### 1. Entry state
+
+Entry commit `6d0d48d`, the M8 Stage C exit commit, subject "M8 Stage C:
+the prelude miss path reports every hole, s0-erased-guard joins the
+battery, gate battery 431 to 437".  `git status --porcelain -uall`
+printed NOTHING at entry, so blocker D-C0 did not fire.  The entry
+battery, run through the wrapper
+(`tot-m7-probes/stageB/battery-wait.sh`) into
+`/Users/oobi/Documents/tot-m8-stageD-entry-gate.log`, printed
+BUILD-EXIT=0, GATE-EXIT=0, PASS=441 and no FAIL line.  The slice recipe
+over that log printed SLICE=437 and SLICE-BOUNDS=14,523.
+
+The entry measurements this stage moves, each with the recipe that
+printed it:
+
+- `rg -c 'PASS-M8D-' dev/gates.sh` exited 1 with no match, so the
+  PASS-M8D- namespace was free.
+- `rg -c 'echo PASS-' dev/gates.sh` printed 174.
+- `rg -c 'PASS-M8' dev/gates.sh` printed 20.
+- `rg -c '"\$watchdog" "\$(FAST|MED|SLOW|SUITE)"' dev/gates.sh` printed
+  236, which is the live `PASS-M5D-TIERS` literal.
+- `fd -e ml --max-depth 1 . lib | wc -l` printed 17, and the same
+  recipe over `.mli` printed 2.
+- The `comm` gap between the two basename sets printed 15.
+- The 17-file kernel digest was `ec077852495cdc0ac9a7abd4eb2fe786`.
+- The five-example output digest was `f1450de0006de4b7339b2f39ec2e2e50`
+  over 43 lines, with the five per-file exit codes all 0.
+- `dev/gates.sh` was 4401 lines, md5 `15aa6c3a5357571768a8b5117afd2298`.
+  `test/surface.ml` was 2579 lines, md5
+  `c8e1a1945662b71864b4f34b5112cae5`.  `SPEC.md` was 2675 lines, md5
+  `c6283c51f4b2ed10dca1e2da3043c18f`.  This log was 1947 lines, md5
+  `4a7fbaf915afcdf200a9aef0d07f5009`.
+
+### 2. What changed
+
+#### 2.1 `lib/`, `surface/run.ml`, `test/dune` and `test/main.ml` (Build-1 and Build-2)
+
+Build-1 added `lib/global_store.ml` and `lib/global_store.mli`, the
+private `Map.Make (String)` store with the plan's four values, declared
+`(private_modules global_store)` in `lib/dune`, rewired `Global` onto
+`type t = entry Global_store.t` and added `add_rec_self`, redirected the
+eight `Check` insertion sites and the one environment fold in
+`inst_table_stats` to the private store, collapsed the twelve-line
+provisional self entry at `surface/run.ml:219-230` to the one
+`Global.add_rec_self` call, wrote `lib/global.mli` with no general
+insertion, split `test/dune` into the two pinned stanzas, and moved the
+five white-box insertion sites of `test/main.ml` onto the private store
+spelling.  Build-2 added the other fourteen interfaces, every signature
+taken from the compiler with `ocamlc -i` and then narrowed to the
+members the external and the sibling caller columns name.  `lib/` now
+holds 18 `.ml` files and 18 `.mli` files.  Neither build touched
+`dev/gates.sh`, `test/surface.ml`, `SPEC.md` or this log.
+
+#### 2.2 `dev/gates.sh` (Build-3)
+
+Three legs land in one block at the slot the prep measured,
+`dev/gates.sh:4339` at entry, which is the blank line between the M8C
+block and the legacy `# ctxcat id 5` comment (ruling SD-R3).  One blank
+line stays on each side, so `PASS-M4FIX-INST-BRANCHING` and
+`PASS-M5B-BRANCHING-20` remain the file's last two legs.  The block
+opens no scratch dir: it uses `$m5d_scratch` (`dev/gates.sh:2225`) and
+`$m5d_bin` (`:2226`), which are both live at that slot, so the EXIT trap
+at `dev/gates.sh:434` still names nine dirs.  Each leg quotes its own
+plan Marker paragraph verbatim in its comment header.
+
+- `PASS-M8D-MLI-COVERAGE` (plan `dev/M8-PLAN.md:2178-2184`).  The `comm`
+  over the two basename sets is captured first and counted second, so
+  the captured exit code is `comm`'s and not `tr`'s.  Four whole-record
+  assertions: the `comm` exit code 0, the gap count the whole string
+  `0`, the gap text empty, and the two file counts 18 `.ml` and 18
+  `.mli` pinned SEPARATELY, so a deletion that drops a `.ml` and its
+  `.mli` together cannot keep the difference at 0.  The FAIL arm prints
+  the gap list itself, so the diagnostic names the modules.
+- `PASS-M8D-KERNEL-INTERNAL` (plan `dev/M8-PLAN.md:2186-2196`).  The
+  negative half is the plan's own regex `^\s*val add\b` over
+  `lib/global.mli`, and the plan's exit discipline is written out: code
+  1 is the ONLY pass, code 0 means the forbidden export is back, code 2
+  means the interface file is missing, and both are FAIL.  The positive
+  half pins the whole line
+  `val add_rec_self : string -> Term.t -> t -> t` exactly once, so the
+  leg cannot be satisfied by deleting the interface (ruling SD-Q5).
+- `PASS-M8D-NO-BEHAVIOUR-CHANGE` (plan `dev/M8-PLAN.md:2198-2208`).  The
+  five reference examples run one at a time under `"$watchdog" "$FAST"`,
+  each exit code is kept, and every stdout and stderr byte appends to
+  one file in the plan's order.  Seven assertions: the five exit codes 0
+  each, the digest the whole string `f1450de0006de4b7339b2f39ec2e2e50`,
+  and the line count 43.  The plan's own `xargs -I{}` pipeline does not
+  stop on a non-zero child, so a per-file exit assertion beside the
+  digest is required (plan `:2202-2203`);  the file this leg digests has
+  the same md5 as the plan pipeline's output, measured on this tree.
+
+`PASS-M8A-KERNEL-UNCHANGED` takes the D4 transition IN PLACE.  The leg,
+its failure arm, its echo and its mutation are preserved.  Three things
+move: the sorted `cat` list at the entry `dev/gates.sh:4195` gains
+`"$ROOT"/lib/global_store.ml` between `global.ml` and `interp.ml`, the
+count assertion moves from 17 to 18, and the digest literal moves from
+`ec077852495cdc0ac9a7abd4eb2fe786` to `e49ff916b7235f223e8dcaa498fc3aee`.
+The comment header now says that the leg freezes the POST-STAGE-D
+kernel, that the digest is a literal measured once during the reviewed
+transition, and that the gate never derives it from the live source and
+never accepts either digest.
+
+`PASS-M5D-TIERS` keeps its name, its marker, its mutation proofs and all
+four assertions, and its live tier literal is re-derived from 236 to
+241.  The paragraph above the assertion records the move in the shape
+every earlier stage used.
+
+#### 2.3 `test/surface.ml` (Build-3)
+
+One helper, `m8d_f1_witness_entry`, sits with the other case helpers
+above `let cases`, and one tuple registers it immediately before the
+list's closing `]`.  The case folds `test/fixtures/f1-witness.tot` IN
+PROCESS through `script_items`, from the no-prelude initial state,
+because the fixture declares `Nat` itself.  It then reads the FINAL
+checked entry for `add` through the public `Global` interface and
+asserts `rec_arg = Some 0` and `reducible = true`.  It runs no
+subprocess and does not read `_build/default/bin/tot.exe`.  The helper
+is stored PARTIALLY APPLIED, with no trailing unit argument, because the
+cases list holds thunks.  The existing CLI F1 case and the five
+raw-environment kernel cases of `test/main.ml` are untouched.
+
+#### 2.4 `SPEC.md` (Build-3)
+
+One paragraph closes section 4, "Kernel modules": every kernel module
+carries an interface, `lib/` holds 18 `.ml` and 18 `.mli` files, the
+environment lives behind the private `Global_store`, `Global` publishes
+`empty`, `find` and `add_rec_self` and no general insertion, the sibling
+modules use the private store directly, and the baseline digest covers
+the 18 `.ml` files while the interfaces enter neither that digest nor
+the file count.  One dated row closes section 2, the decision log, in
+the file's own row shape.  Nothing else in `SPEC.md` moves.
+
+### 3. Conflict notes
+
+The ids below are allocated by the closer from the measured maximum over
+all `C-D[0-9]+` tokens in this log at closing time (ruling SD-R1).  The
+build stage writes the notes in order, (a) to (d), and does not invent
+an id.
+
+**Note (a), C-D21.  The `PASS-M8` line count reads 30, not the predicted 26.**
+What the plan says: the stage prep predicts `rg -c 'PASS-M8'
+dev/gates.sh` at 26 after the stage, up from 20, that is two lines per
+new leg, the comment header line and the success echo.  What the tree
+says: the recipe prints 30.  Each new leg quotes its own plan Marker
+paragraph VERBATIM in its comment header, and the plan's paragraph opens
+with a `Marker: PASS-M8D-<NAME>` line, so every new marker name sits on
+three lines and not two, which is 29;  the `PASS-M5D-TIERS` re-derivation
+paragraph names `PASS-M8D-NO-BEHAVIOUR-CHANGE` as the leg that adds the
+five tier calls, which is the thirtieth.  Every earlier `PASS-M8`
+name is on three lines for the same reason, so 30 is the value the
+file's own convention produces.  What I did: nothing was deleted to
+reach 26.  The verbatim quotation is the instruction the build carries,
+and a derived count is a NOTE and never a halt.  The load-bearing
+numbers are measured and green: `rg -c 'echo PASS-' dev/gates.sh` prints
+177, the distinct `PASS-M8[A-D]-` name set is exactly ELEVEN, three of
+them Stage D, and `rg -o '&& echo (PASS-M8[A-D]-[A-Z0-9-]+)' -r '$1'
+dev/gates.sh | sort | uniq -d` prints NOTHING, so no success echo
+repeats (plan section 8.2, plan `:2231-2232`).  The ruling I acted
+under: a derived count is a note, precedent C-D18 in the Stage C
+section and C-D4.
+
+**Note (b), C-D22.  The behaviour leg runs under the watchdog, so the tier
+literal moves 236 to 241.**  What the plan says: the drafted leg in the
+stage prep invokes `"$ROOT"/_build/default/bin/tot.exe check` five times
+with no watchdog, which would leave the `PASS-M5D-TIERS` literal at 236.
+What the tree says: `dev/gates.sh:521-522` records the battery's own
+rule, M3 fixes round 2 (ctxcat id 18), that a CLI invocation runs under
+`"$watchdog"` and never bare, and design pin 17 requires every leg to
+name a tier.  What I did: the five example runs go through `"$watchdog"
+"$FAST" "$m5d_bin"`, which is the same binary the prep names, and I
+re-derived the tier literal with the leg's own recipe, 236 before and
+241 after, and recorded the move in the comment ladder above the
+assertion in the shape every earlier stage used.  The digest is
+unaffected: the same five runs, bare and under the watchdog, both print
+`f1450de0006de4b7339b2f39ec2e2e50` over 43 lines with the five per-file
+exit codes 0.  The ruling I acted under: the live recipe is the
+authority over a remembered number (C-D4), and no tier call was added or
+removed to reach a predicted number.
+
+**Note (c), C-D23.  The suite case carries the name the build brief spells,
+not the prep's draft name.**  What the plan says: the stage prep drafts
+the tuple as `"M8D-1 m8d_final_rec_entry: the checked f1-witness def
+lands in globals with rec_arg = Some 0 and reducible = true"` with the
+helper `m8d_final_rec_entry`.  What the tree says: the build brief gives
+the case name to use VERBATIM, `"M8D-1 m8d_f1_witness_entry: the FINAL
+checked entry for add carries rec_arg = Some 0 and reducible = true,
+read through the public Global interface"`.  The two disagree in the
+helper name and in the wording of the claim, and they agree in the
+tag `M8D-1` and in what is asserted.  What I did: I used the brief's
+string verbatim and named the helper `m8d_f1_witness_entry`, so the
+name inside the case string is the name of the function the tuple
+stores.  The observable is unchanged: the case folds the fixture in
+process from the no-prelude initial state and asserts `rec_arg = Some 0`
+and `reducible = true` on the final checked entry.  The ruling I acted
+under: plan section 3.2's first move, a source-string substitution when
+the two texts disagree, with the operative instruction winning and the
+drift booked.
+
+**Note (d), C-D24.  The prep's plan-line citations for the three Marker
+paragraphs are two lines late.**  What the plan says: the prep cites the
+Marker paragraphs as `dev/M8-PLAN.md:2178-2186`, `:2188-2198` and
+`:2200-2209`.  What the tree says: `awk` over `dev/M8-PLAN.md` puts
+`Marker: PASS-M8D-MLI-COVERAGE` at `:2178` and its last line at `:2184`,
+`Marker: PASS-M8D-KERNEL-INTERNAL` at `:2186` with its last line at
+`:2196`, and `Marker: PASS-M8D-NO-BEHAVIOUR-CHANGE` at `:2198` with its
+last line at `:2208`;  `:2185`, `:2197` and `:2209` are blank.  What I
+did: each leg comment cites the MEASURED range, and the quoted paragraph
+under it is the plan's own bytes.  The ruling I acted under: where the
+plan cites the tree, the measured line wins and the drift is a note,
+never a halt.
+
+### 4. Decisions
+
+1. The three legs form ONE block at the entry slot `dev/gates.sh:4339`,
+   with one blank line on each side (ruling SD-R3).  The two fixed-last
+   performance legs stay last, and the M8C block above is untouched:
+   it keeps its `$m5d_scratch` file names, and the M8D block adds none
+   that collide with them.
+2. The block adds NO scratch dir.  It writes its one capture file into
+   `$m5d_scratch`, which the EXIT trap at `dev/gates.sh:434` already
+   cleans, so the trap keeps its nine dirs.
+3. Every M8D assertion is a whole record.  The coverage leg pins the
+   `comm` exit code, the gap count as the whole string `0`, the empty
+   gap text and the two file counts separately.  The boundary leg pins
+   an exit code, an empty capture and one whole interface line.  The
+   behaviour leg pins five exit codes, one digest and one line count.
+   No leg matches a substring.
+4. `PASS-M8D-KERNEL-INTERNAL` passes on `rg` exit 1 alone.  Exit 0 and
+   exit 2 are both FAIL, so a deleted `lib/global.mli` cannot pass, and
+   the positive half pins `val add_rec_self` as a whole line so an empty
+   interface cannot pass either (ruling SD-Q5).
+5. `PASS-M8D-NO-BEHAVIOUR-CHANGE` does not use the plan's `xargs`
+   pipeline.  `xargs -I{}` does not stop on a non-zero child, so a
+   per-file exit code would hide inside a green digest (plan
+   `:2202-2203`).  The five runs are separate and the file they append
+   to has the same md5 as the plan pipeline's output.
+6. The D4 transition moves three literals IN PLACE and restructures
+   nothing.  The digest is the value build-1 measured once, after the
+   `.ml` edits landed, and build-3 re-ran the same recipe on the exit
+   tree and got the same string before pinning it.
+7. `PASS-M5D-TIERS` is re-derived, never guessed, and the leg is not
+   restructured.
+8. The suite case is IN PROCESS.  It reads the final entry through the
+   public interface, so it observes the boundary this stage builds and
+   not the CLI's printed lines.
+
+### 5. Re-derivations, old value then new value
+
+Every row is a live recipe.  The old column is the entry measurement of
+section 1, and the new column is the exit measurement of section 6.  No
+row is a remembered number.
+
+| Recipe | Old | New |
+| --- | --- | --- |
+| `rg -c 'echo PASS-' dev/gates.sh` | 174 | 177 |
+| `rg -c 'PASS-M8' dev/gates.sh` | 20 | 30 |
+| `rg -c 'PASS-M8D-' dev/gates.sh` | 0, exit 1 | 10 |
+| `rg -c '&& echo PASS-M8D-' dev/gates.sh` | 0, exit 1 | 3 |
+| `rg -c '"\$watchdog" "\$(FAST\|MED\|SLOW\|SUITE)"' dev/gates.sh` | 236 | 241 |
+| the `PASS-M5D-TIERS` literal | 236 | 241 |
+| `fd -e ml --max-depth 1 . lib \| wc -l` | 17 | 18 |
+| `fd -e mli --max-depth 1 . lib \| wc -l` | 2 | 18 |
+| the `comm` gap between the two basename sets | 15 | 0 |
+| the kernel `cat` digest | `ec077852495cdc0ac9a7abd4eb2fe786` | `e49ff916b7235f223e8dcaa498fc3aee` |
+| the `PASS-M8A-KERNEL-UNCHANGED` count literal | 17 | 18 |
+| the five-example digest | `f1450de0006de4b7339b2f39ec2e2e50` | `f1450de0006de4b7339b2f39ec2e2e50` |
+| the five-example line count | 43 | 43 |
+| `test/surface.ml` case count, the suite's own PASS total | 157 | 158 |
+| `dev/gates.sh` line count | 4401 | 4556 |
+| `test/surface.ml` line count | 2579 | 2615 |
+| `SPEC.md` line count | 2675 | 2708 |
+| the battery slice | 437 | 441 |
+| `rg -n 'let format_version' surface/cache.ml` | `118:let format_version : int = 10` | `118:let format_version : int = 10` |
+| `rg -c 'TOT-CACHE-VERIFY-OK'` on the warm run's output | 1 | 1 |
+| the `prelude-*.bin` blob byte size | 15044 | 15044 |
+| the `prelude-*.bin` BODY md5, `tail -c +81 <blob> \| md5 -q` | `0d3ba0d8dc9c63895f2e3a9a584737da` | `0d3ba0d8dc9c63895f2e3a9a584737da` |
+| the `prelude-*.bin` whole-file md5, a NOTE and never a pin | `33f4bba03dd2e33218e1626a52415005` | `0145945413c36ee370cd11d5e384d1cb` |
+
+The five-example digest and its line count are the two rows that must
+NOT move, and they did not.  That pair is the stage's claim that the
+interface sweep is not observable.
+
+The five cache rows are the AFTER capture the plan requires at
+`dev/M8-PLAN.md:2162-2169`.  The BODY md5 is the pin and it did not move,
+which is the claim that the marshalled Map representation is unchanged.
+The whole-file md5 is a NOTE: the blob's last 32 bytes hold the digest of
+the binary that wrote it (`surface/cache.ml:127-133`), so that value moves
+on every rebuild by construction (ruling RUL-D2).  `format_version` stays
+10, the cache entries stay on disk as evidence, and no transcript
+expectation was edited.
+
+The `PASS-M8` row reads 30 where the stage prep predicts 26.  See
+conflict note (a) of section 3: the count is derived, each leg header
+quotes the plan's `Marker:` line verbatim, and the load-bearing numbers,
+177 success echoes and eleven distinct `PASS-M8[A-D]-` names with no
+duplicate, are green.
+
+### 6. Exit state
+
+The exit battery ran through the wrapper,
+`zsh /Users/oobi/Documents/tot-m7-probes/stageB/battery-wait.sh
+/Users/oobi/Documents/tot-m8-stageD-gate.log 12 3600`, and the slice
+recipe ran over the same log:
+
+```
+RUNNER-EXIT=0
+31:BUILD-EXIT=0
+554:GATE-EXIT=0
+555:PASS=445
+556:FAIL=
+SLICE=441
+SLICE-BOUNDS=41,554
+```
+
+The slice is the contract, and 441 is the green number for this stage,
+437 at entry plus the three new legs and the M8D suite case that the
+surface suite's own count carries into the slice.  `rg -c '^FAIL-'` over
+the log printed 0, and the only line that starts with `FAIL` is the
+wrapper's own empty `FAIL=` summary at `:556`.  The wrapper `PASS=445`
+counts four success lines outside the slice bounds `41,554`, so it is a
+NOTE and not the contract.  No dune load artefact appeared: `rg -i
+'dune.*load|Error: Dune'` over the log printed nothing, so no rerun was
+needed.
+
+The three new markers print in block order, at the end of the run and
+before the two fixed-last performance legs' section:
+
+```
+548:PASS-M8D-MLI-COVERAGE
+549:PASS-M8D-KERNEL-INTERNAL
+550:PASS-M8D-NO-BEHAVIOUR-CHANGE
+```
+
+The two transitioned legs print green in their own places,
+`485:PASS-M5D-TIERS` and `543:PASS-M8A-KERNEL-UNCHANGED`.
+
+In `dev/gates.sh` the success echoes sit at `:2355` for
+`PASS-M5D-TIERS`, `:4219` for `PASS-M8A-KERNEL-UNCHANGED`, and `:4399`,
+`:4436` and `:4488` for the three Stage D markers.  The M8 echo ladder
+now reads `:4114`, `:4144`, `:4182`, `:4219`, `:4239`, `:4275`, `:4310`,
+`:4350`, `:4399`, `:4436`, `:4488`.
+
+The two in-process suites, run one at a time under the battery's own
+runner: `test/main.ml` printed 105 PASS and 0 FAIL, exit 0, unchanged;
+`test/surface.ml` printed 158 PASS and 0 FAIL, exit 0, up one from 157,
+with `PASS M8D-1 m8d_f1_witness_entry: the FINAL checked entry for add
+carries rec_arg = Some 0 and reducible = true, read through the public
+Global interface` on the suite's output line 186.  `zsh -n dev/gates.sh`
+printed SYNTAX-OK.
+
+The files this stage owns, at exit:
+
+- `dev/gates.sh`, 4556 lines, md5 `165f9e8529352b86672623bf6d7d0c06`.
+- `test/surface.ml`, 2615 lines, md5 `5f6947ec78646518784eed8620e47615`.
+- `SPEC.md`, 2708 lines, md5 `06c6ad84cc9e51ae33a82d7b8aa185ed`.
+- `dev/M8-BUILD-LOG.md`, 2088 lines before this section landed, md5
+  `f9181b92eee6903f8ed68aed049801e6`.
+
+The files the stage must NOT move, re-measured at exit and all
+unchanged: `surface/cache.ml:118` still reads `let format_version : int
+= 10` (ruling R-Q6), `stdlib/prelude.tot` is md5
+`6013fa65389a1220f9a15059294701a0`, the sealed transcript is md5
+`a0f222ff8b70b08d1e1ece6d199c5549` over 10407 lines,
+`lib/quantity.ml` is md5 `b95cca1ca3d013f2d3599ce6c0e576c6`, and the two
+pre-existing interfaces are unchanged, `lib/budget.mli` md5
+`9b887ee595dc10b3c918ce15a9261bdc` and `lib/level.mli` md5
+`20993fcf096fc8608174f7aa3f486f23`.  The EXIT trap at `dev/gates.sh:434`
+still names nine scratch dirs.
+
+`git -C /Users/oobi/Documents/tot status --porcelain -uall` at exit,
+HEAD still `6d0d48d`, 27 paths, nothing committed and nothing staged:
+
+```
+ M SPEC.md
+ M dev/M8-BUILD-LOG.md
+ M dev/gates.sh
+ M lib/check.ml
+ M lib/dune
+ M lib/global.ml
+ M surface/run.ml
+ M test/dune
+ M test/main.ml
+ M test/surface.ml
+?? lib/check.mli
+?? lib/erase.mli
+?? lib/error.mli
+?? lib/eterm.mli
+?? lib/eval.mli
+?? lib/global.mli
+?? lib/global_store.ml
+?? lib/global_store.mli
+?? lib/interp.mli
+?? lib/json_escape.mli
+?? lib/literal.mli
+?? lib/pp.mli
+?? lib/prim.mli
+?? lib/quantity.mli
+?? lib/term.mli
+?? lib/totality.mli
+?? lib/value.mli
+```
+
+The cache AFTER capture (`dev/M8-PLAN.md:2162-2169`), taken on the
+restored exit tree with `TOT_CACHE_VERIFY=1` and a private
+`TOT_CACHE_DIR`,
+`/Users/oobi/Documents/tot-m8-probes/stage-d/mut-md5/ckafter`.  The recipe
+is `zsh /Users/oobi/Documents/tot-m8-probes/stage-d/mut-md5/cache-after.sh`
+and the script it checks, cold then warm, is
+`/Users/oobi/Documents/tot-m8-probes/stage-d/mut-md5/probe.tot`, one line,
+`def twoN : Nat := succ (succ zero)`:
+
+```
+BUILD-EXIT=0
+118:let format_version : int = 10
+COLD-EXIT=0
+WARM-EXIT=0
+TOT-CACHE-VERIFY-OK=1
+BLOB=ckafter/prelude-1ffd6a62274252acffbbc56e7dce4d1f.bin
+BYTES=15044
+MAGIC=TOTCACHE
+VERSION=00000010
+BODY=0d3ba0d8dc9c63895f2e3a9a584737da
+WHOLE=0145945413c36ee370cd11d5e384d1cb
+EXEID=ckafter/exeid-8e7525979a9c12b914a452a308f15f7e.txt
+```
+
+The pin is `BODY`, `tail -c +81 <blob> | md5 -q` over the 14964 bytes that
+follow the 80-byte header, and it holds at
+`0d3ba0d8dc9c63895f2e3a9a584737da`, the entry value.  `WHOLE` travels
+beside it as a NOTE and is never a pin, because the header's last 32 bytes
+are the writing binary's own digest (`surface/cache.ml:127-133`), so that
+value moves on every rebuild by construction (ruling RUL-D2).  The cold
+run writes the blob, the warm run reads it back and prints
+`TOT-CACHE-VERIFY-OK` exactly once, `rg -c` equal to `1` at exit 0.  Both
+runs exit 0.  `format_version` is still 10 at `surface/cache.ml:118`.  The
+two cache entries stay on disk as evidence;  nothing was cleared, no
+format was bumped and no transcript expectation was edited.
+
+### 3d.  Mutation proofs
+
+Protocol, one mutation at a time and one edit per proof.  The target md5
+is recorded before the edit.  The whole battery then runs through
+`/Users/oobi/Documents/tot-m7-probes/stageB/battery-wait.sh` into a log of
+that mutation's own, the exact red line is checked with `rg` on that log,
+the target leg runs standalone on the mutated tree, and the file is
+restored.  The md5 after the restore must equal the md5 before.  The
+battery exits 1 at the FIRST red unit, so a later leg does not run and its
+absence is not evidence.
+
+The slice of every log below comes from
+`zsh /Users/oobi/Documents/tot-m8-probes/stage-d/draft/slice.sh <log>` on
+that log.  The standalone leg runner is
+`/Users/oobi/Documents/tot-m8-probes/stage-d/legs.sh`, which holds the leg
+bodies of `dev/gates.sh` verbatim;  on the restored tree it prints PASS for
+all five legs it carries.
+
+| Id | File and line | Target leg | Red | md5 before | md5 after |
+| --- | --- | --- | --- | --- | --- |
+| MD-1 | `lib/totality.mli`, whole file | PASS-M8D-MLI-COVERAGE | yes, in the battery log | `1983eb1d681943ba5dbd079142ac9bbc` | `1983eb1d681943ba5dbd079142ac9bbc` |
+| MD-2 | `lib/global.mli:112` | PASS-M8D-KERNEL-INTERNAL | yes, in the battery log | `d03bae57a697f0a4c7bd62912926ef80` | `d03bae57a697f0a4c7bd62912926ef80` |
+| MD-3 | `lib/quantity.ml:26` | PASS-M8D-NO-BEHAVIOUR-CHANGE | yes, in the isolated log | `b95cca1ca3d013f2d3599ce6c0e576c6` | `b95cca1ca3d013f2d3599ce6c0e576c6` |
+| MD-4 | `lib/check.ml:959` | PASS-M8A-KERNEL-UNCHANGED | yes, in the isolated log | `2ad653107aeac0c1e3724478eb682fd2` | `2ad653107aeac0c1e3724478eb682fd2` |
+| MD-5 | `surface/run.ml:218-220` | the suite case M8D-1 | yes, in the isolated log | `948e9ad14fa32b6b0decf51b2dd3eb02` | `948e9ad14fa32b6b0decf51b2dd3eb02` |
+| MD-6 | `lib/dune:8` | PASS-M8D-KERNEL-INTERNAL | yes, in an off-repo leg run | `4d2ab4e1970e875417fdeff75ce6c9a3` | `4d2ab4e1970e875417fdeff75ce6c9a3` |
+
+**MD-1**, `lib/totality.mli`, DELETE the whole file.  Log
+`/Users/oobi/Documents/tot-m8-stageD-md1.log`.  md5 before
+`1983eb1d681943ba5dbd079142ac9bbc`.
+
+- Battery: BUILD-EXIT=0, GATE-EXIT=1, SLICE=436, SLICE-BOUNDS=40,549,
+  wrapper PASS=440, wrapper FAIL=1.
+- Red line, `md1.log:548`:
+  `FAIL-M8D-MLI-COVERAGE (missing=1 comm=0 ml=18 mli=17)`.  The check
+  `rg -c -F "FAIL-M8D-MLI-COVERAGE (missing=1 comm=0 ml=18 mli=17)"` counts
+  1 and exits 0.  The FAIL arm also prints the gap list, the single line
+  `totality`, above the marker.
+- Collateral, PREDICTED: no red before the M8D block;  PASS-M8A-KERNEL-
+  UNCHANGED stays green, because the digest cats `lib/*.ml` only and the
+  count uses `fd -e ml`, and an `.mli` moves neither;  PASS-M8D-KERNEL-
+  INTERNAL, PASS-M8D-NO-BEHAVIOUR-CHANGE, PASS-M4FIX-INST-BRANCHING and
+  PASS-M5B-BRANCHING-20 never run.  OBSERVED: exactly that.
+  `PASS-M8A-KERNEL-UNCHANGED` is at `md1.log:542`, and the four later
+  markers are absent from the log.
+- Standalone, `zsh legs.sh mli` on the mutated tree: prints `totality`
+  then `FAIL-M8D-MLI-COVERAGE (missing=1 comm=0 ml=18 mli=17)`, LEG-EXIT=1.
+- Restore: `cp` back from
+  `/Users/oobi/Documents/tot-m8-probes/stage-d/orig/totality.mli.orig`;
+  md5 after `1983eb1d681943ba5dbd079142ac9bbc`, equal to md5 before.
+
+**MD-2**, `lib/global.mli`, ADD the line `val add : string -> entry -> t -> t`
+immediately below `val empty : t`, which lands at line 112.  Log
+`/Users/oobi/Documents/tot-m8-stageD-md2.log`.  md5 before
+`d03bae57a697f0a4c7bd62912926ef80`.
+
+- Battery: BUILD-EXIT=0, GATE-EXIT=1, SLICE=437, SLICE-BOUNDS=41,551,
+  wrapper PASS=441, wrapper FAIL=1.  The build stays green because
+  `lib/global.ml:102` still defines `add`;  the mutation exports it.
+- Red line, `md2.log:550`:
+  `FAIL-M8D-KERNEL-INTERNAL (add_code=0 add=112:val add : string -> entry -> t -> t self_code=0 self=1)`.
+  The prep check `rg -c '^FAIL-M8D-KERNEL-INTERNAL \(add_code=0'` counts 1
+  and exits 0, and the `rg -c -F` check on the whole line counts 1 and
+  exits 0.
+- Collateral, PREDICTED: PASS-M8D-MLI-COVERAGE runs FIRST and stays green,
+  since the two file counts are unchanged;  the behaviour leg and the two
+  performance legs never run.  OBSERVED: exactly that.
+  `PASS-M8A-KERNEL-UNCHANGED` is at `md2.log:543` and
+  `PASS-M8D-MLI-COVERAGE` at `md2.log:548`;  PASS-M8D-NO-BEHAVIOUR-CHANGE,
+  PASS-M4FIX-INST-BRANCHING and PASS-M5B-BRANCHING-20 are absent.
+- Standalone, `zsh legs.sh internal` on the mutated tree: prints
+  `112:val add : string -> entry -> t -> t` then
+  `FAIL-M8D-KERNEL-INTERNAL (add_code=0 add=112:val add : string -> entry -> t -> t self_code=0 self=1)`,
+  LEG-EXIT=1.
+- Restore: the added line is deleted;  md5 after
+  `d03bae57a697f0a4c7bd62912926ef80`, equal to md5 before.
+
+**MD-3**, `lib/quantity.ml:26`, change `  | Many -> "w"` to
+`  | Many -> "many"`.  Logs
+`/Users/oobi/Documents/tot-m8-stageD-md3.log` and
+`/Users/oobi/Documents/tot-m8-stageD-md3-isolated.log`.  md5 before
+`b95cca1ca3d013f2d3599ce6c0e576c6`.
+
+- Battery: BUILD-EXIT=0, GATE-EXIT=1, SLICE=234, SLICE-BOUNDS=42,432,
+  wrapper PASS=238, wrapper FAIL=29.
+- The battery's first red is the surface suite, 28 cases, and `gates.sh`
+  stops at `1 test(s) failed` and `TEST-FAIL` at `md3.log:430-431`.  The
+  suite runs BEFORE the M8A and the M8D gate legs, so NO `FAIL-M8` gate
+  echo prints in this log.  The prep check
+  `rg -c '^FAIL-M8A-KERNEL-UNCHANGED '` on `md3.log` exits 1.  See the
+  conflict note below.
+- Red line, `md3-isolated.log:6`:
+  `FAIL-M8D-NO-BEHAVIOUR-CHANGE (digest=a2bb77b216c531586a92befeca9f317f lines=43 exits=0/0/0/0/0)`.
+  The prep check `rg -c '^FAIL-M8D-NO-BEHAVIOUR-CHANGE \(digest='` counts 1
+  and exits 0.  The prep check
+  `rg -c 'digest=f1450de0006de4b7339b2f39ec2e2e50'` finds nothing and exits
+  1, so the digest moved off its pin.  The line count stays 43 and all
+  five example exits stay 0, so the digest alone carries the red.
+- Collateral, PREDICTED: HEAVY.  The edit moves a `lib/*.ml` byte and it
+  moves printed output, so every unit that pins the rendering of a `Many`
+  binder reddens;  PASS-M8D-NO-BEHAVIOUR-CHANGE never runs in the battery
+  and its absence is not evidence, and the isolated leg re-run is the
+  proof.  OBSERVED: 28 suite cases red, `TEST-FAIL`, and no gate leg after
+  the suite runs at all.  The battery halted at the SUITE unit, not at a
+  gate leg, so this observation says nothing about which gate leg would
+  have reddened first (review round 2026-09-05, finding LEG-1).
+- Standalone, `zsh legs.sh behaviour` on the mutated tree: the five
+  examples print, the tail shows `def usesBanned : (many _ : String) -> Bool`,
+  then the FAIL line above, LEG-EXIT=1.  A second standalone,
+  `zsh legs.sh kernel`, prints
+  `FAIL-M8A-KERNEL-UNCHANGED (lib_md5=71c3e28df9d651953cf7f0e5404e85c7 files=18)`,
+  LEG-EXIT=1, so the transitioned leg also detects the edit when it is
+  reached.
+- Restore: `  | Many -> "many"` back to `  | Many -> "w"`;  md5 after
+  `b95cca1ca3d013f2d3599ce6c0e576c6`, equal to md5 before.
+
+**MD-4**, `lib/check.ml:959`, change the binder text in the `Cannot_infer`
+message.  The line
+`      Error (Error.Cannot_infer (Printf.sprintf "the bare lambda (binder %s)" x))`
+becomes
+`      Error (Error.Cannot_infer (Printf.sprintf "the bare lambda (binder: %s)" x))`.
+Logs `/Users/oobi/Documents/tot-m8-stageD-md4.log` and
+`/Users/oobi/Documents/tot-m8-stageD-md4-isolated.log`.  md5 before
+`2ad653107aeac0c1e3724478eb682fd2`.
+
+- The edit moves the one part of the message leg (iii) still pins,
+  `(binder x)` at the end of the line, and it moves a byte of
+  `lib/check.ml`, which is what leg (iv)'s digest watches.  One edit
+  therefore reaches both, and neither leg shares an assertion with the
+  other: leg (iii) reads the CLI output, leg (iv) reads the 18-file digest.
+- Battery: BUILD-EXIT=0, GATE-EXIT=1, SLICE=262, SLICE-BOUNDS=41,375,
+  wrapper PASS=266, wrapper FAIL=1.
+- The battery's first and only red is the suite case at `md4.log:362`,
+  `FAIL M8A-2: the kernel still refuses a bare lambda in callee position`,
+  which pins the whole message in process.  `gates.sh` stops at
+  `1 test(s) failed` and `TEST-FAIL`, so NO `FAIL-M8` gate echo prints in
+  this log and the prep check `rg -c '^FAIL-M8A-BARE-LAMBDA-REFUSES'` on
+  `md4.log` exits 1.  See the conflict note below.
+- Red line, `md4-isolated.log:1`:
+  `FAIL-M8A-KERNEL-UNCHANGED (lib_md5=6db44dc8982dbcb8afe0eaf89bb7e821 files=18)`.
+  The prep check `rg -c '^FAIL-M8A-KERNEL-UNCHANGED \(lib_md5='` counts 1
+  and exits 0, and `rg -c 'lib_md5=e49ff916b7235f223e8dcaa498fc3aee'` finds
+  nothing and exits 1, so the digest is off the pinned literal.  The file
+  count stays 18, so the digest alone carries the red.  This is the
+  isolated re-run ruling SD-R4 requires for the transitioned leg.
+- Collateral, PREDICTED: the surface suite runs before the M8A gate legs
+  and case M8A-2 pins the whole refusal message, so the battery stops at
+  `TEST-FAIL` and every gate leg from PASS-M8A-BARE-LAMBDA-REFUSES onward
+  never runs.  OBSERVED: exactly that, one suite case red and no gate
+  `FAIL-M8` echo.
+- Standalone, `zsh legs.sh bare` on the mutated tree: prints
+  `/Users/oobi/Documents/tot/dev/m8a/bare-lambda-holed.tot:1:1: cannot infer a type for the bare lambda (binder: x)`
+  then `FAIL-M8A-BARE-LAMBDA-REFUSES (bare=1 esc= baresrc_len=53)`,
+  LEG-EXIT=1.  So leg (iii) does detect this edit;  it is the battery
+  order, not the leg, that keeps the echo out of `md4.log`.
+- Restore: the message returns to `(binder %s)`;  md5 after
+  `2ad653107aeac0c1e3724478eb682fd2`, equal to md5 before.
+
+**State after the four restores.**  The four md5 values are back at their
+entry values, listed in the table above.  `git status --porcelain -uall`
+prints the same twenty-seven paths as the Stage D entry state, ten
+modified and seventeen untracked, and nothing else.  The 18-file kernel
+digest, measured with the leg (iv) `cat` list, is
+`e49ff916b7235f223e8dcaa498fc3aee`, the pinned literal.  The close battery
+`/Users/oobi/Documents/tot-m8-stageD-mutation-close.log` is GREEN on all
+four numbers: SLICE=441, SLICE-BOUNDS=41,554, GATE-EXIT=0, BUILD-EXIT=0
+and no `FAIL` line.  NOTE: the wrapper `PASS=` line reads 445, which is the
+booked 444 to 445 band, because `battery.sh` pipes the two suite runs
+through `tail -3`.  The three Stage D markers are at `mutation-close.log`
+lines 548, 549 and 550, and the two transitioned Stage A markers at 542
+and 543.
+
+**MD-5**, `surface/run.ml:218-220`, DELETE the provisional self entry.  The
+three lines
+`      let elab_globals =`,
+`        if rec_ then Global.add_rec_self name ty_t st.globals else st.globals`
+and
+`      in`
+become the one line
+`      let elab_globals = st.globals in`.
+Log
+`/Users/oobi/Documents/tot-m8-probes/stage-d/mut-md5/md5-isolated.log`.
+md5 before `948e9ad14fa32b6b0decf51b2dd3eb02`.
+
+- Line numbers.  The prep row names `surface/run.ml:219-230`.  The block
+  sits at `218-220` in the tree.  The edit is the one the row prescribes
+  and the result is the one line the row quotes.
+- Isolated re-run, the only evidence the prep row admits.  `TOT_PRELUDE`
+  (`surface/bootstrap.ml:247`) points at
+  `/Users/oobi/Documents/tot-m8-probes/stage-d/mut-md5/mini-prelude.tot`,
+  a scratch prelude with NO recursive definition.  It carries the data
+  declarations that `required_ctors` (`surface/bootstrap.ml:51-76`) names,
+  a non-recursive `foldNat` for the first phase marker and the `Json`
+  declaration for the second.  `TOT_CACHE_DIR` points at a private scratch
+  dir beside it.  BUILD-EXIT=0, SURFACE-EXIT=1.
+- Red line: `FAIL M8D-1 m8d_f1_witness_entry: the FINAL checked entry for
+  add carries rec_arg = Some 0 and reducible = true, read through the
+  public Global interface`, with the reason line `2:100: unknown name add`.
+  `rg -c '^FAIL M8D-1 '` on the log counts `1` and exits 0.
+  `rg -c '^PASS M8D-1 '` on the log prints nothing and exits 1, so that
+  count is `0`.  Those two counts are the whole of the evidence.
+- Collateral, PREDICTED before the run: the shipped prelude declares
+  recursive definitions, so on the mutated tree `Bootstrap.state ()`
+  fails, `run_suite` (`test/surface.ml:2495-2501`) prints
+  `bootstrap failed: ...` and returns 1 with no case run at all;  a plain
+  suite run therefore carries no `FAIL M8D-1` line, and every battery leg
+  that runs the binary reddens long before the M8D block.  The scratch
+  prelude also drops every prelude definition the other cases use, so many
+  other cases go red in the isolated run.  OBSERVED: exactly that.  A
+  first four-line scratch prelude printed
+  `bootstrap failed: 1:1: lex error: prelude: "foldNat" marker not found
+  (Stage C phase split)` and ran no case;  the marker-complete scratch
+  prelude bootstraps, and the suite then prints 116 PASS and 42 FAIL over
+  its 158 cases.  The collateral failures are expected and are not
+  evidence.
+- Restore: `cp -p` back from
+  `/Users/oobi/Documents/tot-m8-probes/stage-d/mut-md5/run.ml.orig`;  md5
+  after `948e9ad14fa32b6b0decf51b2dd3eb02`, equal to md5 before.  The
+  restored block reads exactly the three lines it read before the edit.
+
+**D2 boundary check, the external-client compile (review round
+2026-09-05, findings BD-2 and LEG-2).**  Plan `dev/M8-PLAN.md:2116-2118`
+asks to "Verify that the same private reference fails to compile in a
+normal external client and succeeds only in the explicitly configured
+white-box test", and `dev/gates.sh` leans on that check in the quoted
+plan paragraph of PASS-M8D-KERNEL-INTERNAL.  The check ran but was booked
+nowhere in this log, so it is booked here as a live recipe.  Runner:
+`/Users/oobi/Documents/tot-m8-probes/stage-d/fix/probe.sh`, which repeats
+`/Users/oobi/Documents/tot-m8-probes/stage-d/client-probe2.sh` and adds
+the exit codes of the second include path.  Three one-line clients live
+in `/Users/oobi/Documents/tot-m8-probes/stage-d/client`:  `control.ml`
+names `Tot_kernel.Global.empty`, `neg_client.ml` names
+`Tot_kernel.Global_store.add`, and `neg_client2.ml` names
+`Tot_kernel__Global_store.add`.  The command, run from that directory
+with the pinned switch `zxcaml-p1`, is
+`ocamlfind ocamlc -package str -I <inc> -I _build/default/lib
+_build/default/lib/tot_kernel.cma <f>.ml -o <f>`.
+
+- With `<inc>` = `_build/default/lib/.tot_kernel.objs/public_cmi`, the
+  normal external client:  `control` exits 0 with a 0-byte error file;
+  `neg_client` exits 2 with `Error: The module "Tot_kernel.Global_store"
+  is an alias for module "Tot_kernel__Global_store", which is missing`;
+  `neg_client2` exits 2 with `Error: Unbound module
+  "Tot_kernel__Global_store"`.  MEASURED 2026-09-05.
+- With `<inc>` = `_build/default/lib/.tot_kernel.objs/byte`, the include
+  path the white-box test carries at `test/dune:32`, all three exit 0
+  with 0-byte error files, `neg_client` and `neg_client2` included.
+  MEASURED 2026-09-05.
+
+So the private-module boundary is an INCLUDE-PATH boundary, not a linker
+one:  a client that consumes `tot_kernel` through the normal library
+dependency cannot name the store, and a client that chooses its own `-I`
+flag can.  That is what plan `dev/M8-PLAN.md:2113-2115` already concedes
+in the words "It is not an OCaml sandbox against clients choosing their
+own compiler flags."  No gate leg runs a compiler on an external client;
+the plan quote inside `dev/gates.sh` names this log paragraph, and the
+text pin of MD-6 below is the leg-side observer of the field itself.
+
+**MD-6**, `lib/dune:8`, DELETE the line ` (private_modules global_store))`
+and close the stanza on the previous line.  md5 before
+`4d2ab4e1970e875417fdeff75ce6c9a3`.
+
+- Why the mutation is off-repo:  the amended leg reads two files as TEXT
+  and builds nothing, so the proof needs no mutated repo.  The copy is
+  `/Users/oobi/Documents/tot-m8-probes/stage-d/fix/md6root/lib`, holding
+  `dune` and `global.mli` only, and the runner is
+  `/Users/oobi/Documents/tot-m8-probes/stage-d/fix/md6.sh`, which holds
+  the amended leg body of `dev/gates.sh` verbatim.  The repo file was
+  never edited;  its md5 reads `4d2ab4e1970e875417fdeff75ce6c9a3` before
+  and after the run.
+- Unmutated copy:  the leg prints `PASS-M8D-KERNEL-INTERNAL`.
+- Mutated copy, md5 `cf93fb36f7b31ffb0298668331efd472`:  the leg prints
+  `FAIL-M8D-KERNEL-INTERNAL (add_code=1 add= self_code=0 self=1
+  priv_code=1 priv=)`.  The two `global.mli` pins stay green, so the new
+  `private_modules` pin alone carries the red.
+- Restored copy, md5 `4d2ab4e1970e875417fdeff75ce6c9a3`, equal to md5
+  before:  the leg prints `PASS-M8D-KERNEL-INTERNAL` again.
+- Collateral:  none in this battery.  Before this round no leg of
+  `dev/gates.sh` read `lib/dune` at all, so the deletion moved no gate
+  input;  the review round measured the same deletion as build-green on
+  an off-repo copy of the whole tree.  The text pin is therefore the only
+  possible observer, and the field is a declaration of intent, since the
+  `-I lib/.tot_kernel.objs/byte` flag at `test/dune:32` reaches the
+  private cmi anyway.
+
+**Conflict note C-D25, the prep's `dev/gates.sh` line numbers are stale.**  The
+plan-side prep names echo `4202` for PASS-M8A-KERNEL-UNCHANGED, `4339` for
+the head of the M8D block and `4374` and `4393` for the two performance
+legs.  The tree has `4219`, `4399`, `4529` and `4548`.  The Stage D insert
+of the M8D block moved every later echo down.  The TREE wins;  the numbers
+above are read from the tree.
+
+**Conflict note C-D26, MD-3 and MD-4 stop at the suite, not at a gate leg.**  The
+prep rows predict a gate `FAIL-` echo as the battery's first red, namely
+`FAIL-M8A-KERNEL-UNCHANGED` for MD-3 and `FAIL-M8A-BARE-LAMBDA-REFUSES` for
+MD-4.  The tree runs the two test suites BEFORE the M8A and M8D gate legs,
+so a mutation that moves printed output stops `gates.sh` at `TEST-FAIL` and
+no gate echo prints at all.  Both prep checks on `md3.log` and on
+`md4.log` exit 1, and that absence is not evidence about the legs.  The
+proof is the isolated re-run the same prep rows name and make mandatory:
+`md3-isolated.log` carries the red PASS-M8D-NO-BEHAVIOUR-CHANGE with a
+moved digest, and `md4-isolated.log` carries the red
+PASS-M8A-KERNEL-UNCHANGED with a moved digest.  Both legs are proved
+non-vacuous.  Nothing was edited to make a leg green.
+
+**Conflict note C-D27, the V14 recipe shells `ls | sort` and the governing order
+is the explicit D4 `cat` list.**  What the prep says: checklist row V14
+measured the 18-file kernel digest with `cat $(ls $ROOT/lib/*.ml | sort) |
+md5 -q`, and expected `rg -c` of the retired digest
+`ec077852495cdc0ac9a7abd4eb2fe786` over `dev/gates.sh` to print `0`.  What
+the tree says: `sort` is locale dependent, and in this session's locale
+macOS orders `global_store.ml` BEFORE `global.ml`, so the shelled order is
+not the order the leg uses.  The order that governs is the D4 explicit
+`cat` list of `dev/gates.sh`, and under that list the digest is
+`e49ff916b7235f223e8dcaa498fc3aee`, equal to the literal at
+`dev/gates.sh:4218`, with the leg's count assertion reading `-eq 18`.  The
+retired digest has exactly one hit, the comment at `dev/gates.sh:4203`
+that records the 17-to-18 transition the plan asks for.  What was done:
+under ruling RUL-D1 the row is SPURIOUS in substance.  The prep row is
+amended to name the explicit `cat` order and to expect one commented
+occurrence of the retired digest.  The `dev/gates.sh` literal was not
+rewritten and the transition comment was not deleted.
+
+**Conflict note C-D28, the V26 whole-file cache pin is unsatisfiable.**  What
+the prep says: clause 3 of checklist row V26 pinned the `prelude-*.bin`
+payload md5 at `33f4bba03dd2e33218e1626a52415005`, a value taken over the
+WHOLE cache blob.  What the tree says: the blob embeds the writing
+binary's digest in its last 32 bytes (`surface/cache.ml:127-133`), so the
+whole-file value changes on every rebuild by construction and no
+whole-file equality can hold across a build.  The before blob and the
+after blob are both 15044 bytes, carry the same magic `TOTCACHE` and the
+same version field `00000010`, and their body bytes are the same:
+`tail -c +81 <blob> | md5 -q` prints `0d3ba0d8dc9c63895f2e3a9a584737da`
+for both, over the 14964 bytes that follow the 80-byte header.  What was
+done: under ruling RUL-D2 clause 3 is SPURIOUS in substance, and the pin
+moves to the body md5 with that recipe.  Clauses 1 and 2 stand unchanged.
+`format_version` stays 10, no cache entry was cleared and no transcript
+expectation was edited.
+
+**Ruling RUL-D1, checklist row V14.**  The verify stage halted on V14.
+The ruling is SPURIOUS in substance: the digest under the governing D4
+explicit `cat` list is `e49ff916b7235f223e8dcaa498fc3aee`, equal to the
+`dev/gates.sh:4218` literal, with the count assertion `-eq 18`;  the one
+hit of the retired digest is the transition comment at
+`dev/gates.sh:4203`, which the plan asks for.  The row is amended in the
+prep and no tree file moved.
+
+**Ruling RUL-D2, checklist row V26 clause 3.**  The verify stage halted on
+clause 3.  The ruling is SPURIOUS in substance: the pin was taken over the
+whole cache blob, and the blob's last 32 bytes are the writing binary's
+digest, so the whole-file value moves on every rebuild by construction.
+The body bytes are stable, body md5 `0d3ba0d8dc9c63895f2e3a9a584737da`
+over the 14964 bytes after the 80-byte header.  Clause 3 is re-pinned to
+the body md5;  clauses 1 and 2 stand.
+
+**Ruling RUL-D3, checklist row V27.**  The verify stage halted on V27 and
+the ruling is that V27 names a REAL gap: the mutation prover ran MD-1 to
+MD-4 only, and MD-5 is mandatory.  MD-5 is now performed and booked in
+this subsection, one table row and one paragraph, so `### 3d.` carries
+five entries with the ids MD-1 to MD-5, each with an md5 before and an md5
+after.
+
+### 3e.  Review fixes (2026-09-05)
+
+The review round raised six findings that survived the escalation check.
+Four are applied in full, one is applied in a different place than the
+finding proposed, and one proposal is declined.  No assertion was
+weakened or deleted, and no literal was edited to make a leg go green.
+
+**Applied.**
+
+- Finding BD-5, the quoted plan command of PASS-M8D-MLI-COVERAGE was
+  truncated.  `dev/gates.sh:4374` dropped the tail `| wc -l | tr -d ' '`,
+  so the quote could not produce the "output 15" and "output 0" counts
+  the two lines below it claim.  The tail is restored, byte-identical to
+  `dev/M8-PLAN.md:2180`.  The leg body is untouched:  its split pipeline
+  is deliberate, so that `$?` is comm's and not tr's.
+- Findings BD-3 and LEG-2, the `(private_modules global_store)` field of
+  `lib/dune` had no observer.  No leg of the battery read `lib/dune` at
+  all, so deleting the field was silent.  PASS-M8D-KERNEL-INTERNAL takes
+  a third pin, one whole line plus rg's own exit code, with `$?` captured
+  on its own line as in leg (i).  MD-6 above proves the pin non-vacuous.
+- Findings BD-2 and LEG-2, the D2 external-client check was performed but
+  booked nowhere.  The D2 boundary paragraph above records the runner,
+  the command line and both arms with their exit codes, and states that
+  the boundary is an include-path boundary.
+- Finding LEG-1, PASS-M8D-NO-BEHAVIOUR-CHANGE duplicates
+  PASS-M7A-CONSERVATIVITY.  The digest and the line count are pinned by
+  M7A about 1010 lines earlier over the same five files with the same
+  binary, so in a fail-fast battery those two conjuncts here can never be
+  the first red.  The leg header now says so and names the five exit
+  codes `m8d_x1` to `m8d_x5` as the leg's unique in-battery observable.
+  The digest assertion STAYS;  ruling R-Q3 (`dev/M8-PLAN.md:2199`) asks
+  for the five-example comparison, and dropping it was refused.  The MD-3
+  collateral paragraph is corrected:  the battery halted at the suite,
+  not at a gate leg.
+- Finding BD-1, the private-store texts dropped the plan's qualifier.
+  `SPEC.md` said an external client "cannot write an unchecked entry" and
+  that an `.mli` "permits inside the library and denies outside it".  The
+  measured boundary is narrower:  the denial follows the include path,
+  and `test/main.ml` names `Tot_kernel__Global_store` from outside the
+  library through the flag at `test/dune:32`.  `SPEC.md` now scopes the
+  first clause to a client that goes through the public `Global`
+  interface, names `lib/dune` as the boundary, calls it a dependency
+  boundary and not a compiler sandbox, and names the white-box test as
+  the one exception.  `lib/global_store.mli` carries the same qualifier.
+
+**Declined.**
+
+- Finding BD-1, part (a), rewrite the header comment of
+  `lib/global_store.ml:2-4`.  That file is one of the 18 `.ml` files
+  inside the frozen kernel digest `e49ff916b7235f223e8dcaa498fc3aee`, and
+  a comment byte moves the digest and reddens PASS-M8A-KERNEL-UNCHANGED.
+  The only way to apply the edit is to re-pin the literal, which the
+  leg's own comment forbids in the words "The expected digest is a
+  LITERAL measured once during that reviewed transition;  the gate never
+  derives it from the live source and never accepts either digest
+  opportunistically.  Any later change fails."  A documentation
+  correction is not a reviewed kernel transition, so the file stays as
+  measured.  The correction is carried by `lib/global_store.mli`, which
+  the digest excludes, and that interface names the unqualified `.ml`
+  header and says why it stays.
+- Finding LEG-2, part (a) as written, a new marker
+  `PASS-M8D-PRIVATE-STORE`.  `dev/M8-PLAN.md:2365-2374` reserves exactly
+  eleven `PASS-M8` names and `dev/M8-PLAN.md:2247` pins the Stage D exit
+  at 441 slice and 445 wrapper.  A fourth Stage D echo adds a PASS line
+  and moves both numbers, and the marker census of section 8.2 with it.
+  The substance of the finding is applied inside the existing
+  PASS-M8D-KERNEL-INTERNAL leg, which already claims the private-module
+  boundary in its own header, so the pin exists and the census does not
+  move.
+
+**The battery after the fixes.**  Log
+`/Users/oobi/Documents/tot-m8-stageD-review-gate.log`, through
+`/Users/oobi/Documents/tot-m7-probes/stageB/battery-wait.sh`.
+BUILD-EXIT 0, GATE-EXIT 0, no `^FAIL-` line in the log, and
+`zsh /Users/oobi/Documents/tot-m8-probes/stage-d/draft/slice.sh` on that
+log prints `SLICE=441` and `SLICE-BOUNDS=41,554`.  The wrapper prints
+`PASS=445`, the Stage D exit number, booked as measured.  The three
+Stage D markers print at log lines 548, 549 and 550, and
+PASS-M8A-KERNEL-UNCHANGED prints at 543, so the frozen kernel digest is
+still green after the round.  `git status --porcelain` lists the same 27
+paths as before the round.
+
+## Closing round, 2026-09-05
+
+**Final battery.**  The closer ran
+`zsh /Users/oobi/Documents/tot-m7-probes/stageB/battery-wait.sh
+/Users/oobi/Documents/tot-m8-stageD-close-gate.log 12 3600`, then
+`zsh /Users/oobi/Documents/tot-m8-probes/stage-d/draft/slice.sh` over
+that same log:
+
+```
+WAITED=0 LOAD=5.40
+RUNNER-EXIT=0
+29:STATUS_LINES=27
+31:BUILD-EXIT=0
+554:GATE-EXIT=0
+555:PASS=445
+556:FAIL=
+SLICE=441
+SLICE-BOUNDS=41,554
+```
+
+The four contract numbers are SLICE 441, FAIL 0, GATE-EXIT 0 and
+BUILD-EXIT 0, so the closing battery is green.  The slice counts the
+`PASS` lines strictly between `BUILD-OK` at `:41` and `GATE-EXIT=` at
+`:554`, the bounds the recipe printed on this log.  `FAIL=` is empty
+because `rg -c "^FAIL" ` found no match, and `rg -c '^FAIL-'` over the
+log also prints 0, so the failure count is 0.  The wrapper `PASS=445`
+is a NOTE and never the contract;  it sits in the 444 to 445 band the
+stage books as measured, so it opens no conflict note.
+
+The at-risk legs print green in this log:  `PASS-M5D-TIERS` at `:485`,
+`PASS-M8A-KERNEL-UNCHANGED` at `:543`, and the three Stage D markers at
+`:548`, `:549` and `:550`.  `rg -c '^PASS M8D-1 '` prints 2, one per
+suite run, and `rg -c '^FAIL M8D-1 '` prints 0.  `rg -i
+'dune.*load|Error: Dune'` over the log prints nothing, so no dune load
+artefact appeared and no rerun was needed.
+
+**The plan's six rows before closure, `dev/M8-PLAN.md:2219-2232`.**  Each
+row is answered here with evidence measured in the closing round.
+
+1. Build `bin/tot.exe`, `test/main.exe` and `test/surface.exe`
+   TOGETHER;  run both suites and the full battery.  Every prior test and
+   assertion is preserved.  ANSWERED.  One `dune build` opens the log,
+   `OK build: 0 errors, 0 warnings` at `:40` and `BUILD-OK` at `:41`,
+   BUILD-EXIT=0 at `:31`.  `test/main.exe` prints 105 `PASS` lines and
+   `M0 kernel: all tests green` at `:185`, unchanged from entry.
+   `test/surface.exe` prints 158 `PASS` lines and `M1 surface: all tests
+   green` at `:372`, up one from 157, and the added line is `M8D-1` at
+   `:371`.  No `FAIL` line appears between `:41` and `:372`.
+2. Normal external clients can use `Global` and `Check` but cannot call
+   `Global.add` or either spelling of the private store module.
+   ANSWERED.  The D2 boundary paragraph of section 2.1 books the runner,
+   the whole command line and both include paths with their exit codes:
+   under the public cmi path `control` exits 0, `neg_client` exits 2 with
+   `Error: The module "Tot_kernel.Global_store" is an alias for module
+   "Tot_kernel__Global_store", which is missing`, and `neg_client2` exits
+   2 with `Error: Unbound module "Tot_kernel__Global_store"`.  In the
+   tree, `rg -n '^\s*val add\b' lib/global.mli` prints nothing and exits
+   1, `rg -c '^val add_rec_self : string -> Term\.t -> t -> t$'
+   lib/global.mli` prints 1, and `rg -c 'private_modules global_store'
+   lib/dune` prints 1.  PASS-M8D-KERNEL-INTERNAL carries the three pins
+   and is green at `:549`.
+3. The eight Check inserts and the one environment fold use the private
+   store, and `Global.StringMap`'s runtime-global and set users are
+   retained.  ANSWERED.  `rg -c 'Global_store\.add' lib/check.ml` prints
+   8, `rg -c 'Global_store\.fold' lib/check.ml` prints 1, `rg -c
+   'Global\.add' lib/check.ml` finds no match and exits 1, and `rg -c
+   'Global\.StringMap' lib/check.ml` prints 4.  `rg -c 'Global\.add_rec_self name ty_t
+   st\.globals' surface/run.ml` prints 1 and `rg -c 'Global\.add '
+   surface/run.ml` finds no match.  `rg -c
+   'Tot_kernel__Global_store\.add' test/main.ml` prints 5 and `rg -c
+   '^\(test$' test/dune` prints 2.
+4. Interfaces match the inferred signatures, including module exports
+   and constructors.  Both original interfaces, `lib/budget.mli` and
+   `lib/level.mli`, remain UNCHANGED, checked by md5 before and after.
+   ANSWERED.  `fd -e ml --max-depth 1 . lib | wc -l` prints 18 and the
+   same recipe over `.mli` prints 18;  the `comm` gap between the two
+   basename sets prints 0 at exit 0, which is the whole assertion of
+   PASS-M8D-MLI-COVERAGE, green at `:548`.  Every interface was taken
+   from `ocamlc -i` and then narrowed, so the build itself is the match
+   proof:  BUILD-EXIT=0 with 0 warnings.  `lib/budget.mli` is md5
+   `9b887ee595dc10b3c918ce15a9261bdc` and `lib/level.mli` is md5
+   `20993fcf096fc8608174f7aa3f486f23`, both equal to the entry values of
+   section 1.
+5. D4's 17-to-18-file transition and the unchanged output and cache
+   results are recorded.  The transitioned Stage A leg is mutation-tested
+   as well as all three new legs.  ANSWERED.  Section 2.2 books the
+   transition, the OLD 17-file digest `ec077852495cdc0ac9a7abd4eb2fe786`
+   with count 17 and the NEW 18-file digest
+   `e49ff916b7235f223e8dcaa498fc3aee` with count 18, both file lists and
+   both commands.  The digest re-measured in the closing round over the
+   D4 explicit `cat` order prints
+   `e49ff916b7235f223e8dcaa498fc3aee`, equal to the literal at
+   `dev/gates.sh:4218`.  The cache AFTER capture stands in sections 5 and
+   6:  `format_version` 10 at `surface/cache.ml:118`, one
+   `TOT-CACHE-VERIFY-OK` on the warm run, blob 15044 bytes, BODY md5
+   `0d3ba0d8dc9c63895f2e3a9a584737da` by `tail -c +81 <blob> | md5 -q`,
+   with the whole-file md5 travelling as a NOTE.  Section 3d holds five
+   mutation rows, MD-1 to MD-5, each with an md5 before and an md5 after,
+   and section 3e adds MD-6 for the `lib/dune` pin;  MD-4 is the
+   transitioned Stage A leg PASS-M8A-KERNEL-UNCHANGED and MD-1, MD-2 and
+   MD-3 are the three new legs.
+6. Count success echoes using plan section 8.2:  three Stage D names,
+   ELEVEN M8 names in total, no repeated success echo.  Earlier markers
+   stay green.  ANSWERED.  `rg -o 'echo PASS-M8D-[A-Z0-9-]+' dev/gates.sh
+   | wc -l` prints 3, at `dev/gates.sh:4399`, `:4457` and `:4519`.  `rg
+   -o 'echo PASS-M8[A-D]-[A-Z0-9-]+' dev/gates.sh | wc -l` prints 11 and
+   the same stream through `sort | uniq -d` prints nothing, so no success
+   echo repeats.  `rg -o 'echo PASS-[A-Z0-9-]+' dev/gates.sh | wc -l`
+   prints 177.  The eight earlier M8 markers print green in the closing
+   log, `PASS-M8A-KERNEL-UNCHANGED` at `:543` among them.  The token
+   count `rg -o 'PASS-M8[A-D]-[A-Z0-9-]+' dev/gates.sh | sort | uniq -d`
+   is NOT this row's test:  it lists every name twice, once in the quoted
+   plan header and once in the echo, which is the derived-count reading
+   of note (a), C-D21.
+
+**Conflict note ids, allocated at closing time under ruling SD-R1.**
+`rg -o 'C-D[0-9]+' dev/M8-BUILD-LOG.md | sort -V | tail -1` printed
+`C-D20` before this round, the measured maximum, so the Stage D ids start
+at C-D21.  The eight notes the build, mutation and fix rounds left
+unnumbered take these ids, in the order they appear in this section:
+
+| id | note |
+| --- | --- |
+| C-D21 | note (a), the `PASS-M8` line count reads 30, not the predicted 26 |
+| C-D22 | note (b), the behaviour leg runs under the watchdog, so the tier literal moves 236 to 241 |
+| C-D23 | note (c), the suite case carries the name the build brief spells, not the prep's draft name |
+| C-D24 | note (d), the prep's plan-line citations for the three Marker paragraphs are two lines late |
+| C-D25 | the prep's `dev/gates.sh` line numbers are stale |
+| C-D26 | MD-3 and MD-4 stop at the suite, not at a gate leg |
+| C-D27 | the V14 recipe shells `ls | sort` and the governing order is the explicit D4 `cat` list |
+| C-D28 | the V26 whole-file cache pin is unsatisfiable |
+
+No new conflict note opens in the closing round.  The closer numbered
+these notes and wrote nothing else into them.
+
+**Re-derived literals, closing round, old value then new value.**  The
+old column is the section 6 exit measurement of the build round, the new
+column is the closing measurement on the tree that goes to the user.
+
+| what | recipe | old | new |
+|---|---|---|---|
+| the battery slice | `slice.sh` on the closing log | 441 | 441 |
+| the wrapper number | `rg -n '^PASS=' <log> \| tail -1` | 445 | 445 |
+| kernel digest, 18 files | the D4 explicit `cat` list, `md5 -q` | `e49ff916b7235f223e8dcaa498fc3aee` | `e49ff916b7235f223e8dcaa498fc3aee` |
+| lib file counts | `fd -e ml`, `fd -e mli`, `--max-depth 1` | 18, 18 | 18, 18 |
+| the interface gap | the `comm` recipe of leg (i) | 0 | 0 |
+| success echoes | `rg -o 'echo PASS-[A-Z0-9-]+' dev/gates.sh \| wc -l` | 177 | 177 |
+| M8 success echoes | `rg -o 'echo PASS-M8[A-D]-[A-Z0-9-]+' \| wc -l` | 11 | 11 |
+| `PASS-M8` lines | `rg -c 'PASS-M8' dev/gates.sh` | 30 | 31 |
+| `PASS-M8D-` lines | `rg -c 'PASS-M8D-' dev/gates.sh` | 10 | 11 |
+| `dev/gates.sh` | `wc -l`, `md5 -q` | 4556, `165f9e8529352b86672623bf6d7d0c06` | 4587, `1cbd158359a3761bf6ac5e0176d486b2` |
+| `test/surface.ml` | `wc -l`, `md5 -q` | 2615, `5f6947ec78646518784eed8620e47615` | 2615, `5f6947ec78646518784eed8620e47615` |
+| `SPEC.md` | `wc -l`, `md5 -q` | 2708, `06c6ad84cc9e51ae33a82d7b8aa185ed` | 2715, `119f4b94cc0c8d86328c7145a70d60ee` |
+| `lib/budget.mli` | `md5 -q` | `9b887ee595dc10b3c918ce15a9261bdc` | `9b887ee595dc10b3c918ce15a9261bdc` |
+| `lib/level.mli` | `md5 -q` | `20993fcf096fc8608174f7aa3f486f23` | `20993fcf096fc8608174f7aa3f486f23` |
+| `stdlib/prelude.tot` | `md5 -q` | `6013fa65389a1220f9a15059294701a0` | `6013fa65389a1220f9a15059294701a0` |
+| `Cache.format_version` | `rg -n 'let format_version' surface/cache.ml` | `118:let format_version : int = 10` | `118:let format_version : int = 10` |
+
+Four rows moved and all four move for the same reason:  section 3e, the
+review fixes, landed AFTER section 6 was written.  The restored plan
+quote in leg (i) and the third `lib/dune` pin in leg (ii) add lines to
+`dev/gates.sh` and one more `PASS-M8D-` line to its census, and finding
+BD-1 adds the boundary qualifier to `SPEC.md`.  Both `PASS-M8` counts are
+derived counts under note (a), C-D21, so they open no new note.  The
+load-bearing numbers, 177 success echoes, eleven distinct M8 names, no
+repeated success echo and the frozen kernel digest, are unmoved.
+
+**Snapshot.**  The closer wrote
+`/Users/oobi/Documents/tot-m8-postD-snapshot.tgz` from the repo tree with
+`_build` and `.git` excluded, after this section landed, so the archive
+carries this text.  Its byte size travels with the closing hand-off.
+
+**Staging.**  The closer staged the twenty-seven Stage D paths with one
+`git add -- <path> ...` over exactly that list, never `git add -A` and
+never `git add .`:  `lib/global_store.ml`, `lib/global_store.mli`,
+`lib/dune`, `lib/global.ml`, `lib/global.mli`, `lib/check.ml`,
+`lib/check.mli`, `lib/erase.mli`, `lib/error.mli`, `lib/eterm.mli`,
+`lib/eval.mli`, `lib/interp.mli`, `lib/json_escape.mli`,
+`lib/literal.mli`, `lib/pp.mli`, `lib/prim.mli`, `lib/quantity.mli`,
+`lib/term.mli`, `lib/totality.mli`, `lib/value.mli`, `surface/run.ml`,
+`test/main.ml`, `test/dune`, `test/surface.ml`, `dev/gates.sh`,
+`dev/M8-BUILD-LOG.md` and `SPEC.md`.  `git status --porcelain -uall`
+after the add lists those twenty-seven paths and nothing else.  The
+commit message is written to
+`/Users/oobi/Documents/tot-m8-stageD-commit-msg.txt`.
+
+**Exit.**  The closing battery is green on the contract:  SLICE 441,
+FAIL 0, GATE-EXIT 0, BUILD-EXIT 0, with the wrapper number 445 as a note.
+The stage is ready for the user's commit.  Nothing was committed, pushed,
+amended, checked out, stashed or cleaned by the closing round.

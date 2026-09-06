@@ -1737,6 +1737,24 @@ verdict CLIs, small tools.  The house rules are the semantics:
   last one and `PASS-M5D-MEASURE-LOG` keeps reading it.  C-E9: the
   forward-looking bullet is named the M8 candidate list, not the M7
   one.
+- 2026-09-05 (M8, Stage D): `lib/` takes its interfaces and the kernel
+  environment moves behind a private store.  Every kernel module now
+  carries an `.mli`, 18 modules and 18 interfaces.  `Global_store` is a
+  private module of `tot_kernel` and owns the `Map.Make (String)`
+  environment;  `Global` keeps its entry types and its public
+  `StringMap`, exports `empty`, `find` and the narrow `add_rec_self`,
+  and exports no general insertion.  `Check` inserts through the
+  private store.  `PASS-M8A-KERNEL-UNCHANGED` takes its one planned
+  transition: the sorted `cat` list gains `lib/global_store.ml`, the
+  file count moves 17 to 18, and the pinned digest moves from
+  `ec077852495cdc0ac9a7abd4eb2fe786` to
+  `e49ff916b7235f223e8dcaa498fc3aee`.  Three gate markers land,
+  `PASS-M8D-MLI-COVERAGE`, `PASS-M8D-KERNEL-INTERNAL` and
+  `PASS-M8D-NO-BEHAVIOUR-CHANGE`, and one surface case, M8D-1, reads
+  the final checked `add` entry through the public interface.  The
+  battery slice goes 437 to 441.  No observable behaviour moves: the
+  five-example digest stays `f1450de0006de4b7339b2f39ec2e2e50` and
+  `Cache.format_version` stays 10.
 
 ## 3.  Core calculus (M0 core, M2 inductives, M3 literals and effects)
 
@@ -1909,6 +1927,28 @@ a LIVE def's definition-time abort surfaces at force time.
   `EErased` residue for type-level terms in runtime position).
 - `Erase`: type-directed erasure from kernel-checked terms to `Eterm`.
 - `Interp`: call-by-value interpreter over erased terms, with readback.
+
+Every module above carries an interface file (M8 Stage D, 2026-09-05):
+`lib/` holds 18 `.ml` files and 18 `.mli` files, and a module with no
+interface fails the gate.  The kernel environment lives behind
+`Global_store`, a PRIVATE module of `tot_kernel`, which owns the
+`Map.Make (String)` map and its four operations.  `Global` publishes the
+entry types, the public `StringMap`, `empty`, `find` and the narrow
+`add_rec_self` for the provisional self entry of a `def rec`;  it
+publishes no general insertion, so a client that goes through the public
+`Global` interface cannot write an unchecked entry into the environment
+and must go through `Check`.  The sibling modules that build
+environments, `Check` above all, use the private store directly, which
+an `.mli` permits inside the library.  Outside the library the
+`private_modules` field of `lib/dune` keeps the store out of reach of a
+client that consumes `tot_kernel` through the normal library dependency.
+That is a dependency boundary, not a compiler sandbox;  `test/main.ml`
+is the one sanctioned white-box client, and it names
+`Tot_kernel__Global_store` through the private cmi that the
+`-I lib/.tot_kernel.objs/byte` flag at `test/dune:32` puts on its include
+path.  The kernel baseline digest covers the 18 `.ml`
+files;  the interface files enter neither that digest nor the file
+count.
 
 Surface (library `tot_surface`, in `surface/`):
 

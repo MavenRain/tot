@@ -465,7 +465,7 @@ let instance_class_of (name : string) : string option =
     doubling it. *)
 let inst_table_stats (globals : Global.t) : int * int =
   let max_binders, classes =
-    Global.StringMap.fold
+    Global_store.fold
       (fun (name : string) (entry : Global.entry)
            (((acc : int), (seen : unit Global.StringMap.t)) as st) ->
         instance_class_of name
@@ -1531,7 +1531,7 @@ let define ?(rec_ = false) ?(partial = false) ?(stamped_ty : Term.t option)
        checking -- [Eval.eval] consults only [rec_arg]/[reducible]/
        [def] -- but a future one must never see a wrong value). *)
     let provisional =
-      Global.add name
+      Global_store.add name
         (Global.Def
            {
              Global.ty = ty';
@@ -1559,14 +1559,14 @@ let define ?(rec_ = false) ?(partial = false) ?(stamped_ty : Term.t option)
       else Ok None
     in
     Ok
-      (Global.add name
+      (Global_store.add name
          (Global.Def { Global.ty = ty'; def = def'; reducible; rec_arg; partial })
          globals)
   else
     let* def' = check globals ctx0 Quantity.Many def ty_v in
     (* the entry stores the STAMPED type and definition *)
     Ok
-      (Global.add name
+      (Global_store.add name
          (Global.Def { Global.ty = ty'; def = def'; reducible; rec_arg = None; partial })
          globals)
 
@@ -1578,7 +1578,7 @@ let define_prim ?(budget : Budget.t = Budget.unlimited) (globals : Global.t)
     ~(name : string) ~(ty : Term.t) ~(prim : Prim.t) : (Global.t, Error.t) result =
   let* () = ensure_fresh globals name in
   let* ty', _ty_l = infer_univ globals (root_ctx budget) ty in
-  Ok (Global.add name (Global.Prim { Global.prim_ty = ty'; prim }) globals)
+  Ok (Global_store.add name (Global.Prim { Global.prim_ty = ty'; prim }) globals)
 
 (** Extend the environment with a postulated statement (M4 Stage B). The
     only public way to grow [Global.t] with an [Axiom] entry: [ty]
@@ -1590,7 +1590,7 @@ let define_axiom ?(budget : Budget.t = Budget.unlimited) (globals : Global.t)
     ~(name : string) ~(ty : Term.t) : (Global.t, Error.t) result =
   let* () = ensure_fresh globals name in
   let* ty', _ty_l = infer_univ globals (root_ctx budget) ty in
-  Ok (Global.add name (Global.Axiom { Global.ax_ty = ty' }) globals)
+  Ok (Global_store.add name (Global.Axiom { Global.ax_ty = ty' }) globals)
 
 (** M4 Stage D (D2): [true] iff [c] is a declared inductive with exactly
     one parameter and no indices -- the shape every class (the dictionary
@@ -1843,7 +1843,7 @@ let declare_ind_status ?(budget : Budget.t = Budget.unlimited) (globals : Global
          (Term.Univ level))
   in
   Ok
-    (Global.add name
+    (Global_store.add name
        (Global.Ind
           {
             Global.ind_ty = closed;
@@ -2073,10 +2073,10 @@ let define_ind ?(budget : Budget.t = Budget.unlimited) (globals : Global.t)
             (List.fold_right (fun (q, x, ty) acc2 -> Term.Pi (q, x, ty, acc2)) args cod)
         in
         Ok
-          (Global.add cname
+          (Global_store.add cname
              (Global.Ctor { Global.ctor_ty = closed; ind = name; args; res_idx; full_arity; self_rec })
              gacc))
       (Ok globals) ctors
   in
   let ctor_names = List.map (fun (c, _cty) -> c) ctors in
-  Ok (Global.add name (Global.Ind { ind with Global.ctors = Global.Complete ctor_names }) globals')
+  Ok (Global_store.add name (Global.Ind { ind with Global.ctors = Global.Complete ctor_names }) globals')

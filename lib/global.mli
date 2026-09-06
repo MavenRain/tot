@@ -1,9 +1,14 @@
-(** Global environment. [add] is kernel-internal: the only sound ways to
-    extend the environment are [Check.define], [Check.declare_ind] and
-    [Check.define_ind], which typecheck first. The namespace is flat: an
+(** Global environment.  M8 Stage D: the environment's storage is
+    [Global_store], which lib/dune keeps private to tot_kernel, so this
+    interface exports no general insertion and a client outside the
+    kernel cannot extend the environment by hand.  The only sound ways
+    to extend it are [Check.define], [Check.declare_ind] and
+    [Check.define_ind], which typecheck first.  The namespace is flat: an
     inductive's name and its constructor names live in the same map. *)
 
-module StringMap = Map.Make (String)
+(** The runtime-globals map, and [Check]'s separate class-name set, use
+    this module directly;  it is neither hidden nor renamed. *)
+module StringMap : Map.S with type key = string
 
 (** Binder telescope, outermost first; each type is scoped under the
     binders before it. *)
@@ -95,78 +100,46 @@ type entry =
   | Prim of prim_entry
   | Axiom of axiom_entry  (** M4 Stage B *)
 
+(** M8 Stage D: the manifest alias onto the private storage.  It is
+    manifest on purpose: [Global_store.t] is abstract, and the identity
+    is what lets the kernel's own modules use the private storage API
+    without this interface exposing the map representation or a general
+    insertion function. *)
 type t = entry Global_store.t
 
-let empty : t = Global_store.empty
-let find (name : string) (globals : t) : entry option = Global_store.find name globals
-let add (name : string) (entry : entry) (globals : t) : t = Global_store.add name entry globals
+(** The empty environment. *)
+val empty : t
 
-(** M8 Stage D: the narrow public entry point.  [Run] elaborates a rec
-    body against this provisional self-entry;  it is opaque, unchecked
-    and non-reducible, exactly like the inline record it replaces, and
-    [Check.define] still re-adds its own and still rejects duplicates
-    against the ORIGINAL globals.  [add] above stays an unexported
-    implementation helper. *)
-let add_rec_self (name : string) (ty : Term.t) (globals : t) : t =
-  add name
-    (Def
-       { ty; def = Term.Global name; reducible = false;
-         rec_arg = None; partial = false })
-    globals
+(** [find name globals] is the entry bound to [name], or [None]. *)
+val find : string -> t -> entry option
+
+(** M8 Stage D: [add_rec_self name ty globals] adds the provisional,
+    opaque, unchecked self-entry a rec body is elaborated against.  It
+    is the one public way to extend the environment outside the kernel,
+    and it is narrow by construction: the caller chooses the name and
+    the type alone.  [Check.define] still re-adds its own self-entry and
+    still rejects duplicates against the ORIGINAL globals. *)
+val add_rec_self : string -> Term.t -> t -> t
 
 (** The closed type every entry kind stores. *)
-let entry_ty (e : entry) : Term.t =
-  match e with
-  | Def d -> d.ty
-  | Ind i -> i.ind_ty
-  | Ctor c -> c.ctor_ty
-  | Prim p -> p.prim_ty
-  | Axiom a -> a.ax_ty
+val entry_ty : entry -> Term.t
 
 (** Payload views; Option-returning so callers stay total. *)
-let def_of (e : entry) : def_entry option =
-  match e with
-  | Def d -> Some d
-  | Ind _ | Ctor _ | Prim _ | Axiom _ -> None
+val def_of : entry -> def_entry option
 
-let ind_of (e : entry) : ind_entry option =
-  match e with
-  | Ind i -> Some i
-  | Def _ | Ctor _ | Prim _ | Axiom _ -> None
-
-let ctor_of (e : entry) : ctor_entry option =
-  match e with
-  | Ctor c -> Some c
-  | Def _ | Ind _ | Prim _ | Axiom _ -> None
-
-let prim_of (e : entry) : prim_entry option =
-  match e with
-  | Prim p -> Some p
-  | Def _ | Ind _ | Ctor _ | Axiom _ -> None
+val ind_of : entry -> ind_entry option
+val ctor_of : entry -> ctor_entry option
+val prim_of : entry -> prim_entry option
 
 (** M4 Stage B: view onto the [Axiom] payload, beside the other four. *)
-let axiom_of (e : entry) : axiom_entry option =
-  match e with
-  | Axiom a -> Some a
-  | Def _ | Ind _ | Ctor _ | Prim _ -> None
+val axiom_of : entry -> axiom_entry option
 
-let find_def (name : string) (globals : t) : def_entry option =
-  Option.bind (find name globals) def_of
-
-let find_ind (name : string) (globals : t) : ind_entry option =
-  Option.bind (find name globals) ind_of
-
-let find_ctor (name : string) (globals : t) : ctor_entry option =
-  Option.bind (find name globals) ctor_of
-
-let find_prim (name : string) (globals : t) : prim_entry option =
-  Option.bind (find name globals) prim_of
-
-let find_axiom (name : string) (globals : t) : axiom_entry option =
-  Option.bind (find name globals) axiom_of
+val find_def : string -> t -> def_entry option
+val find_ind : string -> t -> ind_entry option
+val find_ctor : string -> t -> ctor_entry option
+val find_prim : string -> t -> prim_entry option
+val find_axiom : string -> t -> axiom_entry option
 
 (** M4 Stage A: [(n_params, n_indices)] for a declared inductive; retires
     two separate [List.length] calls at every caller that needs both. *)
-let find_ind_arity (name : string) (globals : t) : (int * int) option =
-  find_ind name globals
-  |> Option.map (fun (ind : ind_entry) -> (List.length ind.params, List.length ind.indices))
+val find_ind_arity : string -> t -> (int * int) option

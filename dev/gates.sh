@@ -2342,7 +2342,15 @@ m5d_bites=$(rg -c '"\$watchdog" "\$BITE_S"' "$ROOT/dev/gates.sh")
 # above before (233) and after (236) the edit.  The plan predicted the
 # same delta of 3;  the recipe is still the authority (precedent C-D4),
 # and no tier call was added or removed to reach a predicted number.
-{ [ "$m5d_nolit" -eq 1 ] && [ "$m5d_tiers" -eq 236 ] && [ "$m5d_bites" -eq 2 ] \
+# M8 Stage D (2026-09-05) raised it 236 -> 241: of the three new legs,
+# two are text scans over lib/ and run no binary, and the third,
+# PASS-M8D-NO-BEHAVIOUR-CHANGE, checks the five reference examples in
+# five separate runs, one tier call per run.  No call is deleted.
+# Measured with the recipe above before (236) and after (241) the edit.
+# The plan named no number here;  the recipe is the authority
+# (precedent C-D4), and no tier call was added or removed to reach a
+# predicted number.
+{ [ "$m5d_nolit" -eq 1 ] && [ "$m5d_tiers" -eq 241 ] && [ "$m5d_bites" -eq 2 ] \
   && [ -s "$ROOT/dev/gates.sh" ]; } \
   && echo PASS-M5D-TIERS \
   || { echo "FAIL-M5D-TIERS (nolit=$m5d_nolit tiers=$m5d_tiers bites=$m5d_bites)"; exit 1; }
@@ -4181,24 +4189,33 @@ m8a_bare_file=$(cat "$ROOT"/dev/m8a/bare-lambda-holed.tot)
 # Gate M8A (iv), PASS-M8A-KERNEL-UNCHANGED (plan dev/M8-PLAN.md:884-892;
 # "the kernel is untouched", tot-m8-design-verdict.md:196).  Stage A is
 # an elaborator change, so every file under lib/ keeps its bytes while
-# the new capture path goes live.  The digest walks all 17 lib/*.ml
+# the new capture path goes live.  The digest walks all lib/*.ml
 # files in sorted name order;  prep ruling PREP-1 ruled answer A, and
-# the plan's own command at dev/M8-PLAN.md:887 already cats the 17.
+# the plan's own command at dev/M8-PLAN.md:887 already cats the list.
 # This leg's observable is the digest, distinct from the bare field leg
 # (iii) pins at the same lib/check.ml line, so the two legs mutate one
 # line without sharing a mutation text or an observable.  Review-round
 # fix (conflict note C-A3): the leg no longer reads the local control
 # leg (i) owns, so it watches the digest and the file count alone, the
-# two fields its own comment names.  MUTATION:
+# two fields its own comment names.  M8 STAGE D (plan D4,
+# dev/M8-PLAN.md:2138-2161): this leg now freezes the POST-STAGE-D
+# kernel.  The reviewed transition of 2026-09-05 replaced the 17-file
+# digest ec077852495cdc0ac9a7abd4eb2fe786 with the 18-file digest below
+# and the count 17 with 18, after lib/global_store.ml landed.  The
+# expected digest is a LITERAL measured once during that reviewed
+# transition;  the gate never derives it from the live source and never
+# accepts either digest opportunistically.  Any later change fails.
+# MUTATION:
 # lib/check.ml:959, change the binder text in the Cannot_infer message;
 # lib_md5 moves off its literal.
 m8a_lib=$(cat "$ROOT"/lib/budget.ml "$ROOT"/lib/check.ml "$ROOT"/lib/erase.ml \
   "$ROOT"/lib/error.ml "$ROOT"/lib/eterm.ml "$ROOT"/lib/eval.ml "$ROOT"/lib/global.ml \
+  "$ROOT"/lib/global_store.ml \
   "$ROOT"/lib/interp.ml "$ROOT"/lib/json_escape.ml "$ROOT"/lib/level.ml \
   "$ROOT"/lib/literal.ml "$ROOT"/lib/pp.ml "$ROOT"/lib/prim.ml "$ROOT"/lib/quantity.ml \
   "$ROOT"/lib/term.ml "$ROOT"/lib/totality.ml "$ROOT"/lib/value.ml | md5 -q)
 m8a_libcount=$(fd -e ml . "$ROOT"/lib | wc -l | tr -d ' ')
-{ [ "$m8a_lib" = ec077852495cdc0ac9a7abd4eb2fe786 ] && [ "$m8a_libcount" -eq 17 ]; } \
+{ [ "$m8a_lib" = e49ff916b7235f223e8dcaa498fc3aee ] && [ "$m8a_libcount" -eq 18 ]; } \
   && echo PASS-M8A-KERNEL-UNCHANGED \
   || {
     echo "FAIL-M8A-KERNEL-UNCHANGED (lib_md5=$m8a_lib files=$m8a_libcount)"
@@ -4334,6 +4351,175 @@ m8c_pt_code=$?
   || {
     cat "$m5d_scratch"/m8c-pt.out "$m5d_scratch"/m8c-pt.err
     echo "FAIL-M8C-PRELUDE-TAIL (exit=$m8c_pt_code pat=$m8c_pat1/$m8c_pat2)"
+    exit 1
+  }
+
+# ---------------------------------------------------------------------
+# M8 STAGE D, the lib/ interface sweep and the private storage boundary
+# (plan dev/M8-PLAN.md:2171-2208).  Three legs, placed after the Stage C
+# block and before the two fixed-last performance legs, so
+# PASS-M4FIX-INST-BRANCHING and PASS-M5B-BRANCHING-20 stay last (ruling
+# SD-R3).  The block opens NO scratch dir of its own: it uses
+# $m5d_scratch (dev/gates.sh:2225) and $m5d_bin (:2226), which are both
+# live at this slot, so the EXIT trap at dev/gates.sh:434 keeps its nine
+# dirs.  Every leg pins WHOLE RECORDS: the line count of each captured
+# stream, each expected line as a whole string, and the exit code.
+# Each leg's plan paragraph is quoted verbatim in its own header.
+# ---------------------------------------------------------------------
+
+# Gate M8D (i), PASS-M8D-MLI-COVERAGE (plan dev/M8-PLAN.md:2178-2184).
+# The plan paragraph, verbatim:
+#   Marker: PASS-M8D-MLI-COVERAGE
+#   Ruling: R-Q3.
+#   Command: comm -23 <(fd -e ml --max-depth 1 . /Users/oobi/Documents/tot/lib -x basename | rg -o '^[^.]+' | sort -u) <(fd -e mli --max-depth 1 . /Users/oobi/Documents/tot/lib -x basename | rg -o '^[^.]+' | sort -u) | wc -l | tr -d ' '
+#   Before the stage: exit 0, output 15 (17 original modules, two interfaces).
+#   After the stage: exit 0, output 0 (18 modules, 18 interfaces).
+#   MUTATION: lib/totality.mli, delete lib/totality.mli.
+#   Non-vacuous because: the missing-interface count moves from 0 to 1.
+# Every lib/ module carries an interface after the sweep, so no new .ml
+# file can enter the kernel without one.  The comm walks the two
+# basename sets and yields the modules that own a .ml and no .mli;  the
+# count is 0 only when the sweep is complete.  The two file counts are
+# pinned SEPARATELY, so a deletion that drops a .ml and its .mli
+# together cannot keep the difference at 0.  The gap list itself is
+# printed by the FAIL arm, so the diagnostic names the modules and not
+# only a count (prep ruling SD-Q1).  comm's own exit code is captured on
+# its OWN line: counting in the same assignment would make $? the exit
+# of tr.  The paths are written "$ROOT"/... and the leg keeps fd, which
+# the battery already uses at three sites (ruling SD-Q1).
+m8d_gap=$(comm -23 \
+  <(fd -e ml --max-depth 1 . "$ROOT"/lib -x basename | rg -o '^[^.]+' | sort -u) \
+  <(fd -e mli --max-depth 1 . "$ROOT"/lib -x basename | rg -o '^[^.]+' | sort -u))
+m8d_gap_code=$?
+m8d_missing=$(printf '%s\n' "$m8d_gap" | rg -c '^\S' || echo 0)
+m8d_ml=$(fd -e ml --max-depth 1 . "$ROOT"/lib | wc -l | tr -d ' ')
+m8d_mli=$(fd -e mli --max-depth 1 . "$ROOT"/lib | wc -l | tr -d ' ')
+{ [ "$m8d_gap_code" -eq 0 ] && [ "$m8d_missing" = 0 ] && [ -z "$m8d_gap" ] \
+    && [ "$m8d_ml" -eq 18 ] && [ "$m8d_mli" -eq 18 ]; } \
+  && echo PASS-M8D-MLI-COVERAGE \
+  || {
+    printf '%s\n' "$m8d_gap"
+    echo "FAIL-M8D-MLI-COVERAGE (missing=$m8d_missing comm=$m8d_gap_code ml=$m8d_ml mli=$m8d_mli)"
+    exit 1
+  }
+
+# Gate M8D (ii), PASS-M8D-KERNEL-INTERNAL (plan dev/M8-PLAN.md:2186-2196).
+# The plan paragraph, verbatim:
+#   Marker: PASS-M8D-KERNEL-INTERNAL
+#   Ruling: R-Q4. The sole self-entry boundary marker.
+#   Command: rg -n '^\s*val add\b' /Users/oobi/Documents/tot/lib/global.mli
+#   Before the stage: exit 2, missing interface file.
+#   After the stage: exit 1, no matches in the existing interface.
+#   The gate passes only on code 1; codes 0 and 2 both fail.
+#   MUTATION: lib/global.mli, add `val add : string -> entry -> t -> t` immediately below `val empty : t`.
+#   Non-vacuous because: the command returns 0 and prints the forbidden export.
+#   The private Global_store interface intentionally contains val add; this
+#   marker scans the public Global interface only. The build/client checks
+#   in D2 establish the private-module boundary in addition to this text check.
+# The public kernel interface exports NO general insertion, so the
+# kernel environment can only be built through the private store.  The
+# regex keeps the plan's spelling exactly, and its word boundary is what
+# separates `val add` from `val add_rec_self` (prep probe PD-3).  The
+# exit discipline is the plan's: code 1, the file exists and holds no
+# match, is the ONLY pass;  code 0 means the forbidden export is back and
+# code 2 means the interface file is missing, and both are FAIL.  The
+# positive half pins the narrow entry point R-Q4 requires as a whole
+# line, so the leg cannot be satisfied by deleting lib/global.mli (prep
+# ruling SD-Q5).  MUTATION MD-2: add the line
+# `val add : string -> entry -> t -> t` below `val empty : t`.
+# Review round (2026-09-05), findings BD-3 and LEG-2: the plan quote
+# above defers the private-module half to "the build/client checks in
+# D2", and no leg of this battery read `lib/dune` at all, so a deletion
+# of the `(private_modules global_store)` field was silent.  MEASURED on
+# an off-repo copy of `lib/dune` and `lib/global.mli`: with the field
+# present this leg prints PASS, with line 8 deleted it prints
+# FAIL-M8D-KERNEL-INTERNAL (... priv_code=1 priv=).  The third pin below
+# closes that hole inside this leg rather than under a fourth
+# PASS-M8D-* name, because dev/M8-PLAN.md:2365-2374 reserves exactly
+# eleven marker names and dev/M8-PLAN.md:2247 pins the Stage D exit at
+# 441 slice, so a new marker would move both census numbers.  A fourth
+# echo would also add a PASS line to the slice.  The pin is a WHOLE
+# line, both the count and rg's own exit code, and `$?` is on its own line
+# for the same reason as leg (i).  The field is a declaration of intent:
+# the white-box test at test/dune:32 carries
+# `-I lib/.tot_kernel.objs/byte`, so the boundary this text pin guards is
+# a dependency boundary, not a compiler sandbox (plan
+# dev/M8-PLAN.md:2113-2115).  MUTATION MD-6: delete lib/dune:8.
+m8d_add=$(rg -n '^\s*val add\b' "$ROOT"/lib/global.mli)
+m8d_add_code=$?
+m8d_self=$(rg -c '^val add_rec_self : string -> Term\.t -> t -> t$' "$ROOT"/lib/global.mli)
+m8d_self_code=$?
+m8d_priv=$(rg -c '^ \(private_modules global_store\)\)$' "$ROOT"/lib/dune)
+m8d_priv_code=$?
+{ [ "$m8d_add_code" -eq 1 ] && [ -z "$m8d_add" ] && [ "$m8d_self_code" -eq 0 ] \
+    && [ "$m8d_self" = 1 ] && [ "$m8d_priv_code" -eq 0 ] \
+    && [ "$m8d_priv" = 1 ]; } \
+  && echo PASS-M8D-KERNEL-INTERNAL \
+  || {
+    printf '%s\n' "$m8d_add"
+    echo "FAIL-M8D-KERNEL-INTERNAL (add_code=$m8d_add_code add=$m8d_add self_code=$m8d_self_code self=$m8d_self priv_code=$m8d_priv_code priv=$m8d_priv)"
+    exit 1
+  }
+
+# Gate M8D (iii), PASS-M8D-NO-BEHAVIOUR-CHANGE (plan
+# dev/M8-PLAN.md:2198-2208).  The plan paragraph, verbatim:
+#   Marker: PASS-M8D-NO-BEHAVIOUR-CHANGE
+#   Ruling: R-Q3; retain the five-example output comparison.
+#   Command: printf '%s\n' /Users/oobi/Documents/tot/examples/church.tot /Users/oobi/Documents/tot/examples/guard-classes.tot /Users/oobi/Documents/tot/examples/guard-rewrap.tot /Users/oobi/Documents/tot/examples/guard.tot /Users/oobi/Documents/tot/examples/literals.tot | xargs -I{} /Users/oobi/Documents/tot/_build/default/bin/tot.exe check {} 2>&1 | md5 -q
+#   Before the stage: capture the measured output digest in the build log.
+#   After the stage: the identical digest. The gate also checks that every
+#   example command exits 0; a successful md5 pipeline alone is insufficient.
+#   MUTATION: lib/quantity.ml:26, change `| Many -> "w"` to `| Many -> "many"`.
+#   Non-vacuous because: Pp renders Many Pi binders in these examples using
+#   Quantity.to_string, so the output digest changes. Other preserved digest
+#   legs may also fail under this mutation; distinct mutations do not require
+#   mutually exclusive failures.
+# Review round (2026-09-05), finding LEG-1: PASS-M7A-CONSERVATIVITY
+# already pins the same digest f1450de0006de4b7339b2f39ec2e2e50 and the
+# same line count 43 over the same five example files with the same
+# binary, about 1010 lines earlier at dev/gates.sh:3476, and the battery
+# exits 1 at the first red, so in a battery run the digest conjunct and
+# the line-count conjunct here can never be the FIRST red.  The unique
+# in-battery observable of this leg is the five exit codes m8d_x1 to
+# m8d_x5, which M7A does not capture at all;  the digest assertion stays
+# because ruling R-Q3 (dev/M8-PLAN.md:2199) asks for it, and the
+# standalone leg run of the mutation protocol is where it does the work.
+# The interface sweep and the storage move are refactors, so the five
+# checked examples print byte-identical output before and after.  The
+# plan's own pipeline uses `xargs -I{}`, which does NOT stop on a
+# non-zero child: MEASURED, a missing file left the pipeline at exit 0
+# and moved the digest alone.  So this leg runs the five checks
+# separately, keeps five exit codes, and appends every stdout and stderr
+# byte to ONE file in the plan's order.  That file's md5 is IDENTICAL to
+# the plan pipeline's, measured on both the entry tree and this one.
+# The line count 43 is a second whole-record pin, so a digest collision
+# on a truncated file cannot pass.  Each run goes through "$watchdog"
+# "$FAST", the battery's own rule for a CLI invocation (M3 fixes round
+# 2, ctxcat id 18);  the five calls raise the PASS-M5D-TIERS literal by
+# five.  MUTATION MD-3: lib/quantity.ml:26, `| Many -> "w"` to
+# `| Many -> "many"`.
+m8d_ex="$m5d_scratch/m8d-examples.out"
+: > "$m8d_ex"
+"$watchdog" "$FAST" "$m5d_bin" check "$ROOT"/examples/church.tot >> "$m8d_ex" 2>&1
+m8d_x1=$?
+"$watchdog" "$FAST" "$m5d_bin" check "$ROOT"/examples/guard-classes.tot >> "$m8d_ex" 2>&1
+m8d_x2=$?
+"$watchdog" "$FAST" "$m5d_bin" check "$ROOT"/examples/guard-rewrap.tot >> "$m8d_ex" 2>&1
+m8d_x3=$?
+"$watchdog" "$FAST" "$m5d_bin" check "$ROOT"/examples/guard.tot >> "$m8d_ex" 2>&1
+m8d_x4=$?
+"$watchdog" "$FAST" "$m5d_bin" check "$ROOT"/examples/literals.tot >> "$m8d_ex" 2>&1
+m8d_x5=$?
+m8d_dig=$(md5 -q "$m8d_ex")
+m8d_exlines=$(wc -l < "$m8d_ex" | tr -d ' ')
+{ [ "$m8d_x1" -eq 0 ] && [ "$m8d_x2" -eq 0 ] && [ "$m8d_x3" -eq 0 ] \
+    && [ "$m8d_x4" -eq 0 ] && [ "$m8d_x5" -eq 0 ] \
+    && [ "$m8d_dig" = f1450de0006de4b7339b2f39ec2e2e50 ] \
+    && [ "$m8d_exlines" -eq 43 ]; } \
+  && echo PASS-M8D-NO-BEHAVIOUR-CHANGE \
+  || {
+    tail -n 5 "$m8d_ex"
+    echo "FAIL-M8D-NO-BEHAVIOUR-CHANGE (digest=$m8d_dig lines=$m8d_exlines exits=$m8d_x1/$m8d_x2/$m8d_x3/$m8d_x4/$m8d_x5)"
     exit 1
   }
 

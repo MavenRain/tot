@@ -443,7 +443,7 @@ let case_match_scrut_precedence (globals : Global.t) () : (unit, string) result 
       Check.declare_ind globals ~name:"Pin3" ~params:[ (q0, "A", ty0) ] ~indices:[] ~level:Level.zero
     in
     let g' =
-      Global.add "bad_scrut"
+      Tot_kernel__Global_store.add "bad_scrut"
         (Global.Def
            {
              Global.ty = Term.Global "Pin3";
@@ -1550,7 +1550,7 @@ let case_auto_rejected_everywhere (globals : Global.t) () : (unit, string) resul
    Provisional inductive still reports Ind_incomplete, in the same case,
    so the split is shown to be a split. *)
 let a12_opaque_of_type (name : string) (ty_name : string) (g : Global.t) : Global.t =
-  Global.add name
+  Tot_kernel__Global_store.add name
     (Global.Def
        {
          Global.ty = Term.Global ty_name;
@@ -1995,7 +1995,7 @@ let case_checker_output_never_contains_auto (globals : Global.t) () : (unit, str
    would leave the motive a neutral type that [true] cannot check
    against. *)
 let a13_snd (g : Global.t) : Global.t =
-  Global.add "a13snd"
+  Tot_kernel__Global_store.add "a13snd"
     (Global.Def
        {
          Global.ty = Term.Pi (qw, "a", ty0, Term.Pi (qw, "b", ty0, ty0));
@@ -2066,7 +2066,7 @@ let a13_motive : Term.motive =
    reduced term has no motive left for [Eval.quote]'s FMatch arm (the
    arm this case exists to exercise) to round-trip. *)
 let a13_opaque (g : Global.t) : Global.t =
-  Global.add "a13op"
+  Tot_kernel__Global_store.add "a13op"
     (Global.Def
        {
          Global.ty = Term.App (qw, Term.App (qw, Term.Global "A13Tw", nat), bool_ty);
@@ -2199,7 +2199,7 @@ let d7d_nest_t (n : int) (t : Term.t) : Term.t =
   List.fold_left (fun acc _i -> Term.App (qw, Term.Global "Wrap", acc)) t (List.init n Fun.id)
 
 let d7d_opaque (name : string) (ty : Term.t) (g : Global.t) : Global.t =
-  Global.add name
+  Tot_kernel__Global_store.add name
     (Global.Def { Global.ty; def = Term.Global "mkKey"; reducible = false; rec_arg = None; partial = false })
     g
 

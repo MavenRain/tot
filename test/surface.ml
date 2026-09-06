@@ -1203,6 +1203,39 @@ let m8c_prelude_tail_on_miss () : (unit, string) result =
                       (Option.value tail ~default:"None") want_line
                       (Option.value want_tail ~default:"None")))
 
+(* M8 Stage D, M8D-1 (plan dev/M8-PLAN.md:2210-2218).  The f1-witness
+   fixture folds IN PROCESS through [script_items], from the no-prelude
+   initial state, because the fixture declares [Nat] itself.  The
+   assertion reads the FINAL checked entry for [add] through the PUBLIC
+   [Global] interface lib/global.mli now seals: that entry is the one
+   [Check.define] writes at the end of the rec path, not the
+   provisional self entry [Global.add_rec_self] builds on the way in,
+   and not the CLI's printed lines.  The existing CLI F1 case above and
+   the five raw-environment kernel cases in test/main.ml stay intact. *)
+let m8d_f1_witness_entry () : (unit, string) result =
+  let open Tot_kernel in
+  let attempt =
+    let* final =
+      script_items (In_channel.with_open_text f1_witness_fixture In_channel.input_all)
+      |> Result.map_error Tot_surface.Serror.to_string
+    in
+    Global.find_def "add" final.Tot_surface.Run.globals
+    |> Option.to_result ~none:"M8D-1: add is not in the fixture's final globals"
+  in
+  attempt
+  |> Result.fold
+       ~ok:(fun (d : Global.def_entry) ->
+         let shown =
+           Option.fold ~none:"None" ~some:(fun k -> Printf.sprintf "Some %d" k) d.Global.rec_arg
+         in
+         match () with
+         | () when not (Option.equal Int.equal d.Global.rec_arg (Some 0)) ->
+             Error (Printf.sprintf "M8D-1: add has rec_arg %s, want Some 0" shown)
+         | () when not d.Global.reducible ->
+             Error "M8D-1: add is not reducible in the final globals"
+         | () -> Ok ())
+       ~error:(fun e -> Error e)
+
 let cases (bst : Tot_surface.Run.state) : (string * (unit -> (unit, string) result)) list =
   [
     ( "cadd two two runs to church four",
@@ -2448,6 +2481,9 @@ def stuck : Nat := (fun x => x) _
     ( "M8C-3 m8c_prelude_tail_on_miss: a hand-broken multi-hole prelude carries its tail on the \
        miss path, in process",
       m8c_prelude_tail_on_miss );
+    ( "M8D-1 m8d_f1_witness_entry: the FINAL checked entry for add carries rec_arg = Some 0 and \
+       reducible = true, read through the public Global interface",
+      m8d_f1_witness_entry );
   ]
 
 (** The ordinary in-process suite: bootstrap once, run every [cases]

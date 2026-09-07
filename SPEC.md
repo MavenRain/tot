@@ -2772,3 +2772,21 @@ superseding the historical M7 census above, is:
 ANCHORS total=106 expected-type-only=65 argument-driven=11 neither=30
 The corpus has 76 holed anchors, up from 69.  This count comes from
 dev/hole-anchors.py; conflict note C-B9 records the exact seven sites.
+
+Known debts entering M10 (M9 Stage C, 2026-09-06).  The twelve
+surface modules now have explicit interfaces, preserving their used
+public types and entry points.  Cache exposes its nine required values,
+including format_version at 10, and hides its filesystem helpers.
+The implementation files and kernel rules are unchanged.  The Stage C
+decisions and measured corrections to the plan are recorded as C-C1
+through C-C3 in dev/M9-BUILD-LOG.md.
+
+C2, nested inductives and the polarity rule, lands FIRST in M10 and
+soaks, then C1, well-founded recursion and the accessibility-shape
+selector.  Before any C2 rule is costed, the M10 brief must answer the
+double-flip sign lattice; C1 still needs the formal-domain information
+that Totality.guard does not receive.  Stage B measured two forced
+rewrites while porting the cd-prefix guard.  That reading is not itself
+demand for either C1 or C2 and shrinks neither debt.  The Frozen
+emptiness obligation remains open, with both horns stated above and
+neither asserted as proved.

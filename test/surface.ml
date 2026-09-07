@@ -2254,6 +2254,14 @@ let cases (bst : Tot_surface.Run.state) : (string * (unit -> (unit, string) resu
                         ~none:
                           (Error "expected a hit again after the final re-save, got a miss")
                         ~some:(fun (_g2, _e2) -> Ok ())) );
+    ( "M9C-1: surface/cache.mli seals format_version at 10, the invariant \
+       carried M8 R-Q6 and this ratification both forbid moving",
+      fun () ->
+        if Int.equal Tot_surface.Cache.format_version 10 then Ok ()
+        else
+          Error
+            (Printf.sprintf "Cache.format_version through the sealed interface is %d, want 10"
+               Tot_surface.Cache.format_version) );
     (* M3 Stage D, D4: render_verdict and the main : IO Verdict
        epilogue, tried FIRST, ahead of IO Unit. *)
     ( "D4a: render_verdict renders allow/ask/deny exactly and rejects a non-Verdict VCon",

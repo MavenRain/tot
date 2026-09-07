@@ -1007,3 +1007,249 @@ missing inline provenance sentence on the three new legs, the MB-2
 digest provenance, the fuel and cap coupling comment in the guard, the
 deny rendering in surface/effect.ml, a third CD-PORT payload, and a one
 character citation drift in dev/m9b/wordend-index.tot.
+
+## Stage C (2026-09-06): the twelve surface interfaces
+
+### 1. Entry state
+
+Stage B is committed as d48a81c96c848e3db0fda0a7bce9985751081187.
+The canonical working tree and index were clean.  The fresh entry run
+used the same four-command battery as Stage B:
+
+```sh
+zsh -f /Users/oobi/Documents/gpt1/tot-m9b-battery.sh /Users/oobi/Documents/gpt1/tot-m9c-entry.log /Users/oobi/Documents/tot
+```
+
+The measured entry is 447 slice, 451 wrapper, with 105 kernel cases
+and 160 surface cases.  BUILD-EXIT, MAIN-EXIT, SURFACE-EXIT and
+GATE-EXIT are all 0; there are zero FAIL lines.  The baseline manifest
+is /Users/oobi/Documents/gpt1/tot-m9c-baseline.json, and the parsed
+counts are /Users/oobi/Documents/gpt1/tot-m9c-entry-summary.json.
+Surface has twelve implementations, zero interfaces and a basename
+gap of twelve.  The existing gate file has 181 echo sites; the M9C
+marker namespace is empty.  Stage A and B markers are already present.
+
+### 2. What changed
+
+Exactly sixteen paths belong to Stage C: twelve new surface interfaces,
+dev/gates.sh, test/surface.ml, SPEC.md and this log.  All twelve
+surface implementation files retain their original MD5s.  No lib file,
+prelude, corpus fixture, transcript, plan or build configuration changes.
+
+The interface discovery includes unqualified calls between surface
+modules and Tot_surface-qualified calls in bin and both suites.  It
+includes mutually recursive declarations, such as Effect.dispatch.
+The new interfaces retain every public constructor and record field
+their callers need, kernel type equalities, polymorphism and optional
+arguments.  Loc retains the full signature explicitly printed in the
+plan.  The export inventory is:
+
+| Module | Exported values |
+| --- | --- |
+| Bootstrap | kept_pi_count, phase1_prims, phase2_prims, phase3_prims, prelude_source, state, state_of_src_tailed, cached_state_of_src |
+| Cache | format_version, magic_width, version_width, digest_width, header_width, cache_dir, key, load, save |
+| Effect | deny_envelope, require_action, run_io, dispatch, render_verdict |
+| Elab | term, term_at |
+| Lexer | lex |
+| Loc | start, next_col, advance, next_line, to_string |
+| Parser | parse_with_holes, parse, term_only |
+| Run | initial, default_policy, kernel, compute_guard, instance_key, item, hole_tail, script_tailed, script |
+| Serror | to_string, tag, driver_exit, is_check_budget, is_missing_main |
+| Source | message, read |
+| Syntax | loc_of |
+| Token | describe |
+
+Cache exports exactly nine values.  The internal gate pins the first
+six positive declarations, through cache_dir, and requires the scan for
+ensure_dir, mkdir_one and write_exe_memo to exit 1 with no output.
+exe_width is also absent from the signature.  key, load and save are
+used by Bootstrap and the existing cache tests.
+
+The coverage gate requires successful comm, an empty missing-name set,
+twelve implementations and twelve interfaces.  Both new gates precede
+the two fixed-last timing legs.  They add no watchdog call.  M9C-1 is
+the only new suite case and reads Cache.format_version through the
+interface, asserting 10.  SPEC's appended milestone record carries
+C2 first and soaks, then C1, with Stage B's reading of two and neither
+debt reduced.
+
+### 3. Conflict notes
+
+**C-C1: Stage C's suite paragraph repeats the pre-B count.**
+
+1. Predicted.  dev/M9-PLAN.md:2388-2390 says the surface suite moves
+   from 158 to 159.  Its stage entry and review checklist instead say
+   160 to 161 after Stage B.
+2. Measured.  The fresh entry battery contains 105 kernel PASS lines
+   and 160 surface PASS lines, with all four command exits 0.
+3. Command and output.  The absolute battery command in section 1
+   produced `M0 kernel: all tests green`, `M1 surface: all tests green`
+   and `GATE-EXIT=0`.  Counting PASS lines between each suite's bounds
+   produces `main=105 surface=160`; the entry-summary JSON records
+   those bounds' results and `slice=447 wrapper=451`.
+4. Cited lines.  dev/M9-PLAN.md:2026-2031 includes Stage B's two
+   cases.  test/surface.ml:2947 and :2949 are those preserved cases
+   after Stage C's eight-line insertion.
+5. The smallest reading that fits.  The suite paragraph retained a
+   pre-B estimate; Stage C still adds exactly one surface case.
+6. The decision.  Use the measured post-B entry and the consistent
+   stage-table delta, 160 to 161, leaving the accepted plan unchanged.
+
+**C-C2: full inferred signatures versus the used public API.**
+
+1. Predicted.  dev/M9-PLAN.md:2072-2078 requires each interface to
+   export exactly its currently used public names, while :2123-2128
+   calls the other eleven modules exact restatements.  Its top-level
+   declaration counts omit recursive `and` bindings.
+2. Measured.  Effect.dispatch is declared with `and` at
+   surface/effect.ml:183 and called by test/surface.ml.  Bootstrap's
+   cached_state has no live external caller.  The selected interfaces
+   compile without exposing that helper.
+3. Command and output.  From the writable checkout,
+   `dunecho --warn build -- --root /Users/oobi/Documents/gpt1/tot-m9-stage-c`
+   printed `OK build: 0 errors, 0 warnings`.  Each of the five larger
+   modules was also checked with ocamlc -i against the baseline CMIs;
+   all five commands exited 0 and matched the selected signatures.
+4. Cited lines.  surface/effect.mli exports dispatch;
+   surface/bootstrap.mli exports the eight live-client values listed
+   above.  dev/M9-PLAN.md:2399-2404 requires no widening past the
+   discovery result and a warning-free build.
+5. The smallest reading that fits.  Restate the types of used names,
+   including recursive declarations, without publishing unused helpers.
+6. The decision.  Follow the explicit used-API and no-widening rules,
+   with the full Loc signature separately mandated at plan :2132-2143.
+   Public sum types and records remain concrete.  No warning suppression
+   or implementation change is needed.
+
+**C-C3: insertion addresses and marker absence are reference-state facts.**
+
+1. Predicted.  dev/M9-PLAN.md:2089-2091 names the D4 insertion boundary
+   at test/surface.ml:1804-1806; :2085-2087 names ctxcat id 5 at
+   dev/gates.sh:4526; :1977-1982 says the M9 prefix is unused at the
+   pre-M9 reference HEAD.
+2. Measured.  At Stage B HEAD the D4 comment is at test/surface.ml:2257
+   and ctxcat id 5 is at dev/gates.sh:4583.  The M9A and M9B markers
+   exist, and M9C is absent.
+3. Command and output.  Before inserting the blocks,
+   `rg -n 'M3 Stage D, D4' /Users/oobi/Documents/tot/test/surface.ml`
+   printed `2257:    (* M3 Stage D, D4: render_verdict and the main : IO Verdict`;
+   `rg -n '^# ctxcat id 5:' /Users/oobi/Documents/tot/dev/gates.sh`
+   printed `4583:# ctxcat id 5: an instance with TWO dictionary binders on the SAME type`.
+4. Cited lines.  The final additions begin at test/surface.ml:2257
+   and dev/gates.sh:4583; the preserved anchors move to :2265 and
+   :4622 respectively.  The earlier C-B4 record now resolves to helper
+   :733, inline sources :781 and :1149, and cases :2947 and :2949.
+5. The smallest reading that fits.  Earlier stage additions shifted
+   addresses and occupied their own marker letters.
+6. The decision.  Locate insertion boundaries by content and check
+   absence only for M9C.  Removing the new blocks reproduces both
+   original files byte for byte, including every old gate comparison.
+
+### 4. Validation and mutation proofs
+
+The writable-checkout build compiled bin and both suites with zero
+errors and zero warnings.  Both suites passed.  Removing only the
+format_version declaration from cache.mli produced this compiler error:
+
+```text
+File "test/surface.ml", line 2260, characters 21-53:
+Error: Unbound value "Tot_surface.Cache.format_version"
+```
+
+The raw diagnostic is
+/Users/oobi/Documents/gpt1/tot-m9c-compile-negative.log.  Its first
+capture script expected an unquoted identifier, so its diagnostic-text
+assertion failed after the compiler had produced the intended error.
+The finally block restored cache.mli to MD5
+539206f860c1368552a2e7b055204a8d; the subsequent suite builds passed.
+This compile-negative check is separate from the two gate mutations.
+
+The exact static gate bodies were extracted into scratch fixtures.
+Both passed with all interfaces present.  Deleting loc.mli produced
+`FAIL-M9C-SURFACE-MLI-COVERAGE (missing=1 comm=0 ml=12 mli=11)`.
+After restoring it, adding only `val ensure_dir : string -> unit`
+below format_version produced FAIL-M9C-SURFACE-INTERNAL with add_code=0
+and all six positive counts still 1.  Both restorations were
+MD5-identical.  Missing cache.mli, missing format_version and duplicate
+format_version controls also failed.  Full captured results are in
+/Users/oobi/Documents/gpt1/tot-m9c-static-gates.json.
+
+An independent review found no defects in the five larger interfaces
+or the gates and suite diff.  Exported values have live callers;
+records, constructors, type equalities and optional argument order
+match their implementations.  The remaining seven interfaces' type
+declarations were compared to their implementations with comments and
+whitespace removed.  Shell syntax and git diff --check passed.
+
+### 5. Re-derivations
+
+The only intended count changes are the interface count 0 to 12,
+basename gap 12 to 0, gate echo sites 181 to 183 and surface cases
+160 to 161.  The gate slice therefore moves 447 to 450 and the wrapper
+451 to 454.  These exit predictions are checked against the actual
+canonical run in section 6.  Kernel cases remain 105.
+
+All existing gate code is byte-identical after removing the two new
+legs.  In particular, conservativity stays
+f1450de0006de4b7339b2f39ec2e2e50 at 43 lines, both existing digest
+legs remain, watchdog call sites remain 247, and all Stage B census,
+settle-budget and transcript comparisons stay fixed.  Corpus membership
+and all twelve surface implementation MD5s match the entry manifest.
+
+### 6. Exit state
+
+The canonical initial and restored closing batteries both pass at
+450 slice and 454 wrapper.  Both contain 105 kernel cases and 161
+surface cases, with zero FAIL lines and all four command exits 0.
+All four canonical validation builds report zero errors and zero
+warnings.  The entry and exit
+multiset comparison removes no old PASS and adds exactly these three:
+
+```text
+PASS-M9C-SURFACE-MLI-COVERAGE
+PASS-M9C-SURFACE-INTERNAL
+PASS M9C-1: surface/cache.mli seals format_version at 10, the invariant carried M8 R-Q6 and this ratification both forbid moving
+```
+
+All runs use the section 1 battery command, changing only its output
+path.  Raw logs under /Users/oobi/Documents/gpt1 are:
+
+| Log | Slice | Wrapper | Gate exit | Result |
+| --- | --- | --- | --- | --- |
+| tot-m9c-entry.log | 447 | 451 | 0 | Stage B baseline |
+| tot-m9c-build.log | 450 | 454 | 0 | Complete Stage C tree |
+| tot-m9c-mc1.log | 446 | 450 | 1 | Only the missing-interface gate fails |
+| tot-m9c-mc2.log | 447 | 451 | 1 | Only the cache-internal gate fails |
+| tot-m9c-close.log | 450 | 454 | 0 | All mutations restored |
+
+Each mutation's build and both standalone suites exit 0.  Its full
+gate run reaches the intended new leg before failing, with exactly
+one FAIL line.  MC1 deletes only surface/loc.mli and reports
+missing=1, comm=0, ml=12, mli=11.  MC2 adds only the ensure_dir
+declaration and reports add_code=0 while all six required export counts
+remain 1.  MC2 first passes the coverage leg.  The two original files
+are restored before the next run, with MD5s:
+
+```text
+surface/loc.mli   fca08142c574161210ddefb07a395b39
+surface/cache.mli 539206f860c1368552a2e7b055204a8d
+```
+
+The complete machine-readable results, including captured PASS lists,
+all command exits, failures and restore hashes, are in
+/Users/oobi/Documents/gpt1/tot-m9c-validation.json.  The four Stage C
+validation runs each have a sibling measure log.  No gate, comparison, timing tier or budget
+was waived or weakened.  The measured entry and exit totals match the
+stage table, so they require no further count correction.
+
+The final metadata is appended after the restored battery.  SPEC stays
+byte-identical to the validated version.  The staging helper requires
+this log to retain the entire validated prefix and rechecks its only
+gate input, the anchored demand-count line, at exactly one match before
+and after copying.  All other staged files must match the validated
+install manifest.  Persistent mutation originals are retained in
+/Users/oobi/Documents/gpt1/tot-m9c-restore/ for interrupted-run recovery.
+
+Stage C completes M9's interface sweep.  The next milestone retains
+the ratified C2-first order and its sign-lattice design obligation;
+no M10 kernel rule is part of this stage.

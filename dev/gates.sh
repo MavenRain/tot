@@ -4580,6 +4580,45 @@ m9b_regex_out=$("$watchdog" "$MED" dune exec --root "$ROOT" test/surface.exe -- 
   || { echo "FAIL-M9B-REGEX-FIDELITY (rc=$m9b_regex_rc out=$m9b_regex_out inline=$m9b_regex_inline file=$m9b_regex_file)"; exit 1; }
 
 
+# M9 Stage C: complete surface interfaces and the cache export boundary.
+# Both legs are static, so they add no watchdog invocations.
+# MUTATION: surface/loc.mli, delete the interface; missing becomes 1 and mli 11.
+m9c_gap=$(comm -23 \
+  <(fd -e ml --max-depth 1 . "$ROOT"/surface -x basename | rg -o '^[^.]+' | sort -u) \
+  <(fd -e mli --max-depth 1 . "$ROOT"/surface -x basename | rg -o '^[^.]+' | sort -u))
+m9c_gap_code=$?
+m9c_missing=$(printf '%s\n' "$m9c_gap" | rg -c '^\S' || echo 0)
+m9c_ml=$(fd -e ml --max-depth 1 . "$ROOT"/surface | wc -l | tr -d ' ')
+m9c_mli=$(fd -e mli --max-depth 1 . "$ROOT"/surface | wc -l | tr -d ' ')
+{ [ "$m9c_gap_code" -eq 0 ] && [ "$m9c_missing" = 0 ] && [ -z "$m9c_gap" ] \
+    && [ "$m9c_ml" -eq 12 ] && [ "$m9c_mli" -eq 12 ]; } \
+  && echo PASS-M9C-SURFACE-MLI-COVERAGE \
+  || {
+    printf '%s\n' "$m9c_gap"
+    echo "FAIL-M9C-SURFACE-MLI-COVERAGE (missing=$m9c_missing comm=$m9c_gap_code ml=$m9c_ml mli=$m9c_mli)"
+    exit 1
+  }
+
+# MUTATION: surface/cache.mli, add val ensure_dir : string -> unit below format_version.
+# The forbidden-name check must exit 1; matches and scan errors both fail.
+m9c_add=$(rg -n '^\s*val (ensure_dir|mkdir_one|write_exe_memo)\b' "$ROOT"/surface/cache.mli)
+m9c_add_code=$?
+m9c_fmt=$(rg -c '^val format_version : int$' "$ROOT"/surface/cache.mli)
+m9c_magic=$(rg -c '^val magic_width : int$' "$ROOT"/surface/cache.mli)
+m9c_ver=$(rg -c '^val version_width : int$' "$ROOT"/surface/cache.mli)
+m9c_dig=$(rg -c '^val digest_width : int$' "$ROOT"/surface/cache.mli)
+m9c_hdr=$(rg -c '^val header_width : int$' "$ROOT"/surface/cache.mli)
+m9c_dir=$(rg -c '^val cache_dir : unit -> string option$' "$ROOT"/surface/cache.mli)
+{ [ "$m9c_add_code" -eq 1 ] && [ -z "$m9c_add" ] \
+    && [ "$m9c_fmt" = 1 ] && [ "$m9c_magic" = 1 ] && [ "$m9c_ver" = 1 ] \
+    && [ "$m9c_dig" = 1 ] && [ "$m9c_hdr" = 1 ] && [ "$m9c_dir" = 1 ]; } \
+  && echo PASS-M9C-SURFACE-INTERNAL \
+  || {
+    printf '%s\n' "$m9c_add"
+    echo "FAIL-M9C-SURFACE-INTERNAL (add_code=$m9c_add_code add=$m9c_add fmt=$m9c_fmt magic=$m9c_magic ver=$m9c_ver dig=$m9c_dig hdr=$m9c_hdr dir=$m9c_dir)"
+    exit 1
+  }
+
 # ctxcat id 5: an instance with TWO dictionary binders on the SAME type
 # variable. Round 1's fuel bounded the depth of one resolution PATH,
 # never the total number of resolutions, so this branching shape

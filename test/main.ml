@@ -1123,14 +1123,8 @@ let case_partial_guard_skip () : (unit, string) result =
                                 d.Global.reducible (Option.is_some d.Global.rec_arg)
                                 d.Global.partial)))))
 
-(* M3 Stage C, C7 (replaces the plan's item 4, "the hole pass": this
-   stage shipped the PRE-APPROVED FALLBACK instead, see
-   dev/M3-BUILD-LOG.md "Stage C"). A kernel-level counterpart to
-   test/surface.ml's positivity control test: [Json]'s self-recursive
-   ctors (mentioning the inductive only as itself) are accepted by
-   [Check.define_ind] directly, while a "jarr : List T -> T"-style
-   nesting is STILL rejected, pinning that the self-recursive encoding
-   is load-bearing and no nested-inductive support crept in. *)
+(* M10 Stage A retains the direct Json-shaped positive control and
+   admits the List-nested counterpart through the kernel entry point. *)
 let case_json_positivity_kernel () : (unit, string) result =
   Tot_surface.Bootstrap.state ()
   |> Result.map_error (fun e -> "bootstrap failed: " ^ Tot_surface.Serror.to_string e)
@@ -1152,25 +1146,207 @@ let case_json_positivity_kernel () : (unit, string) result =
          |> Result.fold
               ~error:(fun e -> Error ("json-positivity-kernel: self-recursive ctor REJECTED: " ^ Error.to_string e))
               ~ok:(fun _ ->
-                let bad =
-                  let* g2 = Check.declare_ind g ~name:"JsonBadK" ~params:[] ~indices:[] ~level:Level.zero in
-                  Check.define_ind g2 ~name:"JsonBadK"
+                let nested =
+                  let* g2 = Check.declare_ind g ~name:"JsonNestedK" ~params:[] ~indices:[] ~level:Level.zero in
+                  Check.define_ind g2 ~name:"JsonNestedK"
                     ~ctors:
                       [
                         ( "jarrK",
                           Term.Pi
                             ( qw, "_",
-                              Term.App (qw, Term.Global "List", Term.Global "JsonBadK"),
-                              Term.Global "JsonBadK" ) );
+                              Term.App (qw, Term.Global "List", Term.Global "JsonNestedK"),
+                              Term.Global "JsonNestedK" ) );
                       ]
                 in
-                bad
+                nested
                 |> Result.fold
-                     ~ok:(fun _ -> Error "json-positivity-kernel: List JsonBadK -> JsonBadK nesting was ACCEPTED")
+                     ~ok:(fun _g -> Ok ())
                      ~error:(fun e ->
-                       Printf.printf "  expected error (Bad_ctor): %s\n" (Error.to_string e);
-                       if String.equal (Error.tag e) "Bad_ctor" then Ok ()
-                       else Error ("json-positivity-kernel: wrong error: " ^ Error.to_string e))))
+                       Error ("json-positivity-kernel: List nesting rejected: " ^ Error.to_string e))))
+
+(* The two all-erased families are inhabited through a container that
+   needs no recursive value. Their metadata must still exclude the
+   erased-scrutinee elimination rule. *)
+let case_m10a_nested_metadata ~(phantom : bool) () : (unit, string) result =
+  let* bst =
+    Tot_surface.Bootstrap.state ()
+    |> Result.map_error Tot_surface.Serror.to_string
+  in
+  let attempt =
+    let* g =
+      if phantom then
+        let* g =
+          Check.declare_ind bst.Tot_surface.Run.globals ~name:"M10PhantomK"
+            ~params:[ (q0, "A", ty0) ] ~indices:[] ~level:Level.zero
+        in
+        Check.define_ind g ~name:"M10PhantomK"
+          ~ctors:[ ("m10PhantomK", Term.App (qw, Term.Global "M10PhantomK", Term.Var 0)) ]
+      else Ok bst.Tot_surface.Run.globals
+    in
+    let container = if phantom then "M10PhantomK" else "List" in
+    let* g = Check.declare_ind g ~name:"M10ErasedK" ~params:[] ~indices:[] ~level:Level.zero in
+    let* g =
+      Check.define_ind g ~name:"M10ErasedK"
+        ~ctors:
+          [ ("m10ErasedK",
+              Term.Pi (q0, "xs", Term.App (qw, Term.Global container, Term.Global "M10ErasedK"),
+                Term.Global "M10ErasedK")) ]
+    in
+    let* ind = Global.find_ind "M10ErasedK" g |> Option.to_result ~none:(Error.Unbound_global "M10ErasedK") in
+    let* ctor = Global.find_ctor "m10ErasedK" g |> Option.to_result ~none:(Error.Unbound_global "m10ErasedK") in
+    Ok (g, ind, ctor)
+  in
+  let* g, ind, ctor = attempt |> Result.map_error Error.to_string in
+  match () with
+  | () when not ctor.Global.self_rec -> Error "M10A: nested recursive constructor lost self_rec"
+  | () when Check.zero_eliminable g ind -> Error "M10A: nested recursive family became zero_eliminable"
+  | () -> Ok ()
+
+(* An always-spent budget fails in [infer_univ] on the whole
+   constructor type, before any per-field positivity call, so a wall
+   alone proves nothing about the nesting walk. The count is the
+   assertion: the nested field must cost the caller MORE polls than a
+   plain field, and the threshold below is measured here, never
+   pinned as a literal. *)
+let case_m10a_nested_budget () : (unit, string) result =
+  let* bst =
+    Tot_surface.Bootstrap.state ()
+    |> Result.map_error Tot_surface.Serror.to_string
+  in
+  let ctors (field : Term.t) =
+    [ ("m10BudgetK", Term.Pi (qw, "xs", field, Term.Global "M10BudgetK")) ]
+  in
+  let nested_field = Term.App (qw, Term.Global "List", Term.Global "M10BudgetK") in
+  let plain_field = Term.Global "Nat" in
+  let declare_define (budget : Budget.t) (field : Term.t) : (Global.t, Error.t) result =
+    Result.bind
+      (Check.declare_ind bst.Tot_surface.Run.globals ~name:"M10BudgetK"
+         ~params:[] ~indices:[] ~level:Level.zero)
+      (fun g -> Check.define_ind ~budget g ~name:"M10BudgetK" ~ctors:(ctors field))
+  in
+  let count_polls (field : Term.t) : (int, string) result =
+    let polls = ref 0 in
+    let budget =
+      Budget.of_poll (fun () ->
+          incr polls;
+          false)
+    in
+    declare_define budget field
+    |> Result.fold
+         ~ok:(fun _g -> Ok !polls)
+         ~error:(fun e ->
+           Error ("M10A: unspent-budget declaration failed: " ^ Error.to_string e))
+  in
+  let* nested_polls = count_polls nested_field in
+  let* plain_polls = count_polls plain_field in
+  let capped (field : Term.t) : (Global.t, Error.t) result =
+    let polls = ref 0 in
+    let budget =
+      Budget.of_poll (fun () ->
+          incr polls;
+          !polls > plain_polls)
+    in
+    declare_define budget field
+  in
+  let nested_capped = capped nested_field in
+  let plain_capped = capped plain_field in
+  let reason (r : (Global.t, Error.t) result) : string =
+    r |> Result.fold ~ok:(fun _g -> "admitted") ~error:Error.to_string
+  in
+  let nested_is_budget =
+    nested_capped |> Result.fold ~ok:(fun _g -> false) ~error:Error.is_check_budget
+  in
+  match () with
+  | () when nested_polls <= plain_polls ->
+      Error
+        (Printf.sprintf
+           "M10A: the nesting walk skipped the budget: nested polls %d, plain polls %d"
+           nested_polls plain_polls)
+  | () when not nested_is_budget ->
+      Error ("M10A: wrong nested budget result: " ^ reason nested_capped)
+  | () when Result.is_error plain_capped ->
+      Error
+        ("M10A: the plain field must fit the same budget: " ^ reason plain_capped)
+  | () -> Ok ()
+
+let case_m10a_provisional_container (globals : Global.t) () : (unit, string) result =
+  let attempt =
+    let* g =
+      Check.declare_ind globals ~name:"M10PendingK" ~params:[ (q0, "A", ty0) ]
+        ~indices:[] ~level:Level.zero
+    in
+    let* g = Check.declare_ind g ~name:"M10PendingSelfK" ~params:[] ~indices:[] ~level:Level.zero in
+    Check.define_ind g ~name:"M10PendingSelfK"
+      ~ctors:
+        [ ("m10PendingSelfK",
+            Term.Pi (qw, "xs", Term.App (qw, Term.Global "M10PendingK", Term.Global "M10PendingSelfK"),
+              Term.Global "M10PendingSelfK")) ]
+  in
+  attempt
+  |> Result.fold
+       ~ok:(fun _g -> Error "M10A: a provisional container transported a recursive occurrence")
+       ~error:(fun e ->
+         if String.equal (Error.tag e) "Bad_ctor"
+            && String.ends_with ~suffix:"negative or non-uniform occurrence of M10PendingSelfK" (Error.to_string e)
+         then Ok ()
+         else Error ("M10A: wrong provisional-container rejection: " ^ Error.to_string e))
+
+type m10a_dependency = M10DirectDependency | M10WrappedDependency | M10AliasDependency
+
+let case_m10a_closed_dependencies () : (unit, string) result =
+  let check mode : (unit, string) result =
+    let* bst =
+      Tot_surface.Bootstrap.state () |> Result.map_error Tot_surface.Serror.to_string
+    in
+    let setup =
+      let* g = Check.declare_ind bst.Tot_surface.Run.globals ~name:"M10CycleK"
+          ~params:[] ~indices:[] ~level:Level.zero in
+      let negative = Term.Pi (qw, "x", Term.Global "M10CycleK", Term.Global "Nat") in
+      let* g, field =
+        match mode with
+        | M10DirectDependency | M10WrappedDependency -> Ok (g, negative)
+        | M10AliasDependency ->
+            let* g = Check.define ~rule:Totality.Structural g ~name:"M10AliasK"
+                ~reducible:false ~ty:ty0 ~def:negative in
+            Ok (g, Term.Global "M10AliasK")
+      in
+      let container g name cname field =
+        let* g = Check.declare_ind g ~name ~params:[ (q0, "A", ty0) ]
+            ~indices:[] ~level:Level.zero in
+        Check.define_ind g ~name
+          ~ctors:[ (cname, Term.Pi (qw, "field", field,
+                     Term.App (q0, Term.Global name, Term.Var 1))) ]
+      in
+      let* g = container g "M10CarrierK" "m10CarrierK" field in
+      let* g, head =
+        match mode with
+        | M10DirectDependency | M10AliasDependency -> Ok (g, "M10CarrierK")
+        | M10WrappedDependency ->
+            let* g = container g "M10WrapperK" "m10WrapperK"
+                (Term.App (q0, Term.Global "M10CarrierK", Term.Global "Nat")) in
+            Ok (g, "M10WrapperK")
+      in
+      Ok (g, head)
+    in
+    (* Setup must succeed, so an earlier unrelated refusal cannot pass
+       this regression. Only the final recursive declaration may fail. *)
+    let* g, head = setup |> Result.map_error Error.to_string in
+    Check.define_ind g ~name:"M10CycleK"
+      ~ctors:[ ("m10CycleK", Term.Pi (qw, "value",
+                 Term.App (q0, Term.Global head, Term.Global "M10CycleK"),
+                 Term.Global "M10CycleK")) ]
+    |> Result.fold
+         ~ok:(fun _g -> Error ("M10A: completed " ^ head ^ " hid a reference to the pending family"))
+         ~error:(fun e ->
+           if String.equal (Error.tag e) "Bad_ctor"
+              && String.ends_with ~suffix:"negative or non-uniform occurrence of M10CycleK"
+                   (Error.to_string e)
+           then Ok ()
+           else Error ("M10A: wrong closed-dependency refusal: " ^ Error.to_string e))
+  in
+  List.fold_left
+    (fun acc mode -> let* () = acc in check mode)
+    (Ok ()) [M10DirectDependency; M10WrappedDependency; M10AliasDependency]
 
 (* --- M4 Stage A: indexed inductive families, subsingleton elimination,
    positivity --- *)
@@ -2931,8 +3107,18 @@ let cases (globals : Global.t) : (string * (unit -> (unit, string) result)) list
     ("C2: partial on a non-Div-headed codomain is Partial_not_div", case_partial_not_div);
     ( "C3: def rec failing the guard is Termination without partial, ACCEPTED with it",
       case_partial_guard_skip );
-    ( "C4: Json-shaped self-recursive ctors pass positivity; List T -> T nesting is Bad_ctor",
+    ( "C4: Json-shaped direct and List-nested recursive ctors pass positivity",
       case_json_positivity_kernel );
+    ( "M10A-K1: List-nested all-erased recursion keeps self_rec and forbids zero elimination",
+      case_m10a_nested_metadata ~phantom:false );
+    ( "M10A-K2: phantom-nested all-erased recursion keeps self_rec and forbids zero elimination",
+      case_m10a_nested_metadata ~phantom:true );
+    ( "M10A-K3: provisional containers cannot transport recursive occurrences",
+      case_m10a_provisional_container globals );
+    ( "M10A-K4: nested constructor checking honors the caller's spent budget",
+      case_m10a_nested_budget );
+    ( "M10A-K5: completed container dependencies cannot conceal a pending recursive family",
+      case_m10a_closed_dependencies );
     ("A1: an indexed family declares, defines, and reports its arity", case_indexed_family_arity globals);
     ("A2: an index binder marked w is Index_not_zero", case_index_not_zero globals);
     ("A3: an index type above the declared universe is Index_above_universe", case_index_above_universe globals);

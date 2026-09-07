@@ -1902,10 +1902,8 @@ let define_ind ?(budget : Budget.t = Budget.unlimited) (globals : Global.t)
         Ok (bind x q ty_v ctx))
       (Ok (root_ctx budget)) ind.Global.params
   in
-  (* [no_occur]/[index_expr_clean] closed over this [name]; see their
-     top-level definitions above [zero_eliminable] for the reachability
-     argument. *)
-  let no_occur (t : Term.t) : bool = no_occur name t in
+  (* [index_expr_clean] closed over this [name]; see its top-level
+     definition above [zero_eliminable] for the reachability argument. *)
   let index_expr_clean (e : Term.t) : bool = index_expr_clean name e in
   (* [name] applied to exactly its parameter variables in order, then to
      [n_indices] index expressions none of which mention [name]. Seen
@@ -1958,22 +1956,219 @@ let define_ind ?(budget : Budget.t = Budget.unlimited) (globals : Global.t)
                   | Term.Global _ | Term.Match _ ->
                       false))
   in
-  (* strict positivity: no occurrence at all, or exactly the applied form,
-     possibly as the codomain of a Pi telescope whose domains never
-     mention the name *)
-  let rec strict_pos (depth : int) (t : Term.t) : bool =
-    match () with
-    | () when no_occur t -> true
-    | () ->
-        (match t with
-        | Term.Pi (_q, _x, dom, cod) -> no_occur dom && strict_pos (depth + 1) cod
-        | Term.Var _ | Term.Univ _ | Term.Lit _ | Term.Auto
-        | Term.Lam (_, _, _)
-        | Term.App (_, _, _)
-        | Term.Let (_, _, _, _)
-        | Term.Ann (_, _)
-        | Term.Global _ | Term.Match _ ->
-            is_applied depth t)
+  (* M10 Stage A: certificates stay local to this definition and never
+     enter a marshalled global entry. A query certifies one parameter
+     slot of a completed container. Recursive uniform self edges need
+     no new query; foreign cycles fail closed. Only finished queries
+     enter [certificates], so a tentative success cannot escape. *)
+  let certificates : ((string * int) * bool) list ref = ref [] in
+  let poll () : (unit, Error.t) result =
+    if Budget.exhausted budget then Error Error.Check_budget else Ok ()
+  in
+  let rec all : 'a.
+      ('a -> (bool, Error.t) result) -> 'a list -> (bool, Error.t) result =
+    fun f xs ->
+    match xs with
+    | [] -> Ok true
+    | x :: rest ->
+        let* accepted = f x in
+        if accepted then all f rest else Ok false
+  in
+  (* [None] targets the family being defined; [Some ix] targets a
+     container parameter at its current de Bruijn index. Inspect every
+     term arm, including erased fields, annotations and match motives. *)
+  let under (count : int) (target : int option) : int option =
+    Option.map (fun ix -> ix + count) target
+  in
+  let rec absent_with (visit_global : string -> (bool, Error.t) result)
+      (target : int option) (t : Term.t) : (bool, Error.t) result =
+    let* () = poll () in
+    match t with
+    | Term.Auto -> Ok false
+    | Term.Var ix -> Ok (not (Option.equal Int.equal target (Some ix)))
+    | Term.Univ _ | Term.Lit _ -> Ok true
+    | Term.Global g ->
+        if Option.is_some target || not (String.equal g name) then visit_global g
+        else Ok false
+    | Term.Pi (_q, _x, dom, cod) ->
+        let* clean = absent_with visit_global target dom in
+        if clean then absent_with visit_global (under 1 target) cod else Ok false
+    | Term.Lam (_q, _x, body) -> absent_with visit_global (under 1 target) body
+    | Term.App (_q, f, a) -> all (absent_with visit_global target) [f; a]
+    | Term.Let (_x, ty, def, body) ->
+        let* clean = all (absent_with visit_global target) [ty; def] in
+        if clean then absent_with visit_global (under 1 target) body else Ok false
+    | Term.Ann (tm, ty) -> all (absent_with visit_global target) [tm; ty]
+    | Term.Match { scrut; scrut_q = _; motive; branches } ->
+        let* clean_scrut = absent_with visit_global target scrut in
+        if not clean_scrut then Ok false
+        else
+          let* clean_motive =
+            motive
+            |> Option.fold ~none:(Ok true) ~some:(fun (mo : Term.motive) ->
+                   absent_with visit_global
+                     (under (List.length mo.Term.m_idx + 1) target) mo.Term.m_body)
+          in
+          if not clean_motive then Ok false
+          else
+            all
+              (fun (_c, binders, body) ->
+                absent_with visit_global (under (List.length binders) target) body)
+              branches
+  in
+  let absent (target : int option) (t : Term.t) : (bool, Error.t) result =
+    absent_with (fun _g -> Ok true) target t
+  in
+  (* Public declarations can leave another family provisional while a
+     container is completed. Its closed fields, including phantom
+     fields and definition aliases, must not smuggle that family into
+     the new rule. Check the entire dependency closure independently of
+     the selected parameter. A fresh visited set stops ordinary global
+     recursion; only this whole traversal's result can be reused. *)
+  let dependencies_complete (family : string) : (bool, Error.t) result =
+    let visited : string list ref = ref [] in
+    let rec visit_global (g : string) : (bool, Error.t) result =
+      let* () = poll () in
+      match () with
+      | () when String.equal g name -> Ok false
+      | () when List.mem g !visited -> Ok true
+      | () ->
+          visited := g :: !visited;
+          Global.find g globals
+          |> Option.fold ~none:(Ok false) ~some:(fun entry ->
+                 let* clean_type = absent_with visit_global None (Global.entry_ty entry) in
+                 if not clean_type then Ok false
+                 else
+                   match entry with
+                   | Global.Def def -> absent_with visit_global None def.Global.def
+                   | Global.Ind ind ->
+                       (match ind.Global.ctors with
+                       | Global.Provisional -> Ok false
+                       | Global.Builtin -> Ok true
+                       | Global.Complete ctor_names -> all visit_global ctor_names)
+                   | Global.Ctor _ | Global.Prim _ | Global.Axiom _ -> Ok true)
+    in
+    visit_global family
+  in
+  let plain_parameters (params : Global.telescope) : (bool, Error.t) result =
+    all
+      (fun (q, _x, ty) ->
+        let* () = poll () in
+        match q, ty with
+        | Quantity.Zero, Term.Univ _ -> Ok true
+        | (Quantity.Zero | Quantity.Many),
+          (Term.Var _ | Term.Pi (_, _, _, _) | Term.Lam (_, _, _)
+          | Term.App (_, _, _) | Term.Let (_, _, _, _) | Term.Ann (_, _)
+          | Term.Global _ | Term.Lit _ | Term.Auto | Term.Match _)
+        | Quantity.Many, Term.Univ _ -> Ok false)
+      params
+  in
+  let rec positive (active : (string * int) list) (owner : string)
+      (arity : int) (depth : int) (target : int option) (t : Term.t) :
+      (bool, Error.t) result =
+    let* clean = absent target t in
+    if clean then Ok true
+    else
+      match t with
+      | Term.Pi (_q, _x, dom, cod) ->
+          (* A domain occurrence is forbidden outright. A second Pi
+             domain cannot turn it positive again. *)
+          let* clean_dom = absent target dom in
+          if clean_dom then positive active owner arity (depth + 1) (under 1 target) cod
+          else Ok false
+      | Term.Var ix -> Ok (Option.equal Int.equal target (Some ix))
+      | Term.App (_, _, _) | Term.Global _ ->
+          let head, args = Totality.spine t [] in
+          (match head with
+          | Term.Global family ->
+              (match () with
+              | () when String.equal family owner && Option.is_none target ->
+                  Ok (is_applied depth t)
+              | () when String.equal family owner ->
+                  if not (Int.equal (List.length args) arity) then Ok false
+                  else
+                    all
+                      (fun (j, arg) ->
+                        let* () = poll () in
+                        match arg with
+                        | Term.Var ix -> Ok (Int.equal ix (depth + arity - 1 - j))
+                        | Term.Univ _ | Term.Lit _ | Term.Auto
+                        | Term.Pi (_, _, _, _) | Term.Lam (_, _, _)
+                        | Term.App (_, _, _) | Term.Let (_, _, _, _)
+                        | Term.Ann (_, _) | Term.Global _ | Term.Match _ -> Ok false)
+                      (List.mapi (fun j arg -> (j, arg)) args)
+              | () ->
+                  Global.find_ind family globals
+                  |> Option.fold ~none:(Ok false) ~some:(fun (container : Global.ind_entry) ->
+                         if not (Int.equal (List.length args) (List.length container.Global.params))
+                         then Ok false
+                         else
+                           all
+                             (fun (slot, arg) ->
+                               let* clean_arg = absent target arg in
+                               if clean_arg then Ok true
+                               else
+                                 let* certified = certificate active family slot in
+                                 if certified then positive active owner arity depth target arg
+                                 else Ok false)
+                             (List.mapi (fun slot arg -> (slot, arg)) args)))
+          | Term.Var _ | Term.Univ _ | Term.Lit _ | Term.Auto
+          | Term.Pi (_, _, _, _) | Term.Lam (_, _, _)
+          | Term.App (_, _, _) | Term.Let (_, _, _, _)
+          | Term.Ann (_, _) | Term.Match _ -> Ok false)
+      | Term.Univ _ | Term.Lit _ | Term.Auto
+      | Term.Lam (_, _, _) | Term.Let (_, _, _, _)
+      | Term.Ann (_, _) | Term.Match _ -> Ok false
+  and certificate (active : (string * int) list) (family : string) (slot : int) :
+      (bool, Error.t) result =
+    let* () = poll () in
+    let key = (family, slot) in
+    let compute () : (bool, Error.t) result =
+      if List.mem key active then Ok false
+      else
+        let* certified =
+          Global.find_ind family globals
+          |> Option.fold ~none:(Ok false) ~some:(fun (container : Global.ind_entry) ->
+                 let arity = List.length container.Global.params in
+                 if slot < 0 || slot >= arity || not (List.is_empty container.Global.indices)
+                 then Ok false
+                 else
+                   match container.Global.ctors with
+                   | Global.Provisional | Global.Builtin -> Ok false
+                   | Global.Complete ctor_names ->
+                       let* plain = plain_parameters container.Global.params in
+                       if not plain then Ok false
+                       else
+                         let* complete = dependencies_complete family in
+                         if not complete then Ok false
+                         else
+                           all
+                             (fun cname ->
+                               let* () = poll () in
+                               Global.find_ctor cname globals
+                               |> Option.fold ~none:(Ok false) ~some:(fun (ctor : Global.ctor_entry) ->
+                                      if not (String.equal ctor.Global.ind family) then Ok false
+                                      else
+                                        all
+                                          (fun (depth, (_q, _x, ty)) ->
+                                            positive (key :: active) family arity depth
+                                              (Some (depth + arity - 1 - slot)) ty)
+                                          (List.mapi (fun depth arg -> (depth, arg)) ctor.Global.args)))
+                             ctor_names)
+        in
+        certificates := (key, certified) :: !certificates;
+        Ok certified
+    in
+    (* The cache miss is a thunk: Option.fold's eager [none] argument
+       must not start a second traversal on a cache hit. *)
+    let answer =
+      List.assoc_opt key !certificates
+      |> Option.fold ~none:compute ~some:(fun certified () -> Ok certified)
+    in
+    answer ()
+  in
+  let strict_pos (depth : int) (t : Term.t) : (bool, Error.t) result =
+    positive [] name n_params depth None t
   in
   (* M4 fixes round 1 (ctxcat id 8): peel through a [Term.Ann] wrapper
      too, so an annotated telescope (`| mk : ((A : Type 0) -> Foo A :
@@ -2034,7 +2229,8 @@ let define_ind ?(budget : Budget.t = Budget.unlimited) (globals : Global.t)
             (fun aacc (q, x, ty) ->
               let* actx, i = aacc in
               let* () =
-                if strict_pos i ty then Ok ()
+                let* positive = strict_pos i ty in
+                if positive then Ok ()
                 else
                   Error
                     (Error.Bad_ctor

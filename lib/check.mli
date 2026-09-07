@@ -301,8 +301,14 @@ val declare_builtin :
 
 (** Check and install the constructors of an already-declared inductive.
     Enforces the result-head rule, strict positivity with uniform
-    parameters, and the predicative universe bound. On any error the
-    caller keeps its pre-declaration globals. *)
+    parameters, and the predicative universe bound. Nested occurrences
+    may pass through certified parameter slots of completed, unindexed
+    inductives with erased plain universe parameters. The container's
+    whole reachable global closure must also be free of the family
+    being defined and of any provisional inductive. A definition alias
+    in a direct field is not walked. Function domains must remain
+    occurrence-free. On any error the caller keeps its
+    pre-declaration globals. *)
 val define_ind :
   ?budget:Budget.t ->
   Global.t ->

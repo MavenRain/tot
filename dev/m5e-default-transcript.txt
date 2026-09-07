@@ -10346,10 +10346,13 @@ test/fixtures/m7e-wf-renamed.tot:3:1: recursive definition wfRec failed the stru
 #err
 test/fixtures/nested-neg.tot:2:1: invalid constructor mkt3: negative or non-uniform occurrence of T3
 ### test/fixtures/nested-pos.tot
-#exit 1
+#exit 0
 #out
+data U : (0 A : Type 0) -> Type 0
+ctor mku : (0 A : Type 0) -> (w _ : (w _ : Nat) -> A) -> (U A)
+data T2 : Type 0
+ctor mkt2 : (w _ : (U T2)) -> T2
 #err
-test/fixtures/nested-pos.tot:2:1: invalid constructor mkt2: negative or non-uniform occurrence of T2
 ### test/fixtures/s0-erased-guard.tot
 #exit 1
 #out

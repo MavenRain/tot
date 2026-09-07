@@ -47,6 +47,13 @@ step, not the repo's;  the PreToolUse hook entry looks like this
   "command": "timeout 10 tot run /path/to/tot/examples/guard-rewrap.tot"}]}]}}
 ```
 
+M10 adds nested inductives through certified strictly positive
+container parameters. For example, `data Tree : Type 0 := | node :
+List Tree -> Tree` is accepted. Recursive occurrences in function
+domains remain forbidden, including double negation. This first slice
+supports completed, unindexed containers with erased type parameters;
+mutual inductives and well-founded recursion remain future work.
+
 ## Build and run
 
 ```

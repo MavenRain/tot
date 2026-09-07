@@ -726,6 +726,18 @@ let m7e_expect_source_checks (bst : Tot_surface.Run.state) ~(label : string) ~(s
          Error
            (Printf.sprintf "%s: expected exit 0, got %s" label (Tot_surface.Serror.to_string e)))
 
+(* M10 Stage A executes its final eval after nested construction and
+   matches. Declaration pretty-printing is independent of this oracle. *)
+let m10a_expect_eval (bst : Tot_surface.Run.state) ~(src : string) ~(want : string) () :
+    (unit, string) result =
+  let* lines, exit_code =
+    Tot_surface.Run.script ~st:bst ~exec:true src
+    |> Result.map_error Tot_surface.Serror.to_string
+  in
+  let last = List.fold_left (fun _previous line -> Some line) None lines in
+  if Option.is_none exit_code && Option.equal String.equal last (Some want) then Ok ()
+  else Error (Printf.sprintf "M10A: got [%s], want final eval %S without main" (show_lines lines) want)
+
 (* M9 Stage B: printLine writes to fd 1 directly. Run.script's
    returned lines contain only the verdict envelope for IO Verdict,
    so capture the effect output while executing the inline source.
@@ -2056,12 +2068,12 @@ let cases (bst : Tot_surface.Run.state) : (string * (unit -> (unit, string) resu
           "def checkAll : (Div Bool)";
           "true";
         ] );
-    (* M3 Stage C, C7 test 6: the surface-level positivity control (a
-       kernel-level counterpart lives in test/main.ml's C4): a
-       "jarr : List Json -> Json"-style nesting is STILL rejected. *)
-    ( "C6: control test, List Json -> Json nesting is still rejected by positivity",
-      expect_err_printed ~st:bst
-        "data Bad : Type 0 := | jarr : List Json -> Json" "Kernel.Bad_ctor" );
+    (* M10 Stage A uses an actual self-nested family. The former
+       spelling returned Json from a constructor declared for Bad,
+       so its rejection had only exercised the result-head check. *)
+    ( "C6: control test, List-nested Json-shaped recursion now checks",
+      m7e_expect_source_checks bst ~label:"json-nested-control"
+        ~src:"data JsonTree : Type 0 := | jsonTree : List JsonTree -> JsonTree" );
     (* M3 Stage C, C7 test 7: let*/let*! desugar and check; a let* over
        a Div action without liftIO is a Kernel.Mismatch. *)
     ( "C7a: let* desugars to bindIO and checks",
@@ -2949,6 +2961,182 @@ def stuck : Nat := (fun x => x) _
     ( "M9B-2 m9b_regex_fidelity_line: the in-process diagnostic prints the recorded line",
       m9b_expect_source_prints bst ~label:"m9b_regex_fidelity_line" ~src:m9b_regex_source
         ~want_tail:"ASSIGN_WORD=TRUE NOT_A_PROGRAM=FALSE" );
+    ( "M10A-S1: two List layers construct, eliminate and expose a smaller recursive variable",
+      m10a_expect_eval bst ~want:"(succ zero)"
+        ~src:{tot|
+data M10Tree : Type 0 := | m10Leaf : Nat -> M10Tree | m10Node : List (List M10Tree) -> M10Tree
+def rec m10First : M10Tree -> Nat := fun tree => match tree with
+| m10Leaf n => n
+| m10Node rows => match rows with
+  | nil => zero
+  | cons row rest => match row with
+    | nil => zero
+    | cons child others => m10First child
+    end
+  end
+end
+eval m10First (m10Node (cons (List M10Tree) (cons M10Tree (m10Leaf (succ zero)) (nil M10Tree)) (nil (List M10Tree))))
+|tot} );
+    ( "M10A-S2: covariance, distinct parameter slots and preceding constructor fields certify",
+      fun () ->
+        let* () = m5a_expect_fixture_checks bst "nested-pos.tot" () in
+        let* () =
+          m7e_expect_source_checks bst ~label:"two-codomain-binders"
+            ~src:{tot|
+data M10DeepFunction (0 A : Type 0) : Type 0 := | m10DeepFunction : (Nat -> Nat -> A) -> M10DeepFunction A
+data M10DeepSelf : Type 0 := | m10DeepSelf : M10DeepFunction M10DeepSelf -> M10DeepSelf
+|tot} ()
+        in
+        m10a_expect_eval bst ~want:"(succ zero)"
+          ~src:{tot|
+data M10Box (0 A : Type 0) (0 B : Type 0) : Type 0 := | m10Pack : Nat -> A -> B -> M10Box A B
+data M10Packed : Type 0 := | m10PackedLeaf : Nat -> M10Packed | m10PackedNode : M10Box Nat M10Packed -> M10Packed
+def m10Project : M10Packed -> Nat := fun tree => match tree with
+| m10PackedLeaf n => n
+| m10PackedNode box => match box with
+  | m10Pack padding ignored child => match child with
+    | m10PackedLeaf n => n
+    | m10PackedNode rest => zero
+    end
+  end
+end
+eval m10Project (m10PackedNode (m10Pack Nat M10Packed zero zero (m10PackedLeaf (succ zero))))
+|tot} () );
+    ( "M10A-S3: neither direct nor container double domains restore strict positivity",
+      fun () ->
+        let* () =
+          m7e_expect_source_error bst ~label:"direct-double-domain"
+            ~src:"data M10Direct : Type 0 := | m10Direct : ((M10Direct -> Nat) -> Nat) -> M10Direct"
+            ~want_suffix:"invalid constructor m10Direct: negative or non-uniform occurrence of M10Direct" ()
+        in
+        m7e_expect_source_error bst ~label:"container-double-domain"
+          ~src:{tot|
+data M10Double (0 A : Type 0) : Type 0 := | m10Double : ((A -> Nat) -> Nat) -> M10Double A
+data M10DoubleSelf : Type 0 := | m10DoubleSelf : M10Double M10DoubleSelf -> M10DoubleSelf
+|tot}
+          ~want_suffix:"invalid constructor m10DoubleSelf: negative or non-uniform occurrence of M10DoubleSelf" () );
+    ( "M10A-S4: a positive outer container and a second domain cannot launder contravariance",
+      fun () ->
+        let* () =
+          m7e_expect_source_error bst ~label:"hidden-contravariance"
+            ~src:{tot|
+data M10Negative (0 A : Type 0) : Type 0 := | m10Negative : (A -> Nat) -> M10Negative A
+data M10Hidden : Type 0 := | m10Hidden : List (M10Negative M10Hidden) -> M10Hidden
+|tot}
+            ~want_suffix:"invalid constructor m10Hidden: negative or non-uniform occurrence of M10Hidden" ()
+        in
+        let* () =
+          m7e_expect_source_error bst ~label:"late-negative-constructor"
+            ~src:{tot|
+data M10LateNegative (0 A : Type 0) : Type 0 := | m10Next : M10LateNegative A -> M10LateNegative A | m10LateNegative : (A -> Nat) -> M10LateNegative A
+data M10LateSelf : Type 0 := | m10LateSelf : M10LateNegative M10LateSelf -> M10LateSelf
+|tot}
+            ~want_suffix:"invalid constructor m10LateSelf: negative or non-uniform occurrence of M10LateSelf" ()
+        in
+        let* () =
+          m7e_expect_source_error bst ~label:"parameter-slot-cache"
+            ~src:{tot|
+data M10Mixed (0 A : Type 0) (0 B : Type 0) : Type 0 := | m10Mixed : (A -> Nat) -> B -> M10Mixed A B
+data M10MixedSelf : Type 0 := | m10GoodSlot : M10Mixed Nat M10MixedSelf -> M10MixedSelf | m10BadSlot : M10Mixed M10MixedSelf Nat -> M10MixedSelf
+|tot}
+            ~want_suffix:"invalid constructor m10BadSlot: negative or non-uniform occurrence of M10MixedSelf" ()
+        in
+        m7e_expect_source_error bst ~label:"double-flip-laundering"
+          ~src:{tot|
+data M10Negative (0 A : Type 0) : Type 0 := | m10Negative : (A -> Nat) -> M10Negative A
+data M10Laundered : Type 0 := | m10Laundered : (M10Negative M10Laundered -> Nat) -> M10Laundered
+|tot}
+          ~want_suffix:"invalid constructor m10Laundered: negative or non-uniform occurrence of M10Laundered" () );
+    ( "M10A-S5: a phantom slot admits self but cannot hide a forbidden actual argument",
+      fun () ->
+        let* () =
+          m7e_expect_source_checks bst ~label:"phantom-self"
+            ~src:{tot|
+data M10Phantom (0 A : Type 0) : Type 0 := | m10Phantom : M10Phantom A
+data M10PhantomSelf : Type 0 := | m10PhantomSelf : M10Phantom M10PhantomSelf -> M10PhantomSelf
+def m10PhantomWitness : M10PhantomSelf := m10PhantomSelf (m10Phantom M10PhantomSelf)
+|tot} ()
+        in
+        m7e_expect_source_error bst ~label:"phantom-domain"
+          ~src:{tot|
+data M10Phantom (0 A : Type 0) : Type 0 := | m10Phantom : M10Phantom A
+data M10PhantomBad : Type 0 := | m10PhantomBad : M10Phantom (M10PhantomBad -> Nat) -> M10PhantomBad
+|tot}
+          ~want_suffix:"invalid constructor m10PhantomBad: negative or non-uniform occurrence of M10PhantomBad" () );
+    ( "M10A-S6: nesting preserves the recursive family's uniform parameter requirement",
+      m7e_expect_source_error bst ~label:"nested-nonuniform"
+        ~src:{tot|
+data M10Uniform (0 A : Type 0) : Type 0 := | m10Uniform : List (M10Uniform Nat) -> M10Uniform A
+|tot}
+        ~want_suffix:"invalid constructor m10Uniform: negative or non-uniform occurrence of M10Uniform" );
+    ( "M10A-S7: indexed and dependent containers remain outside the certificate boundary",
+      fun () ->
+        let* () =
+          m7e_expect_source_error bst ~label:"indexed-container"
+            ~src:{tot|
+data M10Vec (0 A : Type 0) : (0 n : Nat) -> Type 0 := | m10Nil : M10Vec A zero
+data M10IndexedSelf : Type 0 := | m10IndexedSelf : M10Vec M10IndexedSelf zero -> M10IndexedSelf
+|tot}
+            ~want_suffix:"invalid constructor m10IndexedSelf: negative or non-uniform occurrence of M10IndexedSelf" ()
+        in
+        m7e_expect_source_error bst ~label:"dependent-container"
+          ~src:{tot|
+data M10Dependent (0 A : Type 0) (0 seed : A) : Type 0 := | m10Dependent : A -> M10Dependent A seed
+data M10DependentSelf : Type 0 := | m10DependentSelf : (x : M10DependentSelf) -> M10Dependent M10DependentSelf x -> M10DependentSelf
+|tot}
+          ~want_suffix:"invalid constructor m10DependentSelf: negative or non-uniform occurrence of M10DependentSelf" () );
+    ( "M10A-S8: higher-kinded containers, definition aliases and builtin heads remain refused",
+      fun () ->
+        let* () =
+          m7e_expect_source_error bst ~label:"higher-kinded-container"
+            ~src:{tot|
+data M10Higher (0 F : (0 A : Type 0) -> Type 0) (0 A : Type 0) : Type 0 := | m10Higher : F A -> M10Higher F A
+data M10HigherSelf : Type 0 := | m10HigherSelf : M10Higher Option M10HigherSelf -> M10HigherSelf
+|tot}
+            ~want_suffix:"invalid constructor m10HigherSelf: negative or non-uniform occurrence of M10HigherSelf" ()
+        in
+        let* () =
+          m7e_expect_source_error bst ~label:"alias-container"
+            ~src:{tot|
+def M10Alias : (0 A : Type 0) -> Type 0 := fun A => List A
+data M10AliasSelf : Type 0 := | m10AliasSelf : M10Alias M10AliasSelf -> M10AliasSelf
+|tot}
+            ~want_suffix:"invalid constructor m10AliasSelf: negative or non-uniform occurrence of M10AliasSelf" ()
+        in
+        m7e_expect_source_error bst ~label:"builtin-container"
+          ~src:"data M10BuiltinSelf : Type 0 := | m10BuiltinSelf : IO M10BuiltinSelf -> M10BuiltinSelf"
+          ~want_suffix:"invalid constructor m10BuiltinSelf: negative or non-uniform occurrence of M10BuiltinSelf" () );
+    ( "M10A-S9: a nil-inhabited erased recursive family still forbids runtime elimination",
+      m7e_expect_source_error bst ~label:"nested-erased-elimination"
+        ~src:{tot|
+data M10Erased : Type 0 := | m10Erased : (0 xs : List M10Erased) -> M10Erased
+def m10ErasedWitness : M10Erased := m10Erased (nil M10Erased)
+def m10ErasedRead : (0 value : M10Erased) -> Nat := fun value => match value with | m10Erased xs => zero end
+|tot}
+        ~want_suffix:"erased variable value used at runtime" );
+    ( "M10A-S10: a phantom-inhabited erased recursive family still forbids runtime elimination",
+      m7e_expect_source_error bst ~label:"phantom-erased-elimination"
+        ~src:{tot|
+data M10Phantom (0 A : Type 0) : Type 0 := | m10Phantom : M10Phantom A
+data M10ErasedPhantom : Type 0 := | m10ErasedPhantom : (0 value : M10Phantom M10ErasedPhantom) -> M10ErasedPhantom
+def m10ErasedPhantomWitness : M10ErasedPhantom := m10ErasedPhantom (m10Phantom M10ErasedPhantom)
+def m10ErasedPhantomRead : (0 value : M10ErasedPhantom) -> Nat := fun value => match value with | m10ErasedPhantom ignored => zero end
+|tot}
+        ~want_suffix:"erased variable value used at runtime" );
+    ( "M10A-S11: matching a function container does not admit application descent",
+      m7e_expect_source_error bst ~label:"nested-application-descent"
+        ~src:{tot|
+data M10Function (0 A : Type 0) : Type 0 := | m10Function : (Nat -> A) -> M10Function A
+data M10FunctionSelf : Type 0 := | m10FunctionLeaf : M10FunctionSelf | m10FunctionNode : M10Function M10FunctionSelf -> M10FunctionSelf
+def rec m10BadDescent : M10FunctionSelf -> Nat := fun tree => match tree with
+| m10FunctionLeaf => zero
+| m10FunctionNode box => match box with | m10Function f => m10BadDescent (f zero) end
+end
+|tot}
+        ~want_suffix:"recursive definition m10BadDescent failed the structural termination guard" );
+    ( "M10A-S12: the Rule spelling refused by the historical M9 instrument now checks",
+      m7e_expect_source_checks bst ~label:"historical-rule-now-admitted"
+        ~src:"data Rule : Type 0 := | mkRule : List Rule -> Rule" );
   ]
 
 (** The ordinary in-process suite: bootstrap once, run every [cases]

@@ -2350,7 +2350,9 @@ m5d_bites=$(rg -c '"\$watchdog" "\$BITE_S"' "$ROOT/dev/gates.sh")
 # The plan named no number here;  the recipe is the authority
 # (precedent C-D4), and no tier call was added or removed to reach a
 # predicted number.
-{ [ "$m5d_nolit" -eq 1 ] && [ "$m5d_tiers" -eq 247 ] && [ "$m5d_bites" -eq 2 ] \
+# M10 Stage A (2026-09-06): the same recipe measures 247 -> 250.
+# The two behavioral gates add three FAST calls and remove none.
+{ [ "$m5d_nolit" -eq 1 ] && [ "$m5d_tiers" -eq 250 ] && [ "$m5d_bites" -eq 2 ] \
   && [ -s "$ROOT/dev/gates.sh" ]; } \
   && echo PASS-M5D-TIERS \
   || { echo "FAIL-M5D-TIERS (nolit=$m5d_nolit tiers=$m5d_tiers bites=$m5d_bites)"; exit 1; }
@@ -2574,24 +2576,24 @@ wantd='deep2.tot:2:1: recursive definition deep2 failed the structural terminati
   && echo PASS-M6A-DEEP2-REJECTED \
   || { printf '%s\n' "$out"; echo "FAIL-M6A-DEEP2-REJECTED (exit=$code)"; exit 1; }
 
-# Gate A (vi)+(vii), the positivity-fence tripwires (pin 10).  These
-# two legs are DESIGNED to go red the day C3 lands nested inductives,
-# forcing the Frozen-emptiness and guard questions open on purpose
-# (SPEC.md:851-852).  Do not "fix" them by deleting them; re-open the
-# design instead.
+# Gate A (vi)+(vii), the positivity tripwires (pin 10). M10 Stage A
+# reopens C2 with certified strictly positive container parameters.
+# The covariant leg now requires the complete admitted declaration;
+# contravariance still requires the original refusal. Frozen's two
+# horns remain open, and function application gains no descent rule.
 out=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
   "$ROOT"/test/fixtures/nested-pos.tot 2>&1)
 code=$?
-wantp='nested-pos.tot:2:1: invalid constructor mkt2: negative or non-uniform occurrence of T2'
-{ [ "$code" -eq 1 ] && printf '%s\n' "$out" | rg -q -- "$wantp"; } \
+wantp=$'data U : (0 A : Type 0) -> Type 0\nctor mku : (0 A : Type 0) -> (w _ : (w _ : Nat) -> A) -> (U A)\ndata T2 : Type 0\nctor mkt2 : (w _ : (U T2)) -> T2'
+{ [ "$code" -eq 0 ] && [ "$out" = "$wantp" ]; } \
   && echo PASS-M6A-FENCE-COVARIANT \
   || { printf '%s\n' "$out"; echo "FAIL-M6A-FENCE-COVARIANT (exit=$code)"; exit 1; }
 
 out=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
   "$ROOT"/test/fixtures/nested-neg.tot 2>&1)
 code=$?
-wantn='nested-neg.tot:2:1: invalid constructor mkt3: negative or non-uniform occurrence of T3'
-{ [ "$code" -eq 1 ] && printf '%s\n' "$out" | rg -q -- "$wantn"; } \
+wantn="$ROOT/test/fixtures/nested-neg.tot:2:1: invalid constructor mkt3: negative or non-uniform occurrence of T3"
+{ [ "$code" -eq 1 ] && [ "$out" = "$wantn" ]; } \
   && echo PASS-M6A-FENCE-CONTRAVARIANT \
   || { printf '%s\n' "$out"; echo "FAIL-M6A-FENCE-CONTRAVARIANT (exit=$code)"; exit 1; }
 
@@ -3617,8 +3619,11 @@ m7a_c3=$?
 # green STAYS 62: all three fixtures are NEGATIVES and exit 1.  Both
 # numbers come from this leg's own recipe re-run on the edited tree,
 # never from the plan (conflict C-D4, ruling C-E6).
-{ [ "$m7a_files" -eq 105 ] && [ "$m7a_green" -eq 63 ] \
-    && [ "$m7a_digest" = 7aed51dddf358f0bb1742838b5616717 ] \
+# M10 Stage A (2026-09-06): the corpus still has 105 records and
+# nested-pos.tot alone changes from refusal to admission, so green
+# moves 63 -> 64. The digest is re-derived from this exact recipe.
+{ [ "$m7a_files" -eq 105 ] && [ "$m7a_green" -eq 64 ] \
+    && [ "$m7a_digest" = 927f270fc883687cfbe63c86e5785db8 ] \
     && [ "$m7a_c1" -eq 1 ] && [ "$m7a_c2" -eq 1 ] && [ "$m7a_c3" -eq 1 ] \
     && printf '%s\n' "$m7a_b1" \
        | rg -qx '\S*/m6c-hole-n-infer\.tot:1:6: hole: no expected type at this position' \
@@ -3903,8 +3908,8 @@ m7d_wantsig='def probeSplit : (w _ : String) -> (w _ : (List String)) -> (List S
 # corrected.  The plan's own predicted addresses are themselves stale
 # and are asserted here as ABSENT: guard-rewrap.tot:264-265 for the two
 # let* slots (the tree says :218-219 after the Stage D helper move) and
-# lib/check.ml:2051 for self_rec (the tree says :2066 after the Stage E
-# comment edit).  The two code-site conditions are pin 16's no-diff
+# lib/check.ml:2051 for self_rec (M7 Stage E moved it to :2066;
+# M10 Stage A moves it to :2262). The two code-site conditions are pin 16's no-diff
 # assertion: Interp.Frozen and the Quantity.Zero arm of
 # Run.compute_guard are untouched by M7, so a stage that "tidies" the
 # emptiness story into code turns this leg red.  Ruling C-E2: the
@@ -3915,28 +3920,28 @@ m7d_wantsig='def probeSplit : (w _ : String) -> (w _ : (List String)) -> (List S
 # no binary, like PASS-M5D-MEASURE-LOG above.
 m7e_cit_gr=$(rg -c 'guard-rewrap\.tot:218-219' "$ROOT"/SPEC.md)
 m7e_cit_g=$(rg -c 'guard\.tot:83-84' "$ROOT"/SPEC.md)
-m7e_cit_stale=$(rg -c 'guard-rewrap\.tot:(253-254|264-265)|guard\.tot:133|lib/check\.ml:(1828|2051)|lib/totality\.ml:52' "$ROOT"/SPEC.md; true)
+m7e_cit_stale=$(rg -c 'guard-rewrap\.tot:(253-254|264-265)|guard\.tot:133|lib/check\.ml:(1828|2051|2066)|lib/totality\.ml:52' "$ROOT"/SPEC.md; true)
 m7e_sec5=$(rg -c '^- M6 \(done\)' "$ROOT"/SPEC.md)
 m7e_sec6=$(rg -c '^Known debts entering M7' "$ROOT"/SPEC.md)
 m7e_horns=$(rg -c 'not asserted as proved' "$ROOT"/SPEC.md)
 m7e_tot66=$(rg -c 'lib/totality\.ml:66' "$ROOT"/SPEC.md)
-m7e_chk2066=$(rg -c 'lib/check\.ml:2066' "$ROOT"/SPEC.md)
+m7e_chk_selfrec=$(rg -c 'lib/check\.ml:2262' "$ROOT"/SPEC.md)
 # The two repaired addresses are checked against the TREE as well as
 # against SPEC.md, so a later edit that moves either site turns this leg
 # red instead of leaving SPEC quietly wrong.
 m7e_tot66_is=$(awk 'NR==66' "$ROOT"/lib/totality.ml | rg -cF -- 'Term.App (_q, f, a) -> mentions name f || mentions name a'; true)
-m7e_chk2066_is=$(awk 'NR==2066' "$ROOT"/lib/check.ml | rg -cF -- 'let self_rec = List.exists'; true)
+m7e_chk_selfrec_is=$(awk 'NR==2262' "$ROOT"/lib/check.ml | rg -cF -- 'let self_rec = List.exists'; true)
 m7e_dupnote=$(rg -ci 'copied|duplicat' "$ROOT"/examples/guard.tot "$ROOT"/examples/guard-rewrap.tot; true)
 m7e_frozen=$(rg -cF 'Frozen' "$ROOT"/lib/interp.ml)
 m7e_zeroarm=$(rg -cF -- '() when Eterm.mentions name def_e -> Interp.Frozen' "$ROOT"/surface/run.ml)
 { [ "$m7e_cit_gr" -ge 1 ] && [ "$m7e_cit_g" -ge 1 ] && [ -z "$m7e_cit_stale" ] \
   && [ "$m7e_sec5" -eq 1 ] && [ "$m7e_sec6" -eq 1 ] && [ "$m7e_horns" -ge 1 ] \
-  && [ "$m7e_tot66" -ge 1 ] && [ "$m7e_chk2066" -ge 1 ] \
-  && [ "$m7e_tot66_is" = 1 ] && [ "$m7e_chk2066_is" = 1 ] \
+  && [ "$m7e_tot66" -ge 1 ] && [ "$m7e_chk_selfrec" -ge 1 ] \
+  && [ "$m7e_tot66_is" = 1 ] && [ "$m7e_chk_selfrec_is" = 1 ] \
   && [ -z "$m7e_dupnote" ] \
   && [ "$m7e_frozen" -eq 5 ] && [ "$m7e_zeroarm" -eq 1 ]; } \
   && echo PASS-M7E-SPEC-CITATIONS \
-  || { echo "FAIL-M7E-SPEC-CITATIONS (gr=$m7e_cit_gr g=$m7e_cit_g stale=$m7e_cit_stale sec5=$m7e_sec5 sec6=$m7e_sec6 horns=$m7e_horns t66=$m7e_tot66/$m7e_tot66_is c2066=$m7e_chk2066/$m7e_chk2066_is dup=$m7e_dupnote frozen=$m7e_frozen zero=$m7e_zeroarm)"; exit 1; }
+  || { echo "FAIL-M7E-SPEC-CITATIONS (gr=$m7e_cit_gr g=$m7e_cit_g stale=$m7e_cit_stale sec5=$m7e_sec5 sec6=$m7e_sec6 horns=$m7e_horns t66=$m7e_tot66/$m7e_tot66_is selfrec=$m7e_chk_selfrec/$m7e_chk_selfrec_is dup=$m7e_dupnote frozen=$m7e_frozen zero=$m7e_zeroarm)"; exit 1; }
 
 # PASS-M7E-WF-PROVENANCE-ORACLE (pin 14, grafts G2 and G3).  Two legs,
 # both NEGATIVE today.  Leg (a) is the descent whose provenance is the
@@ -4205,6 +4210,9 @@ m8a_bare_file=$(cat "$ROOT"/dev/m8a/bare-lambda-holed.tot)
 # expected digest is a LITERAL measured once during that reviewed
 # transition;  the gate never derives it from the live source and never
 # accepts either digest opportunistically.  Any later change fails.
+# M10 Stage A re-seals this literal after the reviewed strict-positive
+# nesting rule. Of the same 18 implementations, only check.ml changes;
+# the other 17 retain their entry hashes. The literal remains fixed.
 # MUTATION:
 # lib/check.ml:959, change the binder text in the Cannot_infer message;
 # lib_md5 moves off its literal.
@@ -4215,7 +4223,7 @@ m8a_lib=$(cat "$ROOT"/lib/budget.ml "$ROOT"/lib/check.ml "$ROOT"/lib/erase.ml \
   "$ROOT"/lib/literal.ml "$ROOT"/lib/pp.ml "$ROOT"/lib/prim.ml "$ROOT"/lib/quantity.ml \
   "$ROOT"/lib/term.ml "$ROOT"/lib/totality.ml "$ROOT"/lib/value.ml | md5 -q)
 m8a_libcount=$(fd -e ml . "$ROOT"/lib | wc -l | tr -d ' ')
-{ [ "$m8a_lib" = e49ff916b7235f223e8dcaa498fc3aee ] && [ "$m8a_libcount" -eq 18 ]; } \
+{ [ "$m8a_lib" = cc8dac9594520f4831d31bc43d7b4e89 ] && [ "$m8a_libcount" -eq 18 ]; } \
   && echo PASS-M8A-KERNEL-UNCHANGED \
   || {
     echo "FAIL-M8A-KERNEL-UNCHANGED (lib_md5=$m8a_lib files=$m8a_libcount)"
@@ -4564,8 +4572,12 @@ m9b_cd_file=$(md5 -q "$ROOT"/examples/guard-cd.tot)
 m9b_word_msg=$("$watchdog" "$MED" dune exec --root "$ROOT" test/surface.exe -- gate-check "$ROOT"/dev/m9b/wordend-index.tot 2>&1); m9b_word_rc=$?
 m9b_rule_msg=$("$watchdog" "$MED" dune exec --root "$ROOT" test/surface.exe -- gate-check "$ROOT"/dev/m9b/rule-table-nested.tot 2>&1); m9b_rule_rc=$?
 m9b_log_count=$(rg -c '^forced-rewrite-count: 2$' "$ROOT"/dev/M9-BUILD-LOG.md 2>/dev/null); m9b_log_count=${m9b_log_count:-0}
-{ [ "$m9b_word_rc" -ne 0 ] && echo "$m9b_word_msg" | rg -qF 'wordEnd failed the structural termination guard' \
-  && [ "$m9b_rule_rc" -ne 0 ] && echo "$m9b_rule_msg" | rg -qF 'invalid constructor mkRule: negative or non-uniform occurrence of Rule' \
+# The count describes the historical M9 port. M10 admits List Rule;
+# wordEnd still fails the unchanged structural termination guard.
+m9b_rule_want=$'data Rule : Type 0\nctor mkRule : (w _ : (List Rule)) -> Rule'
+m9b_word_want="$ROOT/dev/m9b/wordend-index.tot: 7:1: recursive definition wordEnd failed the structural termination guard"
+{ [ "$m9b_word_rc" -eq 1 ] && [ "$m9b_word_msg" = "$m9b_word_want" ] \
+  && [ "$m9b_rule_rc" -eq 0 ] && [ "$m9b_rule_msg" = "$m9b_rule_want" ] \
   && [ "$m9b_log_count" = "1" ]; } \
   && echo PASS-M9B-DEMAND-ORACLE \
   || { echo "FAIL-M9B-DEMAND-ORACLE (word_rc=$m9b_word_rc rule_rc=$m9b_rule_rc log_line=$m9b_log_count)"; exit 1; }
@@ -4618,6 +4630,64 @@ m9c_dir=$(rg -c '^val cache_dir : unit -> string option$' "$ROOT"/surface/cache.
     echo "FAIL-M9C-SURFACE-INTERNAL (add_code=$m9c_add_code add=$m9c_add fmt=$m9c_fmt magic=$m9c_magic ver=$m9c_ver dig=$m9c_dig hdr=$m9c_hdr dir=$m9c_dir)"
     exit 1
   }
+
+# M10 Stage A: nested data must construct and eliminate through both
+# List's recursive certificate and a second positive container. The
+# scratch sources leave the established depth-1 corpus membership fixed.
+# MUTATION: refusing every foreign recursive occurrence in Check makes
+# this admission assertion fail before evaluation can return true.
+cat > "$m5d_scratch/m10a-nested-run.tot" <<'EOF'
+data Crate (0 A : Type 0) : Type 0 := | crate : A -> Crate A
+data Tree : Type 0 := | leaf : Bool -> Tree | branch : List (Crate Tree) -> Tree
+def nestedLeaf : Tree -> Bool := fun t =>
+  match t with
+  | leaf b => b
+  | branch xs =>
+      match xs with
+      | nil => false
+      | cons first rest =>
+          match first with
+          | crate child =>
+              match child with
+              | leaf b => b
+              | branch ys => false
+              end
+          end
+      end
+  end
+eval nestedLeaf (branch (cons (Crate Tree) (crate Tree (leaf true)) (nil (Crate Tree))))
+EOF
+m10a_nested_out=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe run \
+  "$m5d_scratch/m10a-nested-run.tot" 2>&1); m10a_nested_rc=$?
+m10a_nested_want=$'data Crate : (0 A : Type 0) -> Type 0\nctor crate : (0 A : Type 0) -> (w _ : A) -> (Crate A)\ndata Tree : Type 0\nctor leaf : (w _ : Bool) -> Tree\nctor branch : (w _ : (List (Crate Tree))) -> Tree\ndef nestedLeaf : (w _ : Tree) -> Bool\ntrue'
+{ [ "$m10a_nested_rc" -eq 0 ] && [ "$m10a_nested_out" = "$m10a_nested_want" ]; } \
+  && echo PASS-M10A-NESTED-RUN \
+  || { printf '%s\n' "$m10a_nested_out"; echo "FAIL-M10A-NESTED-RUN (exit=$m10a_nested_rc)"; exit 1; }
+
+# Strict positivity cannot multiply two domain signs into permission.
+# Nor may List hide a contravariant parameter. Both refusals pin the
+# complete diagnostic and exit code, including the constructor name.
+# MUTATION: ignoring Pi domains during a container certificate makes
+# these forbidden recursive declarations succeed and turns the leg red.
+cat > "$m5d_scratch/m10a-double-domain.tot" <<'EOF'
+data Twice (0 A : Type 0) : Type 0 := | twice : ((A -> Nat) -> Nat) -> Twice A
+data BadTwice : Type 0 := | badTwice : Twice BadTwice -> BadTwice
+EOF
+cat > "$m5d_scratch/m10a-hidden-negative.tot" <<'EOF'
+data Negative (0 A : Type 0) : Type 0 := | negative : (A -> Nat) -> Negative A
+data Hidden : Type 0 := | hidden : List (Negative Hidden) -> Hidden
+EOF
+m10a_double_out=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$m5d_scratch/m10a-double-domain.tot" 2>&1); m10a_double_rc=$?
+m10a_hidden_out=$("$watchdog" "$FAST" "$ROOT"/_build/default/bin/tot.exe check \
+  "$m5d_scratch/m10a-hidden-negative.tot" 2>&1); m10a_hidden_rc=$?
+m10a_double_want="$m5d_scratch/m10a-double-domain.tot:2:1: invalid constructor badTwice: negative or non-uniform occurrence of BadTwice"
+m10a_hidden_want="$m5d_scratch/m10a-hidden-negative.tot:2:1: invalid constructor hidden: negative or non-uniform occurrence of Hidden"
+{ [ "$m10a_double_rc" -eq 1 ] && [ "$m10a_double_out" = "$m10a_double_want" ] \
+  && [ "$m10a_hidden_rc" -eq 1 ] && [ "$m10a_hidden_out" = "$m10a_hidden_want" ]; } \
+  && echo PASS-M10A-STRICT-DOMAINS \
+  || { printf '%s\n%s\n' "$m10a_double_out" "$m10a_hidden_out"; \
+       echo "FAIL-M10A-STRICT-DOMAINS (exit=$m10a_double_rc/$m10a_hidden_rc)"; exit 1; }
 
 # ctxcat id 5: an instance with TWO dictionary binders on the SAME type
 # variable. Round 1's fuel bounded the depth of one resolution PATH,

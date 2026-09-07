@@ -726,6 +726,458 @@ let m7e_expect_source_checks (bst : Tot_surface.Run.state) ~(label : string) ~(s
          Error
            (Printf.sprintf "%s: expected exit 0, got %s" label (Tot_surface.Serror.to_string e)))
 
+(* M9 Stage B: printLine writes to fd 1 directly. Run.script's
+   returned lines contain only the verdict envelope for IO Verdict,
+   so capture the effect output while executing the inline source.
+   The descriptor is restored even when the execution fails. *)
+let m9b_expect_source_prints (bst : Tot_surface.Run.state) ~(label : string) ~(src : string)
+    ~(want_tail : string) () : (unit, string) result =
+  with_temp_file "tot-m9b-stdout" ".out" (fun path ->
+      let () = flush stdout in
+      match Unix.dup Unix.stdout with
+      | exception Unix.Unix_error (_, _, _) -> Error (label ^ ": cannot dup stdout")
+      | saved ->
+          let restore () : unit =
+            let () =
+              match Unix.dup2 saved Unix.stdout with
+              | exception Unix.Unix_error (_, _, _) -> ()
+              | () -> ()
+            in
+            match Unix.close saved with exception Unix.Unix_error (_, _, _) -> () | () -> ()
+          in
+          let capture (channel : out_channel) : (string list * int option, string) result =
+            match Unix.dup2 (Unix.descr_of_out_channel channel) Unix.stdout with
+            | exception Unix.Unix_error (_, _, _) -> Error (label ^ ": cannot dup2 onto stdout")
+            | () ->
+                let result =
+                  Tot_surface.Run.script ~st:bst ~exec:true src
+                  |> Result.map_error Tot_surface.Serror.to_string
+                in
+                let () = flush stdout in
+                result
+          in
+          let execution : (string list * int option, string) result =
+            Fun.protect ~finally:restore (fun () ->
+                match Out_channel.with_open_bin path capture with
+                | exception Sys_error _ -> Error (label ^ ": cannot open the capture file")
+                | captured -> captured)
+          in
+          let* _lines, exit_code = execution in
+          match In_channel.with_open_text path In_channel.input_lines with
+          | exception Sys_error _ -> Error (label ^ ": cannot read the capture file")
+          | printed ->
+          let tail = List.fold_left (fun _previous line -> Some line) None printed in
+          match () with
+          | () when Option.equal Int.equal exit_code (Some 0)
+                    && Option.equal String.equal tail (Some want_tail) -> Ok ()
+          | () ->
+              Error
+                (Printf.sprintf "%s: printed [%s] with exit=%s, want tail %S and exit=0" label
+                   (show_lines printed) (Option.fold ~none:"None" ~some:string_of_int exit_code)
+                   want_tail))
+
+(* M9B inline copies are verbatim source, including each final newline.
+   Neither case reads its program from the corpus at test runtime. *)
+let m9b_cd_source : string = {mnb|#!/usr/bin/env -S tot run
+-- M9 Stage B: a narrow port of cd-prefix-guard.py's chained-cd
+-- classifier. The Python hook nudges; this guard denies that one
+-- shape. Lone cd, scripts of three or more statements, assignments,
+-- non-Bash calls and malformed payloads allow. The scan handles the
+-- source whitespace sets, quotes, escapes, backticks and
+-- the source hook's simple parenthesis-depth command substitutions.
+-- It is a classifier, not a shell parser. Shell expansions and
+-- heredoc syntax are not interpreted, just as in the source scanner.
+-- Commands beyond the source hook's 100000-character cap fail open.
+-- UTF-8 continuation bytes do not contribute to that character count.
+-- Four differences from the source hook are deliberate and are not
+-- ported.  The CLAUDE_ALLOW_CD_PREFIX env bypass (cd-prefix-guard.py:351)
+-- is out of scope; only the [skip-cd-prefix] token bypass is honoured.
+-- A command that carries bytes that are not valid UTF-8 is echoed raw,
+-- so the deny envelope is not valid UTF-8; the source hook fails open on
+-- the same payload.  A duplicated JSON key resolves first-wins here and
+-- last-wins in Python.  A lone surrogate escape makes the payload
+-- unparseable here, so the guard allows.  The last three come from the
+-- shared prelude reader, not from this file.
+--
+-- The index-only wordEnd is refused by the structural termination
+-- guard (dev/m9b/wordend-index.tot). Every walk here has Nat fuel;
+-- fuelFor builds the next power of two above the command's length.
+-- The classify result is a flat String, avoiding the refused nested
+-- Rule family in dev/m9b/rule-table-nested.tot. No prelude API changes.
+
+def charAt : String -> Int -> String :=
+  fun s i => orEmpty (stringSlice s i 1)
+
+def horizontal : String -> Bool :=
+  fun c => orb (stringEq c " ") (stringEq c "\t")
+
+def whitespace : String -> Bool :=
+  fun c => orb (horizontal c) (orb (stringEq c "\r") (stringEq c "\n"))
+
+-- Python's str.strip and regex \s add U+000B, U+000C, U+001C to
+-- U+001F, U+0085, U+00A0, U+1680, U+2000 to U+200A, U+2028,
+-- U+2029, U+202F, U+205F and U+3000. The table contains literal
+-- codepoints because tot strings have no Unicode escape syntax.
+def pythonSpaces : List String :=
+  stringSplit "||||||| | | | | | | | | | | | | | | | | |　" "|"
+
+def rec extraSpaceWidth : List String -> String -> Int -> Int :=
+  fun spaces s i =>
+    match spaces with
+    | nil => 0
+    | cons space rest =>
+        match stringEq (orEmpty (stringSlice s i (stringLength space))) space with
+        | true => stringLength space
+        | false => extraSpaceWidth rest s i
+        end
+    end
+
+-- U+0080 through U+00BF encode as C2 followed by every continuation
+-- byte. Excluding C2 therefore tests exactly bytes 80 through BF.
+def continuationByte : String -> Bool :=
+  fun c => andb (stringContains " ¡¢£¤¥¦§¨©ª«¬­®¯°±²³´µ¶·¸¹º»¼½¾¿" c)
+    (not (stringEq c (charAt "" 0)))
+
+def pythonSpaceWidth : String -> Int -> Int :=
+  fun s i =>
+    let c : String := charAt s i in
+    match whitespace c with
+    | true => 1
+    | false =>
+        match orb (stringContains " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~" c) (continuationByte c) with
+        | true => 0
+        | false => extraSpaceWidth pythonSpaces s i
+        end
+    end
+
+def rec characterCount : Nat -> String -> Int -> Int -> Int :=
+  fun fuel s i count =>
+    match fuel with
+    | zero => count
+    | succ rest =>
+        match orb (intEq count 100001) (stringEq (charAt s i) "") with
+        | true => count
+        | false => characterCount rest s (intAdd i 1)
+            (match continuationByte (charAt s i) with
+             | true => count | false => intAdd count 1 end)
+        end
+    end
+
+def rec fuelFor : Nat -> Int -> Nat -> Int -> Nat :=
+  fun levels bound fuel size =>
+    match intCompare size bound with
+    | lt => fuel
+    | eq => fuel
+    | gt =>
+        match levels with
+        | zero => fuel
+        | succ rest => fuelFor rest (intAdd bound bound) (add fuel fuel) size
+        end
+    end
+
+def scanFuel : String -> Nat :=
+  fun s => fuelFor
+    (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ (succ
+      (succ (succ (succ (succ (succ (succ (succ (succ zero)))))))))))))))))))
+    1 (succ zero) (intAdd (stringLength s) 1)
+
+def rec skipSpace : Nat -> String -> Int -> Bool -> Int :=
+  fun fuel s i full =>
+    match fuel with
+    | zero => i
+    | succ rest =>
+        match orb (horizontal (charAt s i)) (andb full (whitespace (charAt s i))) with
+        | true => skipSpace rest s (intAdd i 1) full
+        | false => i
+        end
+    end
+
+
+def rec skipPythonSpace : Nat -> String -> Int -> Int :=
+  fun fuel s i =>
+    match fuel with
+    | zero => i
+    | succ rest =>
+        let width : Int := pythonSpaceWidth s i in
+        match intEq width 0 with
+        | true => i
+        | false => skipPythonSpace rest s (intAdd i width)
+        end
+    end
+
+-- The directory alternative [^\s;&|]+ uses Python's whitespace set.
+-- A quoted directory is tried separately because Python's regex
+-- also retries this unquoted alternative if a quoted match fails.
+def rec wordEnd : Nat -> String -> Int -> Int :=
+  fun fuel s i =>
+    match fuel with
+    | zero => i
+    | succ rest =>
+        match orb (stringEq (charAt s i) "")
+          (orb (not (intEq (pythonSpaceWidth s i) 0))
+            (orb (stringEq (charAt s i) ";")
+              (orb (stringEq (charAt s i) "&") (stringEq (charAt s i) "|")))) with
+        | true => i
+        | false => wordEnd rest s (intAdd i 1)
+        end
+    end
+
+def rec quoteEnd : Nat -> String -> Int -> String -> Int :=
+  fun fuel s i quote =>
+    match fuel with
+    | zero => i
+    | succ rest =>
+        match stringEq (charAt s i) "" with
+        | true => i
+        | false =>
+            match stringEq (charAt s i) quote with
+            | true => intAdd i 1
+            | false => quoteEnd rest s (intAdd i 1) quote
+            end
+        end
+    end
+
+-- -1 means no regex separator. Zero width is the end-of-string arm.
+def separatorWidth : String -> Int -> Int :=
+  fun s i =>
+    let c : String := charAt s i in
+    match orb (stringEq (orEmpty (stringSlice s i 2)) "&&")
+      (orb (stringEq (orEmpty (stringSlice s i 2)) "||")
+           (stringEq (orEmpty (stringSlice s i 2)) "\r\n")) with
+    | true => 2
+    | false =>
+        match orb (stringEq c ";") (orb (stringEq c "|") (stringEq c "\n")) with
+        | true => 1
+        | false => match stringEq c "" with | true => 0 | false => intSub 0 1 end
+        end
+    end
+
+def afterDirectory : Nat -> String -> Int -> Int :=
+  fun fuel s i =>
+    let e : Int := skipSpace fuel s i false in
+    let w : Int := separatorWidth s e in
+    match intCompare w 0 with
+    | lt => intSub 0 1
+    | eq => e
+    | gt => intAdd e w
+    end
+
+def directoryTail : Nat -> String -> Int -> Int :=
+  fun fuel s i =>
+    let e : Int := wordEnd fuel s i in
+    let plain : Int := match intEq e i with
+      | true => intSub 0 1 | false => afterDirectory fuel s e end in
+    match orb (stringEq (charAt s i) "'") (stringEq (charAt s i) "\"") with
+    | true =>
+        let q : Int := quoteEnd fuel s (intAdd i 1) (charAt s i) in
+        match stringEq (charAt s (intSub q 1)) (charAt s i) with
+        | true =>
+            let tail : Int := afterDirectory fuel s q in
+            match intCompare tail 0 with | lt => plain | eq => tail | gt => tail end
+        | false => plain
+        end
+    | false => plain
+    end
+
+def cdTail : Nat -> String -> Int -> Int :=
+  fun fuel s i =>
+    let width : Int := match stringEq (orEmpty (stringSlice s i 2)) "cd" with
+      | true => 2
+      | false => match stringEq (orEmpty (stringSlice s i 5)) "pushd" with
+        | true => 5 | false => 0 end
+      end in
+    match andb (not (intEq width 0)) (horizontal (charAt s (intAdd i width))) with
+    | true => directoryTail fuel s (skipSpace fuel s (intAdd i width) false)
+    | false => intSub 0 1
+    end
+
+def realCount : String -> Int :=
+  fun segment => match stringEq segment "real" with | true => 1 | false => 0 end
+
+-- Saturate at three statements. A single pipe or ampersand is not
+-- a statement separator. Quoted delimiters and substitutions are
+-- skipped, and an empty or comment-only segment contributes zero.
+def rec statementCount : Nat -> String -> Int -> String -> Int -> String -> Int -> Int :=
+  fun fuel s i mode depth segment count =>
+    match fuel with
+    | zero => intAdd count (realCount segment)
+    | succ rest =>
+        let c : String := charAt s i in
+        let next : Int := intAdd i 1 in
+        let c2 : String := charAt s next in
+        match orb (intEq count 3) (stringEq c "") with
+        | true => intAdd count (realCount segment)
+        | false =>
+            match stringEq mode "sub" with
+            | true =>
+                let d : Int := match stringEq c "(" with
+                  | true => intAdd depth 1
+                  | false => match stringEq c ")" with | true => intSub depth 1 | false => depth end
+                  end in
+                statementCount rest s next
+                  (match intEq d 0 with | true => "" | false => "sub" end) d segment count
+            | false =>
+                match stringEq mode "" with
+                | true =>
+                    let spaceWidth : Int := pythonSpaceWidth s i in
+                    let marked : String := match andb (stringEq segment "") (intEq spaceWidth 0) with
+                      | true => match stringEq c "#" with | true => "comment" | false => "real" end
+                      | false => segment end in
+                    match orb (stringEq c ";") (orb (stringEq c "\r")
+                      (orb (stringEq c "\n")
+                        (andb (orb (stringEq c "&") (stringEq c "|")) (stringEq c c2)))) with
+                    | true => statementCount rest s
+                        (match orb (stringEq c "&") (stringEq c "|") with
+                         | true => intAdd i 2 | false => next end)
+                        "" 0 "" (intAdd count (realCount segment))
+                    | false =>
+                        match stringEq c "\\" with
+                        | true => statementCount rest s (intAdd i 2) "" 0 marked count
+                        | false =>
+                            match orb (stringEq c "'") (orb (stringEq c "\"") (stringEq c "`")) with
+                            | true => statementCount rest s next c 0 marked count
+                            | false =>
+                                match andb (stringEq c "$") (stringEq c2 "(") with
+                                | true => statementCount rest s (intAdd i 2) "sub" 1 marked count
+                                | false => statementCount rest s
+                                    (match intEq spaceWidth 0 with
+                                     | true => next | false => intAdd i spaceWidth end)
+                                    "" 0 marked count
+                                end
+                            end
+                        end
+                    end
+                | false =>
+                    match stringEq c mode with
+                    | true => statementCount rest s next "" 0 segment count
+                    | false => statementCount rest s
+                        (match andb (stringEq mode "\"") (stringEq c "\\") with
+                         | true => intAdd i 2 | false => next end)
+                        mode depth segment count
+                    end
+                end
+            end
+        end
+    end
+
+def classify : String -> String :=
+  fun cmd =>
+    match intCompare (stringLength cmd) 400001 with
+    | lt =>
+        let fuel : Nat := scanFuel cmd in
+        let i : Int := skipSpace fuel cmd 0 true in
+        let start : Int := match stringEq (charAt cmd i) "(" with
+          | true => skipSpace fuel cmd (intAdd i 1) true | false => i end in
+        let tail : Int := cdTail fuel cmd start in
+        match intCompare tail 0 with
+        | lt => "none"
+        | eq => "none"
+        | gt =>
+            match intCompare (characterCount fuel cmd 0 0) 100001 with
+            | lt =>
+            match stringEq (charAt cmd (skipPythonSpace fuel cmd tail)) "" with
+            | true => "none"
+            | false =>
+                match intCompare (statementCount fuel cmd 0 "" 0 "" 0) 3 with
+                | lt => "chained-cd" | eq => "none" | gt => "none"
+                end
+            end
+            | eq => "none"
+            | gt => "none"
+            end
+        end
+    | eq => "none"
+    | gt => "none"
+    end
+
+-- Back up at most three continuation bytes so the bounded reason
+-- remains valid UTF-8 when the 2000-byte cut falls inside a scalar.
+def rec prefixEnd : Nat -> String -> Int -> Int :=
+  fun fuel s i =>
+    match fuel with
+    | zero => i
+    | succ rest =>
+        match continuationByte (charAt s i) with
+        | true => prefixEnd rest s (intSub i 1)
+        | false => i
+        end
+    end
+
+def commandEcho : String -> String :=
+  fun cmd =>
+    match intCompare (stringLength cmd) 2000 with
+    | lt => cmd
+    | eq => cmd
+    | gt => stringConcat
+        (orEmpty (stringSlice cmd 0 (prefixEnd (succ (succ (succ zero))) cmd 2000)))
+        "... (elided)"
+    end
+
+def decide : Json -> Verdict :=
+  fun payload =>
+    match jsonGetString payload "tool_name" with
+    | none => allow
+    | some name =>
+        match stringEq name "Bash" with
+        | true =>
+            match jsonGet payload "tool_input" with
+            | none => allow
+            | some ti =>
+                let cmd : String := jsonGetStringOr ti "command" "" in
+                match andb (not (stringContains cmd "[skip-cd-prefix]"))
+                  (stringEq (classify cmd) "chained-cd") with
+                | true =>
+                    deny (stringConcat
+                      "cd-prefix-guard: use an absolute path instead of a leading cd (command: "
+                      (stringConcat (commandEcho cmd) ")"))
+                | false => allow
+                end
+            end
+        | false => allow
+        end
+    end
+
+def main : IO Verdict :=
+  let* _ _ raw := readStdin in
+  let* _ _ parsed := liftIO _ (jsonParse raw) in
+  match parsed with
+  | none => pureIO _ allow
+  | some payload => pureIO _ (decide payload)
+  end
+|mnb}
+
+let m9b_regex_source : string = {mnb|-- dev/m9b/regex-fidelity.tot: the demand instrument's one non-zero
+-- reading beyond R-Q2's rewrite count (A3-F3).  Ports the two
+-- anchored patterns cd-prefix-guard.py:91 (_ASSIGN_WORD) and :100
+-- (_NOT_A_PROGRAM) through tot's Str-backed regexTest, on the same
+-- recorded pair of subjects proposal-3's own P10 probe used.  The
+-- shipped examples/guard-cd.tot does not classify assignments
+-- (R-Q1: narrow port), so this file is the only place "the port's
+-- assignHead" lives; PASS-M9B-REGEX-FIDELITY reads it, not
+-- examples/guard-cd.tot.
+def assignHead : String -> String -> Div (Pair Bool Bool) :=
+  fun assignSubject notAProgramSubject =>
+    bindDiv Bool (Pair Bool Bool)
+      (regexTest "^[A-Za-z_][A-Za-z0-9_]*=" assignSubject)
+      (fun aw =>
+        bindDiv Bool (Pair Bool Bool)
+          (regexTest "^(?:#|&?[0-9]*[<>])" notAProgramSubject)
+          (fun nap => pureDiv (Pair Bool Bool) (pair Bool Bool aw nap)))
+
+def showBool : Bool -> String :=
+  fun b => match b with | true => "TRUE" | false => "FALSE" end
+
+def main : IO Verdict :=
+  let* _ _ r := liftIO _ (assignHead "FOO=1" "2>/dev/null") in
+  match r with
+  | pair aw nap =>
+      let* _ _ u := printLine (stringConcat
+          (stringConcat "ASSIGN_WORD=" (showBool aw))
+          (stringConcat " NOT_A_PROGRAM=" (showBool nap))) in
+      pureIO _ allow
+  end
+|mnb}
+
 (* M5 Stage A (A8 cases 14/15): feed THIS process's stdin from a
    scratch file for the duration of [k].  [Effect.dispatch]'s
    [readStdin] arm reads the real fd 0, so the strict-json
@@ -2484,6 +2936,11 @@ def stuck : Nat := (fun x => x) _
     ( "M8D-1 m8d_f1_witness_entry: the FINAL checked entry for add carries rec_arg = Some 0 and \
        reducible = true, read through the public Global interface",
       m8d_f1_witness_entry );
+    ( "M9B-1 m9b_cd_port_checks: the shipped fuel-based wordEnd checks in process",
+      m7e_expect_source_checks bst ~label:"m9b_cd_port_checks" ~src:m9b_cd_source );
+    ( "M9B-2 m9b_regex_fidelity_line: the in-process diagnostic prints the recorded line",
+      m9b_expect_source_prints bst ~label:"m9b_regex_fidelity_line" ~src:m9b_regex_source
+        ~want_tail:"ASSIGN_WORD=TRUE NOT_A_PROGRAM=FALSE" );
   ]
 
 (** The ordinary in-process suite: bootstrap once, run every [cases]

@@ -1,0 +1,30 @@
+-- dev/m9b/regex-fidelity.tot: the demand instrument's one non-zero
+-- reading beyond R-Q2's rewrite count (A3-F3).  Ports the two
+-- anchored patterns cd-prefix-guard.py:91 (_ASSIGN_WORD) and :100
+-- (_NOT_A_PROGRAM) through tot's Str-backed regexTest, on the same
+-- recorded pair of subjects proposal-3's own P10 probe used.  The
+-- shipped examples/guard-cd.tot does not classify assignments
+-- (R-Q1: narrow port), so this file is the only place "the port's
+-- assignHead" lives; PASS-M9B-REGEX-FIDELITY reads it, not
+-- examples/guard-cd.tot.
+def assignHead : String -> String -> Div (Pair Bool Bool) :=
+  fun assignSubject notAProgramSubject =>
+    bindDiv Bool (Pair Bool Bool)
+      (regexTest "^[A-Za-z_][A-Za-z0-9_]*=" assignSubject)
+      (fun aw =>
+        bindDiv Bool (Pair Bool Bool)
+          (regexTest "^(?:#|&?[0-9]*[<>])" notAProgramSubject)
+          (fun nap => pureDiv (Pair Bool Bool) (pair Bool Bool aw nap)))
+
+def showBool : Bool -> String :=
+  fun b => match b with | true => "TRUE" | false => "FALSE" end
+
+def main : IO Verdict :=
+  let* _ _ r := liftIO _ (assignHead "FOO=1" "2>/dev/null") in
+  match r with
+  | pair aw nap =>
+      let* _ _ u := printLine (stringConcat
+          (stringConcat "ASSIGN_WORD=" (showBool aw))
+          (stringConcat " NOT_A_PROGRAM=" (showBool nap))) in
+      pureIO _ allow
+  end

@@ -1891,11 +1891,16 @@ verbatim).
 Delete examples/guard-cd.tot, dev/m9b/wordend-index.tot,
 dev/m9b/rule-table-nested.tot, dev/m9b/regex-fidelity.tot, and the
 dev/m9b/ directory if now empty. Revert dev/gates.sh's three new
-`PASS-M9B-*` legs and the settle-budget leg's three literals to their
-pre-stage values. Revert SPEC.md debt entry 11 (SPEC.md:2668) to its
-pre-Stage-B state: remove the R-Q7 clause naming the
-PASS-M9B-DEMAND-ORACLE reading of 2 forced rewrites, and restore the
-entry's heading and its "CARRIED" disposition byte-for-byte (R1-F2).
+`PASS-M9B-*` legs and the settle-budget leg's three literals and the
+five further literals listed in dev/M9-BUILD-LOG.md section 5
+(m5d_tiers 247 -> 241 at :2353, m6e_holes 76 -> 69 at :3208, m6e_want
+and m7d_want back to `ANCHORS total=99 expected-type-only=60
+argument-driven=9 neither=30` at :3231 and :3852, m7b_holed 76 -> 69
+at :3681) to their pre-stage values. Revert SPEC.md debt entry 11
+(SPEC.md:2678) to its pre-Stage-B state: remove the R-Q7 clause naming
+the PASS-M9B-DEMAND-ORACLE reading of 2 forced rewrites, and restore
+the entry's heading and its "CARRIED" disposition byte-for-byte
+(R1-F2).
 Revert dev/M9-BUILD-LOG.md's Stage B entry (or
 delete the file if this stage created it). Regenerate
 dev/m5e-default-transcript.txt through dev/gen-m5e-transcript.sh

@@ -1756,6 +1756,17 @@ verdict CLIs, small tools.  The house rules are the semantics:
   five-example digest stays `f1450de0006de4b7339b2f39ec2e2e50` and
   `Cache.format_version` stays 10.
 
+- 2026-09-06 (M9, Stage B): the cd-prefix guard example denies only the source
+  hook's chained-cd classification.  Explicit Nat fuel and flat String tags
+  replace two rejected spellings, preserved as negative oracles.  The source
+  whitespace and character-count rules remain intact, and command echoes preserve
+  UTF-8 boundaries.  Four differences from the source hook are documented in the
+  example's header and in conflict note C-B11.  The regex diagnostic records Str
+  TRUE/FALSE against Python TRUE/TRUE on the same subjects.  Two inline surface
+  cases check acceptance and captured effect output.  Conflict notes C-B1 through
+  C-B9 in dev/M9-BUILD-LOG.md record the measured plan corrections, mutation
+  repair and corpus readings.  Debt entry 11 stays CARRIED.
+
 ## 3.  Core calculus (M0 core, M2 inductives, M3 literals and effects)
 
 Syntax (de Bruijn indices;  binder names are display-only):
@@ -2376,11 +2387,11 @@ Known debts entering M5 (M4, carried from `dev/M4-PLAN.md`'s own
   at a time.
   Re-measured 2026-09-04 at M7 Stage D, after the six shared list
   helpers moved from the two guard examples into `stdlib/prelude.tot`
-  and 44 prelude anchors took the `_` spelling.  This record is the
-  CURRENT line, the one `PASS-M5D-MEASURE-LOG` reads through
-  `| tail -n 1`, so it must stay the LAST such record in this file:
+  and 44 prelude anchors took the `_` spelling.  This historical
+  record was current at M7.  The dated M9 Stage B census below now
+  supplies the last record read by `PASS-M5D-MEASURE-LOG`:
   ANCHORS total=99 expected-type-only=60 argument-driven=9 neither=30
-  (`PASS-M5D-MEASURE-LOG`, `PASS-M6E-ANCHORS`, `PASS-M7D-ANCHORS`).
+  (read by `PASS-M5D-MEASURE-LOG`, `PASS-M6E-ANCHORS` and `PASS-M7D-ANCHORS` until M9 Stage B; all three now read the census at the end of this section).
   The move deletes four `splitEach` anchor sites from the two guards
   and re-adds two in the prelude copy, so the total and the
   expected-type-only count each drop by two;  the A and N buckets do
@@ -2664,7 +2675,9 @@ widen for relation positions, and M7 builds nothing for it.
     the strict reading of "no second traversal" at Q2 of the amendment
     forbids a new pass and the `Serror` type does not change in M7.
     The prelude arm's one-line report on a cache hit is carried to M8.
-11. Cumulativity or an `Eq1` layer.  CARRIED.  No measured demand.
+11. Cumulativity or an `Eq1` layer.  CARRIED.  M9 Stage B records
+    `PASS-M9B-DEMAND-ORACLE` and its measured count of 2 forced rewrites.
+    This is a demand reading, not a repeal of the carried obligation.
 12. The guard tokenizer duplication.  CLOSED by Stage D.  The six
     helpers live once, in `stdlib/prelude.tot`, and
     `PASS-M7D-HELPERS-SHARED` pins that neither guard defines one.  The
@@ -2750,3 +2763,12 @@ a reader which guard a definition received.  `lib/interp.ml:92-95` and
 `PASS-M7E-SPEC-CITATIONS` (dev/gates.sh:3930-3931) keeps counting both
 sites, so no later M9 stage can tidy the emptiness story into code
 without turning that leg red.
+
+
+M9 Stage B corpus census (2026-09-06).  The new guard contributes
+seven holed anchors: five expected-type sites and two argument-driven
+sites.  The existing sites are unchanged.  The current measured line,
+superseding the historical M7 census above, is:
+ANCHORS total=106 expected-type-only=65 argument-driven=11 neither=30
+The corpus has 76 holed anchors, up from 69.  This count comes from
+dev/hole-anchors.py; conflict note C-B9 records the exact seven sites.

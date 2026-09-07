@@ -1,0 +1,2 @@
+-- The classify table as a family that mentions itself under List.
+data Rule : Type 0 := | mkRule : List Rule -> Rule

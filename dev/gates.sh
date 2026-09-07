@@ -2350,7 +2350,7 @@ m5d_bites=$(rg -c '"\$watchdog" "\$BITE_S"' "$ROOT/dev/gates.sh")
 # The plan named no number here;  the recipe is the authority
 # (precedent C-D4), and no tier call was added or removed to reach a
 # predicted number.
-{ [ "$m5d_nolit" -eq 1 ] && [ "$m5d_tiers" -eq 241 ] && [ "$m5d_bites" -eq 2 ] \
+{ [ "$m5d_nolit" -eq 1 ] && [ "$m5d_tiers" -eq 247 ] && [ "$m5d_bites" -eq 2 ] \
   && [ -s "$ROOT/dev/gates.sh" ]; } \
   && echo PASS-M5D-TIERS \
   || { echo "FAIL-M5D-TIERS (nolit=$m5d_nolit tiers=$m5d_tiers bites=$m5d_bites)"; exit 1; }
@@ -3205,7 +3205,7 @@ m6e_env=$("$watchdog" "$FAST" "$m5d_bin" run "$ROOT"/examples/guard.tot \
   < "$ROOT"/test/fixtures/deny.json); m6e_c9=$?
 m6e_wantenv='{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"house rule: use rg instead of grep and sd instead of sed (command: grep foo /tmp/x)"}}'
 { [ "$m6e_c6" -eq 0 ] && [ "$m6e_c7" -eq 0 ] && [ "$m6e_c8" -eq 0 ] \
-  && [ "$m6e_holes" -eq 69 ] && [ "$m6e_pz" -gt 0 ] \
+  && [ "$m6e_holes" -eq 76 ] && [ "$m6e_pz" -gt 0 ] \
   && [ "$m6e_c9" -eq 2 ] && [ "$m6e_env" = "$m6e_wantenv" ]; } \
   && echo PASS-M6E-GUARD-HOLES \
   || { printf '%s\n%s\n%s\n%s\n' "$m6e_g1" "$m6e_g2" "$m6e_g3" "$m6e_env"; \
@@ -3228,7 +3228,7 @@ m6e_wantenv='{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDeci
 # expected-type-only each drop by two.  The -gt 98 floor still holds at
 # 99.  PASS-M7D-ANCHORS pins the same line for pin 10.
 m6e_line=$(rg -o '^ANCHORS total=[0-9]+ expected-type-only=[0-9]+ argument-driven=[0-9]+ neither=[0-9]+$' "$GATE_LOG")
-m6e_want='ANCHORS total=99 expected-type-only=60 argument-driven=9 neither=30'
+m6e_want='ANCHORS total=106 expected-type-only=65 argument-driven=11 neither=30'
 m6e_tot=$(printf '%s' "$m6e_line" | rg -o 'total=[0-9]+' | rg -o '[0-9]+')
 { [ "$m6e_line" = "$m6e_want" ] && [ "$m6e_tot" -gt 98 ]; } \
   && echo PASS-M6E-ANCHORS \
@@ -3617,8 +3617,8 @@ m7a_c3=$?
 # green STAYS 62: all three fixtures are NEGATIVES and exit 1.  Both
 # numbers come from this leg's own recipe re-run on the edited tree,
 # never from the plan (conflict C-D4, ruling C-E6).
-{ [ "$m7a_files" -eq 104 ] && [ "$m7a_green" -eq 62 ] \
-    && [ "$m7a_digest" = 9278f6b7034f2f65b6d789e9e1d74a90 ] \
+{ [ "$m7a_files" -eq 105 ] && [ "$m7a_green" -eq 63 ] \
+    && [ "$m7a_digest" = 7aed51dddf358f0bb1742838b5616717 ] \
     && [ "$m7a_c1" -eq 1 ] && [ "$m7a_c2" -eq 1 ] && [ "$m7a_c3" -eq 1 ] \
     && printf '%s\n' "$m7a_b1" \
        | rg -qx '\S*/m6c-hole-n-infer\.tot:1:6: hole: no expected type at this position' \
@@ -3678,7 +3678,7 @@ m7b_env=$("$watchdog" "$FAST" "$m5d_bin" run "$ROOT"/examples/guard.tot \
   < "$fx"/deny.json); m7b_c3=$?
 m7b_wantenv='{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"house rule: use rg instead of grep and sd instead of sed (command: grep foo /tmp/x)"}}'
 { [ "$m7b_c1" -eq 0 ] && [ "$m7b_c2" -eq 0 ] \
-  && [ "$m7b_slots" -eq 4 ] && [ "$m7b_holed" -eq 69 ] \
+  && [ "$m7b_slots" -eq 4 ] && [ "$m7b_holed" -eq 76 ] \
   && [ "$m7b_c3" -eq 2 ] && [ "$m7b_env" = "$m7b_wantenv" ]; } \
   && echo PASS-M7B-GUARD-ARG-HOLES \
   || { printf '%s\n%s\n%s\n' "$m7b_g1" "$m7b_g2" "$m7b_env"; \
@@ -3849,7 +3849,7 @@ m7d_cls=$("$watchdog" "$FAST" "$m5d_bin" check "$ROOT"/examples/guard-classes.to
 # two guards become two in the prelude);  A and N do not move.  Schema
 # and bucket-sum stay owned by PASS-M5D-HOLE-ANCHORS upstream.
 m7d_line=$(rg -o '^ANCHORS total=[0-9]+ expected-type-only=[0-9]+ argument-driven=[0-9]+ neither=[0-9]+$' "$GATE_LOG")
-m7d_want='ANCHORS total=99 expected-type-only=60 argument-driven=9 neither=30'
+m7d_want='ANCHORS total=106 expected-type-only=65 argument-driven=11 neither=30'
 { [ "$m7d_line" = "$m7d_want" ]; } \
   && echo PASS-M7D-ANCHORS \
   || { printf '%s\n' "$m7d_line"; echo "FAIL-M7D-ANCHORS (line=$m7d_line)"; exit 1; }
@@ -4546,6 +4546,39 @@ m9a_spec_mli=$(printf '%s\n' "$m9a_spec_sent" | rg -o 'and [0-9]+' | rg -o '[0-9
   && [ "$m9a_spec_ml" = "$m9a_fd_ml" ] && [ "$m9a_spec_mli" = "$m9a_fd_mli" ]; } \
   && echo PASS-M9A-EXIT-STAMP \
   || { echo "FAIL-M9A-EXIT-STAMP (sec6=$m9a_sec6 sec5=$m9a_sec5 stale=$m9a_stale fd_ml=$m9a_fd_ml fd_mli=$m9a_fd_mli spec_ml=$m9a_spec_ml spec_mli=$m9a_spec_mli)"; exit 1; }
+
+# M9 Stage B: guard behavior, forced rewrites and the regex table.
+m9b_cd_check=$("$watchdog" "$MED" dune exec --root "$ROOT" test/surface.exe -- gate-check "$ROOT"/examples/guard-cd.tot 2>&1); m9b_cd_check_rc=$?
+m9b_cd_deny=$(echo '{"tool_name":"Bash","tool_input":{"command":"cd /tmp && rm -rf x"}}' | env CLAUDE_ALLOW_CD_PREFIX=1 "$watchdog" "$MED" dune exec --root "$ROOT" test/surface.exe -- gate-run "$ROOT"/examples/guard-cd.tot 2>&1)
+m9b_cd_allow=$(echo '{"tool_name":"Bash","tool_input":{"command":"cd /tmp"}}' | "$watchdog" "$MED" dune exec --root "$ROOT" test/surface.exe -- gate-run "$ROOT"/examples/guard-cd.tot 2>&1)
+m9b_cd_wantdeny='{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"cd-prefix-guard: use an absolute path instead of a leading cd (command: cd /tmp && rm -rf x)"}}'
+m9b_cd_inline=$(awk '/^let m9b_cd_source : string = \{mnb\|/{sub(/^let m9b_cd_source : string = \{mnb\|/,"");f=1;print;next} f&&/^\|mnb\}$/{exit} f{print}' "$ROOT"/test/surface.ml | md5 -q)
+m9b_cd_file=$(md5 -q "$ROOT"/examples/guard-cd.tot)
+{ [ "$m9b_cd_check_rc" -eq 0 ] \
+  && [ "$m9b_cd_deny" = "$m9b_cd_wantdeny" ] \
+  && [ "$m9b_cd_inline" = "$m9b_cd_file" ] \
+  && [ -z "$m9b_cd_allow" ]; } \
+  && echo PASS-M9B-CD-PORT \
+  || { echo "FAIL-M9B-CD-PORT (check_rc=$m9b_cd_check_rc deny=$m9b_cd_deny allow=$m9b_cd_allow want=$m9b_cd_wantdeny inline=$m9b_cd_inline file=$m9b_cd_file)"; exit 1; }
+
+m9b_word_msg=$("$watchdog" "$MED" dune exec --root "$ROOT" test/surface.exe -- gate-check "$ROOT"/dev/m9b/wordend-index.tot 2>&1); m9b_word_rc=$?
+m9b_rule_msg=$("$watchdog" "$MED" dune exec --root "$ROOT" test/surface.exe -- gate-check "$ROOT"/dev/m9b/rule-table-nested.tot 2>&1); m9b_rule_rc=$?
+m9b_log_count=$(rg -c '^forced-rewrite-count: 2$' "$ROOT"/dev/M9-BUILD-LOG.md 2>/dev/null); m9b_log_count=${m9b_log_count:-0}
+{ [ "$m9b_word_rc" -ne 0 ] && echo "$m9b_word_msg" | rg -qF 'wordEnd failed the structural termination guard' \
+  && [ "$m9b_rule_rc" -ne 0 ] && echo "$m9b_rule_msg" | rg -qF 'invalid constructor mkRule: negative or non-uniform occurrence of Rule' \
+  && [ "$m9b_log_count" = "1" ]; } \
+  && echo PASS-M9B-DEMAND-ORACLE \
+  || { echo "FAIL-M9B-DEMAND-ORACLE (word_rc=$m9b_word_rc rule_rc=$m9b_rule_rc log_line=$m9b_log_count)"; exit 1; }
+
+m9b_regex_inline=$(awk '/^let m9b_regex_source : string = \{mnb\|/{sub(/^let m9b_regex_source : string = \{mnb\|/,"");f=1;print;next} f&&/^\|mnb\}$/{exit} f{print}' "$ROOT"/test/surface.ml | md5 -q)
+m9b_regex_file=$(md5 -q "$ROOT"/dev/m9b/regex-fidelity.tot)
+m9b_regex_out=$("$watchdog" "$MED" dune exec --root "$ROOT" test/surface.exe -- gate-run "$ROOT"/dev/m9b/regex-fidelity.tot 2>&1); m9b_regex_rc=$?
+{ [ "$m9b_regex_rc" -eq 0 ] \
+  && [ "$m9b_regex_out" = 'ASSIGN_WORD=TRUE NOT_A_PROGRAM=FALSE' ] \
+  && [ "$m9b_regex_inline" = "$m9b_regex_file" ]; } \
+  && echo PASS-M9B-REGEX-FIDELITY \
+  || { echo "FAIL-M9B-REGEX-FIDELITY (rc=$m9b_regex_rc out=$m9b_regex_out inline=$m9b_regex_inline file=$m9b_regex_file)"; exit 1; }
+
 
 # ctxcat id 5: an instance with TWO dictionary binders on the SAME type
 # variable. Round 1's fuel bounded the depth of one resolution PATH,

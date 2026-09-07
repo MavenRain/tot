@@ -8,6 +8,35 @@ def cadd : (w _ : cnat) -> (w _ : cnat) -> cnat
 def two : cnat
 eval : (0 a : Type 0) -> (w _ : (w _ : a) -> a) -> (w _ : a) -> a
 #err
+### examples/guard-cd.tot
+#exit 0
+#out
+def charAt : (w _ : String) -> (w _ : Int) -> String
+def horizontal : (w _ : String) -> Bool
+def whitespace : (w _ : String) -> Bool
+def pythonSpaces : (List String)
+def extraSpaceWidth : (w _ : (List String)) -> (w _ : String) -> (w _ : Int) -> Int
+def continuationByte : (w _ : String) -> Bool
+def pythonSpaceWidth : (w _ : String) -> (w _ : Int) -> Int
+def characterCount : (w _ : Nat) -> (w _ : String) -> (w _ : Int) -> (w _ : Int) -> Int
+def fuelFor : (w _ : Nat) -> (w _ : Int) -> (w _ : Nat) -> (w _ : Int) -> Nat
+def scanFuel : (w _ : String) -> Nat
+def skipSpace : (w _ : Nat) -> (w _ : String) -> (w _ : Int) -> (w _ : Bool) -> Int
+def skipPythonSpace : (w _ : Nat) -> (w _ : String) -> (w _ : Int) -> Int
+def wordEnd : (w _ : Nat) -> (w _ : String) -> (w _ : Int) -> Int
+def quoteEnd : (w _ : Nat) -> (w _ : String) -> (w _ : Int) -> (w _ : String) -> Int
+def separatorWidth : (w _ : String) -> (w _ : Int) -> Int
+def afterDirectory : (w _ : Nat) -> (w _ : String) -> (w _ : Int) -> Int
+def directoryTail : (w _ : Nat) -> (w _ : String) -> (w _ : Int) -> Int
+def cdTail : (w _ : Nat) -> (w _ : String) -> (w _ : Int) -> Int
+def realCount : (w _ : String) -> Int
+def statementCount : (w _ : Nat) -> (w _ : String) -> (w _ : Int) -> (w _ : String) -> (w _ : Int) -> (w _ : String) -> (w _ : Int) -> Int
+def classify : (w _ : String) -> String
+def prefixEnd : (w _ : Nat) -> (w _ : String) -> (w _ : Int) -> Int
+def commandEcho : (w _ : String) -> String
+def decide : (w _ : Json) -> Verdict
+def main : (IO Verdict)
+#err
 ### examples/guard-classes.tot
 #exit 0
 #out

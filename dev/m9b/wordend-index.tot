@@ -1,0 +1,17 @@
+-- cd-prefix-guard.py:144-177, _word_end: advance an INDEX past one shell
+-- word.  The Python walk has no cap: it stops only at n = len(command).
+-- This is the smallest fragment of the hook that has no fuel formal.
+def charAt : String -> Int -> String :=
+  fun s i => orEmpty (stringSlice s i 1)
+
+def rec wordEnd : String -> Int -> Int :=
+  fun s i =>
+    match intCompare i (stringLength s) with
+    | lt =>
+        match stringEq (charAt s i) " " with
+        | true => i
+        | false => wordEnd s (intAdd i 1)
+        end
+    | eq => i
+    | gt => i
+    end
